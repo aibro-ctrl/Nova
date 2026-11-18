@@ -1,0 +1,313 @@
+package ai.nova.core.skills
+
+import ai.nova.core.nlp.RuNumbers
+import ai.nova.core.nlp.RuTokenizer
+import kotlin.random.Random
+
+/** Ход игры: ответ Нова и закончилась ли игра. */
+data class GameTurn(val text: String, val over: Boolean = false)
+
+/** Голосовая игра. Пока идёт игра, реплики пользователя уходят в неё. */
+sealed class Game {
+    abstract val title: String
+    abstract fun start(): String
+    /** [known] — проверка города по сети (для «Городов»), null — без сети. */
+    abstract suspend fun play(text: String, known: (suspend (String) -> Boolean)?): GameTurn
+
+    // ------------------------------------------------------------------ Города
+    class Cities(private val random: Random = Random.Default) : Game() {
+        override val title = "Города"
+        private val used = HashSet<String>()
+        private var letter: Char? = null
+        private var misses = 0
+
+        override fun start(): String {
+            val first = CITIES.random(random)
+            used += key(first)
+            letter = lastLetter(first)
+            return "Играем в города! Я начинаю: $first. Вам на букву «${letter!!.uppercaseChar()}». Скажите «сдаюсь», чтобы закончить."
+        }
+
+        override suspend fun play(text: String, known: (suspend (String) -> Boolean)?): GameTurn {
+            val t = text.trim().trimEnd('.', '!', '?')
+            if (isGiveUp(t)) return GameTurn("Я победила! Было названо ${used.size} ${ai.nova.core.assistant.RuFormat.plural(used.size, "город", "города", "городов")}. Сыграем ещё — скажите «давай в города».", over = true)
+            if (Regex("""(?iu)^(?:подскажи|подсказк|не знаю|какой город|помоги)""").containsMatchIn(t)) {
+                val hint = CITIES.filter { key(it).first() == letter && key(it) !in used }.randomOrNull(random)
+                return GameTurn(hint?.let { "Подсказка: например, $it. Но лучше своё!" } ?: "Я и сама не знаю городов на «${letter?.uppercaseChar()}». Скажите «сдаюсь»?")
+            }
+            val city = cleanCity(t)
+            val k = key(city)
+            if (k.isEmpty()) return GameTurn("Назовите город на букву «${letter?.uppercaseChar()}».")
+            letter?.let { need ->
+                if (k.first() != need) return GameTurn("${city.replaceFirstChar { it.uppercase() }} начинается не на «${need.uppercaseChar()}». Нужен город на «${need.uppercaseChar()}».")
+            }
+            if (k in used) return GameTurn("${city.replaceFirstChar { it.uppercase() }} уже был! Другой город на «${letter?.uppercaseChar()}».")
+            val listed = CITIES.firstOrNull { key(it) == k }
+            if (listed == null) {
+                val ok = known?.let {
+                    try { it(city) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { false }
+                }
+                if (ok == false) {
+                    misses++
+                    return GameTurn("Не знаю такого города — «${city.replaceFirstChar { it.uppercase() }}». Попробуйте другой на «${letter?.uppercaseChar()}».")
+                }
+            }
+            used += k
+            val name = listed ?: city.split(' ', '-').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
+            val need = lastLetter(name)
+            val mine = CITIES.filter { key(it).first() == need && key(it) !in used }.randomOrNull(random)
+                ?: return GameTurn("$name — принято! А я не знаю больше городов на «${need.uppercaseChar()}». Вы победили! 🎉", over = true)
+            used += key(mine)
+            letter = lastLetter(mine)
+            return GameTurn("$name — есть! Мой город: $mine. Вам на «${letter!!.uppercaseChar()}».")
+        }
+
+        companion object {
+            val CITIES: List<String> by lazy {
+                Cities::class.java.getResourceAsStream("/skills/cities.txt")?.bufferedReader(Charsets.UTF_8)?.readLines()
+                    ?.map { it.trim() }?.filter { it.isNotEmpty() } ?: listOf("Москва", "Архангельск", "Казань")
+            }
+
+            fun key(city: String): String = city.lowercase().replace('ё', 'е').replace(Regex("""[^\p{L}]"""), "")
+
+            /** Последняя буква, с которой можно начать город: ь, ъ, ы, й пропускаем. */
+            fun lastLetter(city: String): Char {
+                val k = key(city)
+                return k.lastOrNull { it !in "ьъый" } ?: k.last()
+            }
+
+            fun cleanCity(text: String): String = text.lowercase()
+                .replace(Regex("""(?iu)^(?:город|ну|давай|может|пусть будет|а|тогда|мой город|я скажу|скажу)\s+"""), "")
+                .replace(Regex("""(?iu)^(?:город)\s+"""), "")
+                .trim(' ', ',', '.', '!', '?')
+        }
+    }
+
+    // ------------------------------------------------------------------ Угадай число
+    class GuessNumber(private val max: Int = 100, private val random: Random = Random.Default) : Game() {
+        override val title = "Угадай число"
+        private val secret = random.nextInt(1, max + 1)
+        private var tries = 0
+
+        override fun start() = "Я загадала число от 1 до $max. Угадайте! Я буду подсказывать: больше или меньше."
+
+        override suspend fun play(text: String, known: (suspend (String) -> Boolean)?): GameTurn {
+            if (isGiveUp(text)) return GameTurn("Это было число $secret. Сыграем ещё?", over = true)
+            val n = Regex("""\d+""").find(ai.nova.core.assistant.DevicePhrases.digitize(text))?.value?.toIntOrNull()
+                ?: return GameTurn("Назовите число от 1 до $max.")
+            tries++
+            return when {
+                n < secret -> GameTurn("Больше, чем $n.")
+                n > secret -> GameTurn("Меньше, чем $n.")
+                else -> GameTurn("Угадали! Это $secret. ${ai.nova.core.assistant.RuFormat.count(tries, "попытка", "попытки", "попыток")}${if (tries <= 7) " — отличный результат!" else "."}", over = true)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ Нова угадывает число человека
+    class ReverseGuess(private val max: Int = 100) : Game() {
+        override val title = "Угадаю ваше число"
+        private var lo = 1
+        private var hi = max
+        private var guess = (lo + hi) / 2
+        private var tries = 1
+
+        override fun start() = "Загадайте число от 1 до $max, а я угадаю. Отвечайте: «больше», «меньше» или «да». Это $guess?"
+
+        override suspend fun play(text: String, known: (suspend (String) -> Boolean)?): GameTurn {
+            val t = text.lowercase().replace('ё', 'е').trim().trimEnd('.', '!', '?')
+            if (isGiveUp(t)) return GameTurn("Хорошо, в другой раз угадаю!", over = true)
+            when {
+                Regex("""^(?:да|угадала|верно|правильно|точно|оно|это оно|ага|угу|в точку)""").containsMatchIn(t) ->
+                    return GameTurn("Ура! Угадала за ${ai.nova.core.assistant.RuFormat.count(tries, "попытку", "попытки", "попыток")}.", over = true)
+                Regex("""больше|выше|побольше""").containsMatchIn(t) -> lo = guess + 1
+                Regex("""меньше|ниже|поменьше""").containsMatchIn(t) -> hi = guess - 1
+                else -> return GameTurn("Скажите «больше», «меньше» или «да». Я назвала $guess.")
+            }
+            if (lo > hi) return GameTurn("Кажется, вы где-то ошиблись с подсказкой — такого числа нет. Сыграем ещё?", over = true)
+            guess = (lo + hi) / 2
+            tries++
+            return GameTurn(if (lo == hi) "Тогда это $guess!" else "Это $guess?")
+        }
+    }
+
+    // ------------------------------------------------------------------ Загадки
+    class Riddles(private val random: Random = Random.Default) : Game() {
+        override val title = "Загадки"
+        private val order = RIDDLES.indices.shuffled(random).toMutableList()
+        private var current = order.removeAt(0)
+        private var attempts = 0
+        private var score = 0
+
+        override fun start() = "Отгадайте загадку! ${RIDDLES[current].first}"
+
+        override suspend fun play(text: String, known: (suspend (String) -> Boolean)?): GameTurn {
+            val (_, answers) = RIDDLES[current]
+            val t = RuTokenizer.normalize(text)
+            if (isGiveUp(text) && Regex("""(?iu)хватит|стоп|закончи|надоело|всё$|все$""").containsMatchIn(text)) {
+                return GameTurn("Хорошо! Отгадано: $score. Приходите ещё за загадками.", over = true)
+            }
+            val giveUp = isGiveUp(text) || Regex("""(?iu)не знаю|ответ|скажи""").containsMatchIn(text)
+            val correct = answers.any { a -> t.contains(RuTokenizer.normalize(a).take(maxOf(3, a.length - 2))) }
+            return when {
+                correct -> { score++; next("Правильно — ${answers.first()}!") }
+                giveUp || attempts >= 2 -> next("Ответ: ${answers.first()}.")
+                else -> { attempts++; GameTurn("Нет, не угадали. Попробуйте ещё или скажите «не знаю».") }
+            }
+        }
+
+        private fun next(prefix: String): GameTurn {
+            if (order.isEmpty()) return GameTurn("$prefix Загадки кончились — отгадано $score. Молодец!", over = true)
+            current = order.removeAt(0); attempts = 0
+            return GameTurn("$prefix Следующая: ${RIDDLES[current].first}")
+        }
+    }
+
+    // ------------------------------------------------------------------ Викторина
+    class Quiz(private val random: Random = Random.Default, private val rounds: Int = 10) : Game() {
+        override val title = "Викторина"
+        private val order = Trivia.QUIZ.indices.shuffled(random).take(rounds).toMutableList()
+        private var current = order.removeAt(0)
+        private var attempts = 0
+        private var score = 0
+        private var asked = 1
+
+        override fun start() = "Викторина из $rounds вопросов! Первый: ${Trivia.QUIZ[current].first}"
+
+        override suspend fun play(text: String, known: (suspend (String) -> Boolean)?): GameTurn {
+            val (_, answers) = Trivia.QUIZ[current]
+            if (isGiveUp(text) && Regex("""(?iu)хватит|стоп|закончи|надоело|всё$|все$""").containsMatchIn(text)) {
+                return GameTurn("Хорошо! Правильных ответов: $score из ${asked - 1 + if (attempts > 0) 1 else 0}.", over = true)
+            }
+            val giveUp = isGiveUp(text) || Regex("""(?iu)не знаю|ответ|скажи|пропуст|дальше""").containsMatchIn(text)
+            return when {
+                answered(text, answers) -> { score++; next("Верно — ${answers.first()}!") }
+                giveUp || attempts >= 1 -> next("Правильный ответ: ${answers.first()}.")
+                else -> { attempts++; GameTurn("Не совсем. Ещё попытка или «не знаю».") }
+            }
+        }
+
+        private fun next(prefix: String): GameTurn {
+            if (order.isEmpty()) {
+                val verdict = when {
+                    score >= rounds * 0.8 -> "Отличный результат!"
+                    score >= rounds / 2 -> "Хороший результат!"
+                    else -> "В следующий раз получится лучше!"
+                }
+                return GameTurn("$prefix Викторина окончена: $score из $rounds. $verdict", over = true)
+            }
+            current = order.removeAt(0); attempts = 0; asked++
+            return GameTurn("$prefix Вопрос $asked: ${Trivia.QUIZ[current].first}")
+        }
+    }
+
+    // ------------------------------------------------------------------ Угадай слово по описанию
+    class GuessWord(private val random: Random = Random.Default) : Game() {
+        override val title = "Угадай слово"
+        private val order = Trivia.WORDS.indices.shuffled(random).toMutableList()
+        private var current = order.removeAt(0)
+        private var attempts = 0
+        private var score = 0
+
+        override fun start() = "Я описываю слово, а вы угадываете. ${Trivia.WORDS[current].first}"
+
+        override suspend fun play(text: String, known: (suspend (String) -> Boolean)?): GameTurn {
+            val (_, answers) = Trivia.WORDS[current]
+            if (isGiveUp(text) && Regex("""(?iu)хватит|стоп|закончи|надоело|всё$|все$""").containsMatchIn(text)) {
+                return GameTurn("Хорошо! Угадано слов: $score.", over = true)
+            }
+            val giveUp = isGiveUp(text) || Regex("""(?iu)не знаю|ответ|скажи""").containsMatchIn(text)
+            val word = answers.first()
+            return when {
+                answered(text, answers) -> { score++; next("Да, это ${word}!") }
+                giveUp || attempts >= 2 -> next("Это было слово «$word».")
+                attempts == 0 -> {
+                    attempts++
+                    GameTurn("Нет. Подсказка: первая буква «${word.first().uppercaseChar()}», всего ${ai.nova.core.assistant.RuFormat.count(word.length, "буква", "буквы", "букв")}.")
+                }
+                else -> { attempts++; GameTurn("Тоже нет. Последняя попытка или «не знаю».") }
+            }
+        }
+
+        private fun next(prefix: String): GameTurn {
+            if (order.isEmpty()) return GameTurn("$prefix Слова кончились — угадано $score!", over = true)
+            current = order.removeAt(0); attempts = 0
+            return GameTurn("$prefix Следующее: ${Trivia.WORDS[current].first}")
+        }
+    }
+
+    companion object {
+        /** Ответ засчитан: числа — целым словом («0» не прячется в «100»), слова — по основе. */
+        fun answered(text: String, answers: List<String>): Boolean {
+            val t = RuTokenizer.normalize(text)
+            val words = ai.nova.core.assistant.DevicePhrases.digitize(t).split(' ', ',', '.', '-')
+            return answers.any { a ->
+                val an = RuTokenizer.normalize(a)
+                if (an.all { it.isDigit() }) an in words
+                else t.contains(an.take(maxOf(3, an.length - 2)))
+            }
+        }
+
+        fun isGiveUp(text: String) = ai.nova.core.nlp.Rx.of("""(?iu)^(?:сдаюсь|я сдаюсь|хватит|стоп|закончим|закончи игру|конец игры|выход|надоело|не хочу играть|всё|все)\b""").containsMatchIn(text.trim())
+
+        /** «Давай поиграем в города», «загадай число», «загадай загадку». */
+        fun parseStart(text: String): Game? {
+            val t = text.lowercase().replace('ё', 'е').trim().trimEnd('.', '!', '?')
+            val d = ai.nova.core.assistant.DevicePhrases.digitize(t)
+            return when {
+                Regex("""(?:играть|игра|играй|играем|поиграем|сыграем|давай|начнем)\s*(?:в|во)?\s*город(?:а|ах)(?![\p{L}])|^города$|^игра в города$""").containsMatchIn(t) -> Cities()
+                // «Я загадала число, угадай» — теперь угадывает Нова.
+                Regex("""^(?:я\s+)?загадал[аи]?\s+(?:тебе\s+)?число|угадай\s+(?:мое|моё|задуманное)\s+число|^угадай,?\s+какое\s+число\s+я""").containsMatchIn(t) -> ReverseGuess()
+                // «Загадай число от 1 до 6» — просто случайное число.
+                Regex("""число\s+от\s+\d+\s+до\s+\d+""").containsMatchIn(d) && !Regex("""угада""").containsMatchIn(t) -> null
+                Regex("""угада(?:й|ть|ю)\s+число|загада(?:й|ла)\s+(?:мне\s+)?(?:какое-нибудь\s+|какое-то\s+|любое\s+)?число|игра\s+(?:в\s+)?(?:угадай\s+)?число""").containsMatchIn(t) -> GuessNumber()
+                Regex("""викторин|^(?:задай|задавай)\s+(?:мне\s+)?(?:вопрос|вопросы)(?:\s+на эрудицию)?$|^проверь\s+(?:мои\s+)?знания|^вопросы на эрудицию""").containsMatchIn(t) -> Quiz()
+                Regex("""угадай\s+слово|угадать\s+слово|(?:игра|играть|поиграем|сыграем|давай|поиграй со мной|сыграй со мной)\s+(?:в\s+)?(?:угадай(?:ку)?\s+)?слов(?:а|о)$|угадайк""").containsMatchIn(t) -> GuessWord()
+                Regex("""загад(?:ай|ывай)\s+(?:мне\s+|нам\s+)?загадк|(?:давай|хочу|расскажи|поиграем в|сыграем в)\s+загадк|^загадк[аиу]$|^загадай что[- ]нибудь$""").containsMatchIn(t) -> Riddles()
+                else -> null
+            }
+        }
+
+        /** Во что можно поиграть. */
+        fun isWhatToPlay(text: String) = Regex("""(?iu)^(?:давай\s+)?(?:поиграем|сыграем|поиграй со мной|во что (?:можно )?(?:поиграть|поиграем|сыграем|играем)|какие (?:есть )?игры|хочу (?:по)?играть)$""").containsMatchIn(text.trim().trimEnd('?', '!', '.'))
+
+        val RIDDLES: List<Pair<String, List<String>>> = listOf(
+            "Зимой и летом одним цветом. Что это?" to listOf("ёлка", "ель", "елка", "сосна"),
+            "Без окон, без дверей — полна горница людей." to listOf("огурец"),
+            "Сидит дед, во сто шуб одет. Кто его раздевает, тот слёзы проливает." to listOf("лук", "луковица"),
+            "Висит груша — нельзя скушать." to listOf("лампочка", "лампа"),
+            "Не лает, не кусает, а в дом не пускает." to listOf("замок"),
+            "Два кольца, два конца, посередине гвоздик." to listOf("ножницы"),
+            "Кто утром ходит на четырёх ногах, днём на двух, а вечером на трёх?" to listOf("человек"),
+            "Что можно увидеть с закрытыми глазами?" to listOf("сон"),
+            "Что становится больше, если его поставить вверх ногами?" to listOf("число 6", "шесть", "6"),
+            "У кого есть шляпа без головы и нога без сапога?" to listOf("гриб"),
+            "Растёт она вниз головой, не летом растёт, а зимой. Но солнце её припечёт — заплачет она и умрёт." to listOf("сосулька"),
+            "Белая морковка зимой растёт." to listOf("сосулька"),
+            "Зубов много, а ничего не ест." to listOf("расчёска", "расческа", "гребень"),
+            "Что всегда идёт, но никогда не приходит?" to listOf("завтра", "время"),
+            "Что можно приготовить, но нельзя съесть?" to listOf("уроки", "урок"),
+            "Кто говорит на всех языках?" to listOf("эхо"),
+            "Чем больше из неё берёшь, тем больше она становится." to listOf("яма"),
+            "Летом серый, зимой белый. Кто это?" to listOf("заяц"),
+            "Хвост пушистый, мех золотистый, в лесу живёт, в деревне кур крадёт." to listOf("лиса", "лисица"),
+            "Зимой спит, летом ульи ворошит." to listOf("медведь"),
+            "Без рук, без ног, а ворота открывает." to listOf("ветер"),
+            "Течёт, течёт — не вытечет, бежит, бежит — не выбежит." to listOf("река"),
+            "Над бабушкиной избушкой висит хлеба краюшка." to listOf("месяц", "луна"),
+            "Кругом вода, а с питьём беда." to listOf("море", "океан"),
+            "Сто одёжек и все без застёжек." to listOf("капуста"),
+            "Сидит девица в темнице, а коса на улице." to listOf("морковь", "морковка"),
+            "Маленький, удаленький, сквозь землю прошёл, красную шапочку нашёл." to listOf("гриб", "подосиновик"),
+            "Что принадлежит вам, но другие пользуются этим чаще?" to listOf("имя"),
+            "Не море, не земля, корабли не плавают, а ходить нельзя." to listOf("болото"),
+            "Какой рукой лучше размешивать чай?" to listOf("ложкой", "ложка"),
+            "Что нельзя удержать и десяти минут, хотя оно легче пёрышка?" to listOf("дыхание", "вдох"),
+            "Шёл муж с женой, брат с сестрой да шурин с зятем. Сколько всего человек?" to listOf("три", "3", "трое"),
+        )
+    }
+}
+
+/** Выбор случайной игры, если человек просто хочет поиграть. */
+fun randomGame(random: Random = Random.Default): Game =
+    listOf<() -> Game>({ Game.Cities() }, { Game.GuessNumber() }, { Game.Riddles() }, { Game.Quiz() }, { Game.GuessWord() }).random(random)()

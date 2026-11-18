@@ -1,0 +1,27 @@
+-- 2.18: количества в покупках, сохранённые рецепты и идущая готовка.
+ALTER TABLE shopping_item ADD COLUMN quantity REAL;
+ALTER TABLE shopping_item ADD COLUMN unit TEXT;
+ALTER TABLE shopping_item ADD COLUMN source TEXT;
+
+CREATE TABLE recipe (
+    id TEXT NOT NULL PRIMARY KEY,
+    dish_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    servings INTEGER NOT NULL DEFAULT 4,
+    source TEXT,
+    payload TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX recipe_dish_idx ON recipe(dish_key);
+
+CREATE TABLE cooking_session (
+    id TEXT NOT NULL PRIMARY KEY,
+    recipe_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    step_index INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX cooking_session_state_idx ON cooking_session(state, updated_at);

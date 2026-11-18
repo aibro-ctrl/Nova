@@ -1,3 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">nova</string>
+    <string name="app_name">Нова</string>
+    <string name="wake_listening">Жду обращения «%1$s»</string>
+    <string name="wake_model_missing">Офлайн-модель речи не установлена — откройте Настройки → Голос</string>
+    <string name="wake_command_starting">Включаю прослушивание…</string>
+    <string name="wake_command">Слушаю команду…</string>
+    <string name="wake_thinking">Выполняю…</string>
+    <string name="wake_stop">Выключить</string>
+    <string name="wake_reactivate">Телефон перезагружен. Нажмите, чтобы снова включить прослушивание.</string>
+    <string name="channel_reminders">Напоминания</string>
+    <string name="channel_reminders_desc">Напоминания, созданные ассистентом</string>
+    <string name="channel_listening">Фоновое прослушивание</string>
+    <string name="channel_listening_desc">Уведомление, пока ассистент ждёт своё имя</string>
+    <string name="channel_system">Системные</string>
+    <string name="reminder_title">Напоминание</string>
+    <string name="reminder_done">Готово</string>
+    <string name="reminder_snooze">Через 10 минут</string>
+    <string name="reminder_hour">Через час</string>
+    <string name="reminder_tomorrow">Завтра</string>
+    <string name="tile_label">Спросить Нова</string>
+    <string name="shortcut_listen_short">Говорить</string>
+    <string name="shortcut_listen_long">Спросить Нова голосом</string>
+    <string name="shortcut_expense_short">Расход</string>
+    <string name="shortcut_expense_long">Записать расход</string>
+    <string name="shortcut_task_short">Задача</string>
+    <string name="shortcut_task_long">Добавить задачу</string>
+    <string name="shortcut_note_short">Заметка</string>
+    <string name="shortcut_note_long">Записать заметку</string>
+    <string name="assist_label">Нова — ассистент</string>
+    <string name="recognition_label">Нова — офлайн-распознавание речи</string>
+    <string name="update_ready">Обновление Нова готово</string>
+    <string name="update_available">Доступна Нова %1$s</string>
+    <string name="update_tap">Нажмите, чтобы установить</string>
+    <string name="widget_label">Нова</string>
+    <string name="widget_description">Спросить Нова одним касанием</string>
+    <string name="widget_tasks_label">Задачи на сегодня</string>
+    <string name="widget_tasks_description">Задачи на сегодня и просроченные</string>
+    <string name="widget_shopping_label">Покупки</string>
+    <string name="widget_shopping_description">Что осталось купить</string>
+    <string name="accessibility_label">Нова — управление голосом</string>
+    <string name="accessibility_description">Позволяет Нова по голосовой команде нажимать системные кнопки: «назад», «домой», «недавние приложения», «открой уведомления», «сделай скриншот», «заблокируй экран». Текст экрана Нова читает только по вашей команде («что на экране», «перескажи экран») и не сохраняет его; пароли и ввод с клавиатуры не видит.</string>
+    <string name="result_channel">Результаты команд</string>
+    <string name="result_hidden">Нова выполнила команду</string>
 </resources>

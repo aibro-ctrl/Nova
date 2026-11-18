@@ -1,0 +1,287 @@
+package ai.nova.core.assistant
+
+import ai.nova.core.model.ShoppingItem
+import ai.nova.core.nlp.RuDateTimeParser
+import ai.nova.core.nlp.RuTokenizer
+import java.time.LocalDate
+
+/**
+ * Команды 1.7.0: списки покупок, сценарии, дни рождения, секретные заметки, перевод.
+ * Разбираются на устройстве раньше облачного AI — это точные команды, AI их только запутает.
+ */
+class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) {
+
+    /** Запрос перевода: целевой язык (ISO-код) и фраза. */
+    data class Translation(val language: String, val languageRu: String, val phrase: String)
+
+    fun parse(input: String, today: LocalDate): AssistantPlan? {
+        val text = input.trim().trimEnd('.', '!', '?').trim()
+        if (text.isEmpty()) return null
+        val n = RuTokenizer.normalize(text)
+        val action = shopping(text, n) ?: routine(text, n, today) ?: birthday(text, n, today) ?: subscription(n, today) ?: secret(text, n) ?: PersonalCommands.parse(text, n, today) ?: return null
+        return AssistantPlan("", listOf(action))
+    }
+
+    // --- Списки покупок ---------------------------------------------------------
+
+    private fun shopping(text: String, n: String): AssistantAction? {
+        val list = ShoppingItem.DEFAULT_LIST
+        // «Запиши покупки 500 рублей» — это расход, а не пункт списка.
+        if (Regex("""^(?:запиши|внеси|добавь)\b""").containsMatchIn(n) && Regex("""\d+\s*(?:р\b|руб|₽|тыс|к\b)|\d{3,}|рубл""").containsMatchIn(DevicePhrases.digitize(n))) return null
+        // «добавь в покупки молоко и хлеб», «запиши в список покупок: хлеб, яйца»
+        Regex("""^(?:добавь|допиши|запиши|внеси|закинь|кинь|положи|включи)\s+(?:мне\s+)?(?:в\s+)?(?:мой\s+)?(?:список\s+покупок|список\s+продуктов|покупки|продуктовый\s+список)[:,]?\s+(.+)$""")
+            .find(n)?.let { return AssistantAction.AddToList(list, items(sub(text, it.groups[1]!!))) }
+        // «добавь молоко в покупки», «запиши хлеб и яйца в список покупок»
+        Regex("""^(?:добавь|допиши|запиши|внеси|закинь|кинь)\s+(.+?)\s+в\s+(?:мой\s+)?(?:список\s+покупок|список\s+продуктов|покупки)$""")
+            .find(n)?.let { return AssistantAction.AddToList(list, items(sub(text, it.groups[1]!!))) }
+        // «в список покупок добавь сметану», «в покупки запиши хлеб»
+        Regex("""^в\s+(?:мой\s+)?(?:список\s+покупок|список\s+продуктов|покупки)\s+(?:добавь|допиши|запиши|внеси|закинь)[:,]?\s+(.+)$""")
+            .find(n)?.let { return AssistantAction.AddToList(list, items(sub(text, it.groups[1]!!))) }
+        // «надо купить молоко, добавь в покупки»
+        Regex("""^(?:(?:мне\s+|нам\s+)?(?:надо|нужно)\s+)?(?:купить\s+)(.+?)[,]?\s+(?:добавь|запиши|закинь|внеси)\s+(?:это\s+|их\s+|его\s+)?(?:в\s+)?(?:покупки|список\s+покупок)$""")
+            .find(n)?.let { return AssistantAction.AddToList(list, items(sub(text, it.groups[1]!!))) }
+        // «купить: молоко, хлеб» / «в магазин: …»
+        Regex("""^(?:список\s+покупок|в\s+магазин|купить)\s*:\s*(.+)$""")
+            .find(n)?.let { return AssistantAction.AddToList(list, items(sub(text, it.groups[1]!!))) }
+        // Другие списки: «добавь в список в дорогу: зарядку, паспорт»
+        Regex("""^(?:добавь|запиши|внеси)\s+в\s+список\s+(.+?)\s*:\s*(.+)$""")
+            .find(n)?.let { m ->
+                val name = sub(text, m.groups[1]!!).trim('«', '»', '"').replaceFirstChar { it.uppercase() }
+                return AssistantAction.AddToList(name, items(sub(text, m.groups[2]!!)))
+            }
+        if (Regex("""^(?:что|чего)\s+(?:мне\s+|нам\s+)?(?:нужно\s+|надо\s+|ещё\s+|еще\s+)*купить(?:\s+в\s+магазине)?$|^(?:покажи|прочитай|озвучь|открой|какой|скажи|назови)\s+(?:мне\s+)?(?:мой\s+|весь\s+)?(?:список\s+покупок|список\s+продуктов|покупки)$|^(?:список\s+покупок|мои\s+покупки)$|^что\s+(?:у\s+меня\s+)?в\s+(?:списке\s+покупок|покупках)$""").containsMatchIn(n)) {
+            return AssistantAction.QueryList(list)
+        }
+        Regex("""^(?:покажи|прочитай|открой)\s+список\s+(.+)$""").find(n)?.let { m ->
+            val name = sub(text, m.groups[1]!!)
+            if (!Regex("""^(?:задач|дел|напомин|расход|трат|заметок|идей|дн\S*\s+рожд|рожд|будильн|сценари|таймер|мест|контакт|сообщени|событи|встреч|памят)""").containsMatchIn(RuTokenizer.normalize(name))) {
+                return AssistantAction.QueryList(name.replaceFirstChar { it.uppercase() })
+            }
+        }
+        // «вычеркни хлеб из покупок», «убери молоко из списка покупок»
+        Regex("""^(?:вычеркни|отметь|убери|удали)\s+(.+?)\s+(?:из\s+(?:списка\s+покупок|покупок|списка\s+продуктов)|в\s+покупках(?:\s+как\s+купленн\p{L}*)?)$""")
+            .find(n)?.let { return AssistantAction.CheckListItem(list, sub(text, it.groups[1]!!)) }
+        if (Regex("""^(?:очисти|удали|сотри)\s+(?:весь\s+)?(?:список\s+покупок|покупки|список\s+продуктов)$""").containsMatchIn(n)) return AssistantAction.ClearList(list, onlyDone = false)
+        if (Regex("""^(?:убери|удали|очисти|сотри)\s+(?:всё\s+|все\s+)?купленн\p{L}*(?:\s+из\s+(?:списка|покупок))?$""").containsMatchIn(n)) return AssistantAction.ClearList(list, onlyDone = true)
+        return null
+    }
+
+    /** «Купила молоко и хлеб» без суммы — вычеркнуть из покупок (решает движок: только если такие пункты есть). */
+    fun boughtItems(input: String): List<String>? {
+        val n = RuTokenizer.normalize(input.trim().trimEnd('.', '!'))
+        val lists = """(?:списка\s+покупок|списка\s+продуктов|покупок|списка)"""
+        // «Вычеркни молоко», «убери молоко из списка», «убери из списка молоко» — тоже покупка; движок проверит, что пункт есть.
+        val m = Regex("""^(?:я\s+)?(?:уже\s+)?(?:купил|купила|купили|взял|взяла|взяли)\s+(.+)$""").find(n)
+            ?: Regex("""^(?:вычеркни|вычеркнуть|убери|удали)\s+(?:из\s+$lists\s+)?(.+?)(?:\s+из\s+$lists)?$""").find(n)
+            ?: return null
+        if (Regex("""\d""").containsMatchIn(n) || Regex("""(?:рубл|₽|доллар|евро|тысяч|сотн|за\s)""").containsMatchIn(n)) return null
+        return items(m.groupValues[1]).takeIf { it.isNotEmpty() }
+    }
+
+    private fun items(raw: String): List<String> = splitItems(raw)
+
+    // --- Сценарии ---------------------------------------------------------------
+
+    /** Повелительное «по привычке» → обычная команда: «читай сводку» → «что у меня на сегодня», «включай радио» → «включи радио». */
+    private fun commandForm(cmd: String): String {
+        var c = cmd.trim()
+        val first = RuTokenizer.normalize(c.substringBefore(' '))
+        IMPERFECTIVE[first]?.let { c = it + c.substring(first.length) }
+        val n = RuTokenizer.normalize(c)
+        return when {
+            Regex("""^(?:прочитай|скажи|расскажи|покажи|озвучь)\s+(?:мне\s+)?(?:утреннюю\s+|мою\s+)?(?:сводку|план(?:\s+на\s+день)?|планы|дела)$""").matches(n) -> "что у меня на сегодня"
+            Regex("""^(?:прочитай|скажи|расскажи|покажи|озвучь)\s+(?:мне\s+)?(?:прогноз\s+)?погод\p{L}*$""").matches(n) -> "какая погода"
+            Regex("""^(?:прочитай|скажи|расскажи|покажи|озвучь)\s+(?:мне\s+)?(?:итоги\s+дня|вечернюю\s+сводку)$""").matches(n) -> "итоги дня"
+            Regex("""^(?:прочитай|скажи|расскажи|покажи|озвучь)\s+(?:мне\s+)?итоги\s+недели$""").matches(n) -> "итоги недели"
+            else -> c
+        }
+    }
+
+    /** «Каждый будний день в 7:30 читай сводку и включай радио» — сценарий по расписанию. */
+    private fun scheduledRoutine(text: String, n: String, today: LocalDate): AssistantAction? {
+        if (!ai.nova.core.nlp.Rx.of("""^(?:каждый|каждое|каждую|каждые|ежедневно|по\s+будням|по\s+выходным|по\s+(?:понедельникам|вторникам|средам|четвергам|пятницам|субботам|воскресеньям))\b""").containsMatchIn(n)) return null
+        val parsed = dates.parse(text, today)
+        val rule = dates.effectiveRecurrence(parsed.spec) ?: return null
+        if (parsed.spec.time == null || rule.frequency == ai.nova.core.model.Recurrence.Frequency.HOURLY) return null
+        val rest = parsed.remainder.trim().trim(',', ':', '—', '-', ' ')
+        val first = RuTokenizer.normalize(rest.substringBefore(' '))
+        // «Каждый день в 9 напоминай пить воду» — это напоминание, а не сценарий.
+        if (first !in IMPERFECTIVE && first !in PERFECTIVE) return null
+        val cmds = commands(rest).map(::commandForm)
+        if (cmds.isEmpty()) return null
+        return AssistantAction.CreateRoutine(rule.describeRu().replaceFirstChar { it.uppercase() }, cmds, rule)
+    }
+
+    private fun routine(text: String, n: String, today: LocalDate): AssistantAction? {
+        scheduledRoutine(text, n, today)?.let { return it }
+        Regex("""^(?:когда|если)\s+я\s+(?:говорю|скажу|произношу|произнесу)\s+[«"]?(.+?)[»"]?\s*(?:,\s*то|,|—|-|:|\s+то)\s+(.+)$""").find(n)?.let { m ->
+            val trigger = sub(text, m.groups[1]!!).trim('«', '»', '"', ' ', ',')
+            return AssistantAction.CreateRoutine(trigger.replaceFirstChar { it.uppercase() }, commands(sub(text, m.groups[2]!!)))
+        }
+        Regex("""^(?:создай|сделай|добавь|запиши)\s+сценарий\s+[«"]?(.+?)[»"]?\s*[:—-]\s*(.+)$""").find(n)?.let { m ->
+            return AssistantAction.CreateRoutine(sub(text, m.groups[1]!!).replaceFirstChar { it.uppercase() }, commands(sub(text, m.groups[2]!!)))
+        }
+        if (Regex("""^(?:какие|покажи|перечисли|мои)\s+(?:у\s+меня\s+|мои\s+)?(?:есть\s+)?сценари\p{L}*$""").containsMatchIn(n)) return AssistantAction.QueryRoutines
+        Regex("""^(?:удали|убери|сотри)\s+сценарий\s+[«"]?(.+?)[»"]?$""").find(n)?.let { return AssistantAction.DeleteRoutine(sub(text, it.groups[1]!!)) }
+        return null
+    }
+
+    private fun commands(raw: String): List<String> =
+        raw.split(Regex("""\s*(?:;|,\s*(?:а\s+)?(?:потом|затем|и)?\s*|\s+и\s+(?:потом\s+|ещё\s+|еще\s+)?|\s+потом\s+|\s+затем\s+)\s*"""))
+            .map { it.trim().trim('.', ',') }.filter { it.length >= 3 }
+
+    // --- Дни рождения -------------------------------------------------------------
+
+    private fun birthday(text: String, n: String, today: LocalDate): AssistantAction? {
+        // Вопросы
+        if (Regex("""^(?:а\s+)?(?:у кого|чей|чьи)\s+(?:скоро|ближайший|следующий|ближайшие|сегодня|завтра)\s+(?:дни|день)\s+рождения|^(?:ближайшие|скорые)\s+дни\s+рождения|^(?:скоро|в ближайшее время)\s+(?:у кого-нибудь\s+)?(?:день|дни)\s+рождения|^(?:кого|кого мне)\s+(?:скоро\s+|сегодня\s+)?(?:нужно\s+|надо\s+)?поздравить|^есть\s+(?:ли\s+)?(?:сегодня\s+|скоро\s+)?(?:у кого-нибудь\s+)?(?:день|дни)\s+рождения""").containsMatchIn(n)) {
+            return AssistantAction.QueryBirthdays(null, soon = true)
+        }
+        Regex("""^когда\s+(?:будет\s+)?(?:у\s+(.+?)\s+день\s+рождения|день\s+рождения\s+(?:у\s+)?(.+?))$""").find(n)?.let { m ->
+            val g = m.groups[1] ?: m.groups[2]!!
+            return AssistantAction.QueryBirthdays(sub(text, g))
+        }
+        if (Regex("""^(?:чьи|какие|у\s+кого)\s+(?:будут\s+|есть\s+)?(?:дни|день)\s+рождения\s+(?:будут\s+)?в\s+этом\s+месяце$|^(?:дни\s+рождения|у\s+кого\s+день\s+рождения)\s+в\s+этом\s+месяце$""").containsMatchIn(n)) {
+            return AssistantAction.QueryBirthdays(null, thisMonth = true)
+        }
+        if (Regex("""^(?:покажи|какие|перечисли|все)\s+(?:мои\s+|все\s+)?дни\s+рождения$|^(?:дни\s+рождения|список\s+дней\s+рождения)$""").containsMatchIn(n)) {
+            return AssistantAction.QueryBirthdays(null)
+        }
+        // «день рождения мамы 5 мая», «запомни, что у Саши день рождения 12 марта», «у папы др 3 июня»
+        val m = Regex("""^(?:запомни|запиши|добавь|сохрани)?[,:]?\s*(?:что\s+)?(?:у\s+(.+?)\s+)?(?:день\s+рождения|др|днюха|днюшка)(?:\s+у)?\s+(.+)$""").find(n) ?: return null
+        val rest = sub(text, m.groups[2]!!)
+        val parsed = dates.parse(rest, today)
+        val date = parsed.spec.date ?: return null
+        if (parsed.spec.offset != null) return null
+        val person = (m.groups[1]?.let { sub(text, it) } ?: parsed.remainder).trim().trim(',', '—', '-', ' ')
+            .replace(Regex("""^(?:у|моей|моего|мой|моя)\s+""", RegexOption.IGNORE_CASE), "")
+        if (person.isEmpty() || person.split(' ').size > 4) return null
+        return AssistantAction.AddBirthday(person, date.monthValue, date.dayOfMonth)
+    }
+
+    // --- Подписки ---------------------------------------------------------------------
+
+    /** «Музыку» → «музыка»: название подписки в именительном падеже (для одного слова). */
+    private fun subjectName(raw: String): String {
+        val w = raw.trim()
+        return if (' ' in w) w else when {
+            Regex("""[а-я]+[кнтрвсм]у$""").matches(w) -> w.dropLast(1) + "а"
+            w.length > 3 && w.endsWith("ю") -> w.dropLast(1) + "я"
+            else -> w
+        }
+    }
+
+    private fun subscription(n: String, today: LocalDate): AssistantAction? {
+        if (!n.contains("подписк")) return null
+        if (Regex("""^(?:какие|покажи|перечисли|мои|все)\s+(?:у\s+меня\s+|мои\s+)?(?:есть\s+)?подписк\p{L}*$""").containsMatchIn(n)) return AssistantAction.QuerySubscriptions()
+        if (Regex("""^(?:сколько|во сколько)\s+.*(?:уходит|обходятся|обходится|стоят|стоит|плачу|тратится|тратим|тратишь)""").containsMatchIn(n) && n.contains("подписк")) return AssistantAction.QuerySubscriptions(total = true)
+        Regex("""^(?:отмени|удали|убери|отключи|закрой)\s+(?:мою\s+)?подписк\p{L}*\s+(?:на\s+)?(.+)$""").find(n)?.let { return AssistantAction.CancelSubscription(subjectName(it.groupValues[1])) }
+        val d = DevicePhrases.digitize(n)
+        val m = Regex("""^(?:запомни|добавь|запиши|заведи|оформи|оформил|оформила)?[,:]?\s*(?:новую\s+)?подписк\p{L}*\s+(?:на\s+)?(.+?)\s+(\d+(?:[.,]\d+)?)\s*(?:руб\p{L}*|₽|р)(?=\s|$)(.*)$""").find(d) ?: return null
+        val amount = m.groupValues[2].replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 } ?: return null
+        val name = subjectName(m.groupValues[1].trim()).replaceFirstChar { it.uppercase() }
+        if (name.isEmpty() || name.split(' ').size > 4) return null
+        val rest = m.groupValues[3]
+        val yearly = Regex("""год|ежегодно""").containsMatchIn(rest) && !Regex("""месяц""").containsMatchIn(rest)
+        val dayText = Regex("""(\d{1,2})\s*(?:числа|число)""").find(rest)?.groupValues?.get(1)?.toIntOrNull()
+        val date = if (yearly) dates.parse(rest, today).spec.date else null
+        val day = (date?.dayOfMonth ?: dayText ?: today.dayOfMonth).coerceIn(1, 31)
+        val month = date?.monthValue ?: today.monthValue
+        return AssistantAction.AddSubscription(name, amount, yearly, day, month)
+    }
+
+    // --- Секретные заметки ----------------------------------------------------------
+
+    private fun secret(text: String, n: String): AssistantAction? {
+        val m = Regex("""^(?:запиши|создай|сохрани|сделай|добавь)\s+(?:мне\s+)?(?:секретн\p{L}+|тайн\p{L}+|личн\p{L}+\s+секретн\p{L}+|скрыт\p{L}+)\s+(?:заметку|запись)[:,]?\s+(.+)$""").find(n) ?: return null
+        val content = sub(text, m.groups[1]!!).replaceFirstChar { it.uppercase() }
+        val title = content.split(Regex("""\s+""")).take(6).joinToString(" ").trimEnd(',', '.', ':')
+        return AssistantAction.CreateSecretNote(title, content)
+    }
+
+    // --- Перевод ------------------------------------------------------------------
+
+    fun translation(input: String): Translation? {
+        val text = input.trim().trimEnd('.', '!', '?').trim()
+        val n = RuTokenizer.normalize(text)
+        val lang = LANGS.entries.firstOrNull { (k, _) -> Regex("""(?:на\s+$k\p{L}*|по-$k\p{L}*)""").containsMatchIn(n) } ?: return null
+        val code = lang.value.first
+        val body = Regex("""^(?:переведи|перевести|переведите|как\s+(?:будет|сказать|звучит|написать)|скажи)\s+(.+)$""").find(n)?.groups?.get(1)
+            ?: Regex("""^как\s+(?:по-\S+)\s+(.+)$""").find(n)?.groups?.get(1)
+            ?: return null
+        val phrase = sub(text, body)
+            .replace(Regex("""(?iu)(?:на\s+${lang.key}\p{L}*(?:\s+язык\p{L}*)?|по-${lang.key}\p{L}*)"""), "")
+            .replace(Regex("""^\s*(?:фразу|слово|предложение|текст)\s+""", RegexOption.IGNORE_CASE), "")
+            .trim().trim(',', ':', '«', '»', '"', ' ')
+        if (phrase.isEmpty()) return null
+        return Translation(code, lang.value.second, phrase)
+    }
+
+    private fun sub(original: String, g: MatchGroup): String = original.substring(g.range.first, minOf(g.range.last + 1, original.length)).trim()
+
+    companion object {
+        /** Команды в сценарии по расписанию говорят «по привычке»: «включай», «читай». */
+        private val IMPERFECTIVE = mapOf(
+            "читай" to "прочитай", "включай" to "включи", "выключай" to "выключи", "ставь" to "поставь", "говори" to "скажи",
+            "рассказывай" to "расскажи", "показывай" to "покажи", "запускай" to "запусти", "делай" to "сделай", "открывай" to "открой",
+            "озвучивай" to "озвучь", "присылай" to "покажи", "зачитывай" to "прочитай", "проверяй" to "покажи",
+        )
+        private val PERFECTIVE = setOf(
+            "прочитай", "включи", "выключи", "поставь", "скажи", "расскажи", "покажи", "запусти", "сделай", "открой", "озвучь", "зачитай",
+        )
+
+        /** «Молоко, хлеб и яйца» → три пункта списка. */
+        fun splitItems(raw: String): List<String> =
+            raw.split(Regex(""",|;|\s+и\s+|\s+а\s+также\s+|\s+ещё\s+|\s+еще\s+"""))
+                .map { it.trim().trim('.', '«', '»', '"').trim() }
+                .map { it.replace(Regex("""^(?:ещё|еще|и)\s+""", RegexOption.IGNORE_CASE), "") }
+                .filter { it.isNotEmpty() && it.length <= 80 }
+
+        private val DICTATION_START = Regex("""^(?:давай\s+)?(?:я\s+)?(?:надиктую|продиктую|хочу\s+надиктовать|надиктовать)(?:\s+(?:тебе\s+)?(?:заметку|текст|запись))?$|^(?:запиши|записывай|прими)\s+(?:под\s+диктовку|длинную\s+заметку)$|^(?:режим\s+)?диктовк[аи]$|^(?:начни|включи)\s+диктовку$|^(?:запиши|создай|новая)\s+(?:мне\s+)?заметку$""")
+        private val DICTATION_END = Regex("""[\s,.]*(?:готово|всё|все|конец|закончил[а]?|закончили|стоп|хватит|сохрани|конец заметки)[.!]?$""", RegexOption.IGNORE_CASE)
+
+        /** «Надиктую заметку», «запиши под диктовку», «запиши заметку» без текста. */
+        fun isDictationStart(text: String): Boolean = DICTATION_START.matches(RuTokenizer.normalize(text.trim().trimEnd('.', '!', '?')))
+
+        /** Слово завершения в конце куска диктовки. */
+        fun endsDictation(piece: String): Boolean = DICTATION_END.containsMatchIn(piece.trim()) && piece.trim().split(Regex("""\s+""")).size <= 40
+
+        fun cleanDictation(text: String): String {
+            var t = text.trim()
+            repeat(2) { t = t.replace(DICTATION_END, "").trim() }
+            return t.trim(',', ' ')
+        }
+
+        /** Основа названия языка → (код, «английский»). */
+        val LANGS = linkedMapOf(
+            "английск" to ("en" to "английский"), "немецк" to ("de" to "немецкий"), "французск" to ("fr" to "французский"),
+            "испанск" to ("es" to "испанский"), "итальянск" to ("it" to "итальянский"), "китайск" to ("zh" to "китайский"),
+            "японск" to ("ja" to "японский"), "турецк" to ("tr" to "турецкий"), "корейск" to ("ko" to "корейский"),
+            "португальск" to ("pt" to "португальский"), "польск" to ("pl" to "польский"), "украинск" to ("uk" to "украинский"),
+            "арабск" to ("ar" to "арабский"), "грузинск" to ("ka" to "грузинский"), "казахск" to ("kk" to "казахский"),
+            "русск" to ("ru" to "русский"),
+        )
+
+        /** Небольшой офлайн-словарь самых частых фраз (без AI). */
+        val OFFLINE = mapOf(
+            "en" to mapOf("привет" to "Hello", "спасибо" to "Thank you", "пожалуйста" to "Please", "до свидания" to "Goodbye",
+                "как дела" to "How are you?", "извините" to "Excuse me", "да" to "Yes", "нет" to "No", "доброе утро" to "Good morning",
+                "добрый вечер" to "Good evening", "спокойной ночи" to "Good night", "я тебя люблю" to "I love you",
+                "сколько стоит" to "How much is it?", "где туалет" to "Where is the toilet?", "счёт пожалуйста" to "The bill, please",
+                "счет пожалуйста" to "The bill, please", "помогите" to "Help!", "меня зовут" to "My name is", "я не понимаю" to "I don't understand"),
+            "de" to mapOf("привет" to "Hallo", "спасибо" to "Danke", "пожалуйста" to "Bitte", "до свидания" to "Auf Wiedersehen",
+                "как дела" to "Wie geht's?", "да" to "Ja", "нет" to "Nein", "доброе утро" to "Guten Morgen", "спокойной ночи" to "Gute Nacht",
+                "я не понимаю" to "Ich verstehe nicht", "сколько стоит" to "Wie viel kostet das?"),
+            "fr" to mapOf("привет" to "Salut", "спасибо" to "Merci", "пожалуйста" to "S'il vous plaît", "до свидания" to "Au revoir",
+                "как дела" to "Comment ça va ?", "да" to "Oui", "нет" to "Non", "доброе утро" to "Bonjour", "спокойной ночи" to "Bonne nuit",
+                "я тебя люблю" to "Je t'aime"),
+            "es" to mapOf("привет" to "Hola", "спасибо" to "Gracias", "пожалуйста" to "Por favor", "до свидания" to "Adiós",
+                "как дела" to "¿Cómo estás?", "да" to "Sí", "нет" to "No", "доброе утро" to "Buenos días", "спокойной ночи" to "Buenas noches",
+                "я тебя люблю" to "Te quiero"),
+            "it" to mapOf("привет" to "Ciao", "спасибо" to "Grazie", "пожалуйста" to "Per favore", "до свидания" to "Arrivederci",
+                "да" to "Sì", "нет" to "No", "доброе утро" to "Buongiorno"),
+            "tr" to mapOf("привет" to "Merhaba", "спасибо" to "Teşekkür ederim", "пожалуйста" to "Lütfen", "да" to "Evet", "нет" to "Hayır",
+                "до свидания" to "Hoşça kal"),
+        )
+    }
+}

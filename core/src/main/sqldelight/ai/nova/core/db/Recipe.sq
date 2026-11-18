@@ -1,0 +1,63 @@
+-- Рецепты Нова: сохранённые книга, статьи и рецепты из заметок.
+-- payload — JSON ингредиентов и шагов, чтобы не терять количества при копировании между устройствами.
+CREATE TABLE recipe (
+    id TEXT NOT NULL PRIMARY KEY,
+    dish_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    servings INTEGER NOT NULL DEFAULT 4,
+    source TEXT,
+    payload TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX recipe_dish_idx ON recipe(dish_key);
+
+-- Идущая готовка: шаг и состояние. Нужна, чтобы «продолжим готовить» работало после перезапуска.
+CREATE TABLE cooking_session (
+    id TEXT NOT NULL PRIMARY KEY,
+    recipe_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    step_index INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX cooking_session_state_idx ON cooking_session(state, updated_at);
+
+upsertRecipe:
+INSERT OR REPLACE INTO recipe(id, dish_key, title, servings, source, payload, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+selectRecipe:
+SELECT * FROM recipe WHERE id = ?;
+
+selectRecipeByDish:
+SELECT * FROM recipe WHERE dish_key = ? ORDER BY updated_at DESC LIMIT 1;
+
+deleteRecipe:
+DELETE FROM recipe WHERE id = ?;
+
+deleteRecipesOlderThan:
+DELETE FROM recipe WHERE updated_at < ?;
+
+upsertSession:
+INSERT OR REPLACE INTO cooking_session(id, recipe_id, title, step_index, state, updated_at)
+VALUES (?, ?, ?, ?, ?, ?);
+
+selectSession:
+SELECT * FROM cooking_session WHERE id = ?;
+
+selectActiveSession:
+SELECT * FROM cooking_session WHERE state IN ('NOT_STARTED', 'IN_PROGRESS', 'WAITING_FOR_USER', 'PAUSED') ORDER BY updated_at DESC LIMIT 1;
+
+deleteSession:
+DELETE FROM cooking_session WHERE id = ?;
+
+deleteSessionsOlderThan:
+DELETE FROM cooking_session WHERE updated_at < ?;
+
+deleteAllRecipes:
+DELETE FROM recipe;
+
+deleteAllSessions:
+DELETE FROM cooking_session;

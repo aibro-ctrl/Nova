@@ -1,55 +1,229 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.security.MessageDigest
+
 plugins {
-    alias(libs.plugins.android.application)
+    id("com.android.application")
+    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
-android {
-    namespace = "com.nova.nova"
-    compileSdk {
-        version = release(37)
+/**
+ * Конфигурация берётся из переменных окружения (GitHub Secrets / Variables)
+ * или из gradle-свойств (-P). В репозитории секретов нет.
+ */
+fun config(name: String): String =
+    (System.getenv(name) ?: providers.gradleProperty(name).orNull ?: "").trim()
+
+fun String.asBuildConfigString(): String =
+    "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+/** Текущая версия приложения (релиз может передать свою через NOVA_VERSION_NAME). */
+val APP_VERSION = "2.18.1"
+
+// Офлайн-модель для разговора: llama.cpp (MIT), фиксированная версия. Исходники скачиваются при сборке
+// и проверяются по sha256 — в репозиторий они не попадают.
+val llamaVersion = "0.5.0"
+val llamaSha256 = "fef9ed754f4e031fb5c663c29260feda4ebc241abb68d64a81c0f1df5f1748e2"
+val llamaTarball: File = file("libs/llama.cpp-$llamaVersion.tar.gz")
+val llamaSrcDir: File = layout.buildDirectory.dir("llama.cpp-$llamaVersion").get().asFile
+if (!llamaTarball.exists()) {
+    llamaTarball.parentFile.mkdirs()
+    val tmp = File(llamaTarball.path + ".part")
+    logger.lifecycle("Скачиваю llama.cpp $llamaVersion…")
+    uri("https://github.com/ggml-org/llama.cpp/archive/refs/tags/v$llamaVersion.tar.gz").toURL().openStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
+    val digest = MessageDigest.getInstance("SHA-256").digest(tmp.readBytes()).joinToString("") { "%02x".format(it) }
+    if (digest != llamaSha256) {
+        tmp.delete()
+        throw GradleException("llama.cpp: неверная контрольная сумма $digest")
     }
+    tmp.renameTo(llamaTarball)
+}
+val prepareLlamaSources by tasks.registering(Sync::class) {
+    from(tarTree(resources.gzip(llamaTarball))) {
+        // Убираем верхнюю папку архива «llama.cpp-0.5.0/».
+        eachFile { relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray()) }
+        includeEmptyDirs = false
+    }
+    into(llamaSrcDir)
+}
+tasks.matching { it.name.startsWith("configureCMake") || it.name.startsWith("buildCMake") }.configureEach { dependsOn(prepareLlamaSources) }
+
+val releaseKeystoreFile = config("NOVA_KEYSTORE_FILE")
+val hasReleaseSigning = releaseKeystoreFile.isNotEmpty() && file(releaseKeystoreFile).exists()
+
+android {
+    namespace = "ai.nova.app"
+    compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.nova.nova"
-        minSdk = 26
-        targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        applicationId = "ai.nova.app"
+        minSdk = 24
+        targetSdk = 35
+        // Код версии выводится из номера (1.3.0 → 10300): новые релизы всегда ставятся поверх старых.
+        versionName = config("NOVA_VERSION_NAME").ifEmpty { APP_VERSION }
+        versionCode = versionName!!.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
+            .let { (it.getOrElse(0) { 0 } * 10000) + (it.getOrElse(1) { 0 } * 100) + it.getOrElse(2) { 0 } }
+        // Откуда приложение проверяет обновления (в CI — текущий репозиторий).
+        buildConfigField("String", "UPDATE_REPO", config("GITHUB_REPOSITORY").ifEmpty { "aibro-ctrl/Nova" }.asBuildConfigString())
+
+        buildConfigField("String", "SUPABASE_URL", config("SUPABASE_URL").asBuildConfigString())
+        buildConfigField("String", "SUPABASE_ANON_KEY", config("SUPABASE_ANON_KEY").asBuildConfigString())
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    }
-
-    buildTypes {
-        release {
-            optimization {
-                enable = true
-                packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
+        vectorDrawables { useSupportLibrary = true }
+        // Телефоны — ARM; без x86-библиотек APK заметно меньше.
+        // Для проверки на эмуляторе CI (x86_64) — отдельный флаг; релиз собирается только под ARM.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") + (if (project.findProperty("nova.emulator") == "true") listOf("x86_64") else emptyList()) }
+        // Офлайн-модель (llama.cpp) — только для 64-битных телефонов: на 32-битных она слишком медленная.
+        externalNativeBuild {
+            cmake {
+                abiFilters += listOf("arm64-v8a")
+                arguments += listOf("-DLLAMA_SRC=${llamaSrcDir.absolutePath}", "-DCMAKE_BUILD_TYPE=Release")
             }
         }
     }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
+
+    // Офлайн-модель речи (scripts/fetch-vosk-model.sh) встраивается в APK, если скачана.
+    sourceSets.getByName("main").assets.srcDir("vosk-assets")
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseKeystoreFile)
+                storePassword = config("NOVA_KEYSTORE_PASSWORD")
+                keyAlias = config("NOVA_KEY_ALIAS")
+                keyPassword = config("NOVA_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Без суффикса пакета: статические ярлыки (res/xml/shortcuts.xml) указывают на ai.nova.app.
+            versionNameSuffix = "-debug"
+            // Если в CI передан постоянный ключ — подписываем им и debug-сборку,
+            // чтобы обновления ставились поверх без потери данных.
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
+        }
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+        }
+    }
+
+    compileOptions {
+        // java.time и другие API Java 8+ на Android 7 (24–25) — через desugaring.
+        isCoreLibraryDesugaringEnabled = true
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    packaging {
+        resources {
+            excludes += setOf(
+                "/META-INF/{AL2.0,LGPL2.1}",
+                "/META-INF/INDEX.LIST",
+                "/META-INF/io.netty.versions.properties",
+                "META-INF/versions/9/previous-compilation-data.bin",
+            )
+        }
+        jniLibs {
+            // Нативные библиотеки сжимаются в APK (синтезатор речи весит десятки мегабайт) —
+            // так обновление скачивается быстрее; при установке Android распаковывает их сам.
+            useLegacyPackaging = true
+        }
+    }
+
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = true
+        warningsAsErrors = false
+        disable += setOf("MissingTranslation", "GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion")
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+// Встроенный «Голос Нова»: офлайн-синтез sherpa-onnx (Apache-2.0). Библиотека берётся из служебного релиза
+// voices-v1 этого репозитория (туда её выкладывает .github/workflows/voices.yml) и проверяется по sha256.
+val sherpaVersion = "1.13.8"
+val sherpaSha256 = "633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96"
+val sherpaAar: File = file("libs/sherpa-onnx-$sherpaVersion.aar")
+if (!sherpaAar.exists()) {
+    sherpaAar.parentFile.mkdirs()
+    val tmp = File(sherpaAar.path + ".part")
+    val url = "https://github.com/Lucky2356/loli_ai/releases/download/voices-v1/sherpa-onnx.aar"
+    logger.lifecycle("Скачиваю sherpa-onnx $sherpaVersion…")
+    uri(url).toURL().openStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
+    val digest = MessageDigest.getInstance("SHA-256").digest(tmp.readBytes()).joinToString("") { "%02x".format(it) }
+    if (digest != sherpaSha256) {
+        tmp.delete()
+        throw GradleException("sherpa-onnx.aar: неверная контрольная сумма $digest")
+    }
+    tmp.renameTo(sherpaAar)
+}
+
 dependencies {
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(project(":core"))
+    implementation(files(sherpaAar))
+
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.ktor.client.android)
+
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.service)
+    implementation(libs.androidx.lifecycle.process)
+    implementation(libs.androidx.work.runtime)
+    implementation(libs.androidx.datastore.preferences)
+
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.ui)
+    implementation(libs.compose.ui.tooling.preview)
+    implementation(libs.compose.material3)
+    implementation(libs.compose.material.icons.extended)
+    debugImplementation(libs.compose.ui.tooling)
+
+    implementation(libs.sqldelight.android.driver)
+    implementation(libs.sqlcipher.android)
+    implementation(libs.androidx.sqlite)
+
+    implementation(libs.vosk.android)
+    // Системный доступ через Shizuku (отладка по Wi-Fi): ассистент по умолчанию и спецвозможности на прошивках с ограничениями.
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
+    implementation(libs.jna) { artifact { type = "aar" } }
+
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     testImplementation(libs.junit)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-    androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(libs.androidx.junit)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
-    debugImplementation(libs.androidx.compose.ui.tooling)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.rules)
+    testImplementation(libs.kotlin.test)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

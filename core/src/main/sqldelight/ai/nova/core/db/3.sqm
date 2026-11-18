@@ -1,0 +1,35 @@
+-- 2.17: состояние агента (задачи, шаги, контекст) — переживает перезапуск приложения.
+CREATE TABLE agent_task (
+    id TEXT NOT NULL PRIMARY KEY,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    state TEXT NOT NULL,
+    step_index INTEGER NOT NULL DEFAULT 0,
+    total_steps INTEGER NOT NULL DEFAULT 0,
+    payload TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX agent_task_state_idx ON agent_task(state, updated_at);
+
+CREATE TABLE agent_step (
+    id TEXT NOT NULL PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    skill TEXT NOT NULL,
+    input TEXT NOT NULL,
+    output TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL,
+    error TEXT,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX agent_step_task_idx ON agent_step(task_id, step_index);
+
+CREATE TABLE agent_context (
+    key TEXT NOT NULL PRIMARY KEY,
+    content TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);

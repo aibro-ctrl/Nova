@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Описание Нова как цифрового ассистента: сессия (окно ассистента) и офлайн-распознавание речи. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:recognitionService="ai.nova.app.assist.NovaRecognitionService"
+    android:sessionService="ai.nova.app.assist.NovaSessionService"
+    android:settingsActivity="ai.nova.app.ui.MainActivity"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true"
+    android:supportsLocalInteraction="false" />
