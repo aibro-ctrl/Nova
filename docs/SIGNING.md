@@ -11,11 +11,11 @@
 Ключ, созданный в кэше, достать из Actions нельзя, поэтому переход на секреты — это **новый ключ** (один раз переустановить Нова):
 
 1. Создайте ключ у себя на компьютере:
-   `keytool -genkeypair -keystore loli.jks -storetype PKCS12 -alias loli -keyalg RSA -keysize 4096 -validity 10000`
-2. Закодируйте: `base64 -w0 loli.jks` (macOS: `base64 -i loli.jks`).
+   `keytool -genkeypair -keystore nova.jks -storetype PKCS12 -alias nova -keyalg RSA -keysize 4096 -validity 10000`
+2. Закодируйте: `base64 -w0 nova.jks` (macOS: `base64 -i nova.jks`).
 3. В репозитории: Settings → Secrets and variables → Actions → New repository secret:
    `LOLI_KEYSTORE_BASE64` (вывод шага 2), `NOVA_KEYSTORE_PASSWORD`, `NOVA_KEY_ALIAS` (`nova`), `NOVA_KEY_PASSWORD`.
-4. Храните `loli.jks` и пароли отдельно от репозитория (менеджер паролей, офлайн-копия). Потеряете — обновления перестанут ставиться.
+4. Храните `nova.jks` и пароли отдельно от репозитория (менеджер паролей, офлайн-копия). Потеряете — обновления перестанут ставиться.
 
 ## Если ключ мог утечь
 Утечкой считается запуск чужого workflow с доступом к кэшу до версии 2.3.0. Признаков утечки Actions не оставляет. Перевыпуск ключа (шаги выше) закрывает риск ценой одной переустановки.

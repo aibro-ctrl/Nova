@@ -240,18 +240,25 @@ API-ключи AI-провайдеров в GitHub **не нужны**: кажд
 Создать keystore (один раз, на своём компьютере с JDK):
 
 ```bash
-keytool -genkeypair -v -keystore loli.jks -keyalg RSA -keysize 4096 -validity 10000 -alias loli
-base64 -w0 loli.jks > loli.jks.b64     # macOS: base64 -i loli.jks -o loli.jks.b64
+keytool -genkeypair -v -storetype PKCS12 -keystore nova.jks -keyalg RSA -keysize 4096 \
+        -validity 10000 -alias nova
+base64 -w0 nova.jks > nova.jks.b64     # macOS: base64 -i nova.jks -o nova.jks.b64
 ```
 
-Содержимое `loli.jks.b64` вставьте в секрет `LOLI_KEYSTORE_BASE64`. Сам `loli.jks` храните в надёжном месте и **не коммитьте**: он в `.gitignore`.
+Содержимое `nova.jks.b64` вставьте в секрет `LOLI_KEYSTORE_BASE64`, алиас — в `NOVA_KEY_ALIAS` (`nova`).
+Имена секретов `LOLI_*` — исторические: переименование сломало бы уже выпущенные сборки, поэтому они оставлены как есть.
+Сам `nova.jks` храните в надёжном месте и **не коммитьте**: он в `.gitignore`. Подробности — `docs/SIGNING.md`.
+
+Если сеть подменяет сертификаты GitHub и «Проверить обновления» пишет про неверный сертификат,
+укажите зеркало: Настройки → О приложении → «Зеркало» (`https://<зеркало>/` подставляется перед адресом GitHub).
+Скачивание по-прежнему идёт только с GitHub, а файл сверяется с контрольной суммой из релиза.
 
 ## Сборка через GitHub Actions
 
 Ничего настраивать локально не нужно.
 
 - **Android CI** (`.github/workflows/android.yml`) запускается при каждом push и pull request. Его можно запустить и вручную: Actions → Android CI → Run workflow.
-  1. `core`: 167 тестов ядра (намерения, расходы, заметки, поиск, задачи, напоминания, синхронизация, авторизация, AI-провайдеры, отсутствие сети).
+  1. `core`: 482 теста ядра (намерения, расходы, заметки, поиск, задачи, напоминания, синхронизация, авторизация, AI-провайдеры, отсутствие сети).
   2. `supabase`: применяет миграции к PostgreSQL 16 и прогоняет тесты RLS и серверной логики синхронизации.
   3. `android`: скачивает офлайн-модель речи (`scripts/fetch-vosk-model.sh`, кэшируется), Android Lint, unit-тесты, сборка debug- и release-APK со встроенной моделью, загрузка APK в **Artifacts**.
 - **Release APK** (`.github/workflows/release.yml`) запускается вручную (Actions → Release APK → Run workflow, указать версию) или push'ем тега `v1.0.0`. Он прогоняет тесты, собирает подписанный APK и публикует его в **GitHub Releases**.
