@@ -202,7 +202,7 @@ class SkillsTest {
         assertTrue(week.lines().size == 8 && week.contains("−2°"), week)
         val far = WeatherService.answer(WeatherQuery(date = today.plusDays(12)), null, f, today)
         assertTrue(far.contains("неделю"), far)
-        assertEquals(listOf("Казани", "Казань", "Каза"), WeatherService.nameCandidates("Казани").take(3))
+        assertEquals(listOf("Казань", "Казани", "Каза"), WeatherService.nameCandidates("Казани").take(3))
         assertTrue("Нижний Новгород" in WeatherService.nameCandidates("Нижнем Новгороде"))
         assertTrue("Москва" in WeatherService.nameCandidates("Москве"))
     }
@@ -493,7 +493,7 @@ class SkillsTest {
         assertEquals("12,5 процента, 12,5 градуса", ai.nova.core.voice.SpeechText.declineUnits("12,5%, 12,5°"))
         assertEquals("гречневая каша", ai.nova.core.assistant.DevicePhrases.timerLabel("10 минут на гречневую кашу"))
         assertEquals("забрать сестру", ai.nova.core.assistant.DevicePhrases.timerLabel("10 минут забрать сестру"))
-        assertEquals("Уфа", WeatherService.nameCandidates("Уфе")[1])
+        assertEquals("Уфа", WeatherService.nameCandidates("Уфе")[0])
         assertTrue("Орел" in WeatherService.nameCandidates("Орле"))
         assertNull(WeatherService.pickPlace(listOf(WeatherService.Place("Эттербек", 50.8, 4.3)), "Эти"))
     }

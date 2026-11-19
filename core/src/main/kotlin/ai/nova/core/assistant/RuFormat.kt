@@ -10,8 +10,13 @@ import java.util.Locale
 /** Форматирование дат и времени по-русски для ответов ассистента. */
 object RuFormat {
     private val ru = Locale("ru")
-    private val dayMonth = DateTimeFormatter.ofPattern("d MMMM", ru)
-    private val dayMonthYear = DateTimeFormatter.ofPattern("d MMMM yyyy", ru)
+    /** Месяц в родительном падеже задан списком: данные локали в некоторых прошивках дают «20 ноябрь». */
+    private val MONTHS_GEN = listOf("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
+
+    fun dayMonth(date: LocalDate): String = "${date.dayOfMonth} ${MONTHS_GEN[date.monthValue - 1]}"
+
+    fun dayMonthYear(date: LocalDate): String = "${dayMonth(date)} ${date.year}"
+
     private val weekday = DateTimeFormatter.ofPattern("EEEE", ru)
 
     fun date(date: LocalDate, today: LocalDate): String = when (date) {
@@ -20,16 +25,16 @@ object RuFormat {
         today.plusDays(2) -> "послезавтра"
         today.minusDays(1) -> "вчера"
         else -> when {
-            date.isAfter(today) && date.isBefore(today.plusDays(7)) -> "${weekdayAcc(date)}, ${dayMonth.format(date)}"
-            date.year == today.year -> dayMonth.format(date)
-            else -> dayMonthYear.format(date)
+            date.isAfter(today) && date.isBefore(today.plusDays(7)) -> "${weekdayAcc(date)}, ${dayMonth(date)}"
+            date.year == today.year -> dayMonth(date)
+            else -> dayMonthYear(date)
         }
     }
 
     /** «завтра, 26 сентября» — относительное слово и точная дата, чтобы не было сомнений. */
     fun dateFull(date: LocalDate, today: LocalDate): String {
         val rel = date(date, today)
-        return if (rel in setOf("сегодня", "завтра", "послезавтра", "вчера")) "$rel, ${dayMonth.format(date)}" else rel
+        return if (rel in setOf("сегодня", "завтра", "послезавтра", "вчера")) "$rel, ${dayMonth(date)}" else rel
     }
 
     fun time(t: LocalTime): String = "%02d:%02d".format(t.hour, t.minute)

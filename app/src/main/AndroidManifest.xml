@@ -114,6 +114,14 @@
         <package android:name="com.google.android.youtube" />
     </queries>
 
+    <!-- Телефон и камера нужны не всем: на планшетах и в ChromeOS без них Нова работает как обычно. -->
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
     <application
         android:name=".NovaApp"
         android:allowBackup="false"

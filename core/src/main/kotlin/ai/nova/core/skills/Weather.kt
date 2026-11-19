@@ -228,7 +228,9 @@ class WeatherService(private val http: HttpClient) {
 
     companion object {
         private val ru = Locale("ru")
-        private val dayMonth = DateTimeFormatter.ofPattern("d MMMM", ru)
+        /** «20 ноября» — месяц всегда в родительном падеже, независимо от данных локали в прошивке. */
+        private val MONTHS_GEN = listOf("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
+        private fun dayMonth(date: LocalDate) = "${date.dayOfMonth} ${MONTHS_GEN[date.monthValue - 1]}"
         private val weekdayShort = DateTimeFormatter.ofPattern("EEEE", ru)
 
         /** Разговорные названия городов. */
@@ -435,12 +437,11 @@ class WeatherService(private val http: HttpClient) {
             return matching.firstOrNull { it.country == "RU" } ?: matching.firstOrNull()
         }
 
-        /** «Казани» → «Казани», «Казань», «Казан»; «Нижнем Новгороде» → «Нижний Новгород»… */
+        /** «Казани» → «Казань», «Казани», «Казан»; «Нижнем Новгороде» → «Нижний Новгород»… */
         fun nameCandidates(spoken: String): List<String> {
             val s = spoken.trim().replace(Regex("""\s+"""), " ")
             val words = s.split(' ', '-').filter { it.isNotEmpty() }
             val out = LinkedHashSet<String>()
-            out += s
             fun nominative(w: String): String {
                 val l = w.lowercase()
                 val base = when {
@@ -458,6 +459,8 @@ class WeatherService(private val http: HttpClient) {
             }
             out += words.joinToString(" ") { nominative(it) }.let { if (s.contains('-')) it.replace(' ', '-') else it }
             out += words.joinToString(" ") { nominative(it) }
+            // Как сказали — на случай названий, где догадка о падеже не сработала («Сочи»).
+            out += s
             // Беглая гласная: «в Орле» → «Орел», «в Пскове» уже есть выше.
             if (words.size == 1 && Regex("""(?iu)[бвгджзклмнпрстфхцчшщ]ле$""").containsMatchIn(s)) out += s.dropLast(2) + "ел"
             // Основа слова: геокодер ищет по началу названия.
@@ -558,7 +561,7 @@ class WeatherService(private val http: HttpClient) {
                 }
                 WeatherQuery.Aspect.WEEK -> {
                     val lines = f.days.take(7).map { d ->
-                        val name = when (d.date) { today -> "Сегодня"; today.plusDays(1) -> "Завтра"; else -> weekdayShort.format(d.date).replaceFirstChar { it.uppercase() } + ", " + dayMonth.format(d.date) }
+                        val name = when (d.date) { today -> "Сегодня"; today.plusDays(1) -> "Завтра"; else -> weekdayShort.format(d.date).replaceFirstChar { it.uppercase() } + ", " + dayMonth(d.date) }
                         "$name: ${deg(d.min)}…${deg(d.max)}, ${describe(d.code)}${d.rainChance?.takeIf { it >= 40 }?.let { " ($it%)" } ?: ""}"
                     }
                     return "Погода на неделю${whereIn}:\n" + lines.joinToString("\n")
@@ -584,7 +587,7 @@ class WeatherService(private val http: HttpClient) {
                 return where + parts.joinToString(". ") { it.replaceFirstChar { c -> c.uppercase() } } + "." 
             }
             val d = target ?: return "${where}не удалось получить прогноз."
-            val head = "${dayWord.replaceFirstChar { it.uppercase() }}, ${dayMonth.format(d.date)}$whereIn"
+            val head = "${dayWord.replaceFirstChar { it.uppercase() }}, ${dayMonth(d.date)}$whereIn"
             var body = "от ${deg(d.min)} до ${deg(d.max)}, ${describe(d.code)}"
             d.rainChance?.takeIf { it >= 20 }?.let { body += ", вероятность осадков $it%" }
             wind(d.wind)?.let { body += ", $it" }
