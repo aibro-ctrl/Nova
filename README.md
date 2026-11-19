@@ -110,7 +110,7 @@ docs/    SIGNING.md, agent-core.md, ai-proxy.md
 ./gradlew :app:assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
 
 # Android, релиз (подпись — см. docs/SIGNING.md; без ключа подписывается debug-ключом)
-NOVA_VERSION_NAME=2.19.1 ./gradlew :app:assembleRelease
+NOVA_VERSION_NAME=X.XX.X ./gradlew :app:assembleRelease
 
 # Офлайн-модель русской речи внутрь APK (иначе распознавание будет только системным)
 ./scripts/fetch-vosk-model.sh
