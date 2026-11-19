@@ -4,12 +4,6 @@
 напоминания и отвечает голосом. Базовые команды работают **без интернета** — распознавание речи
 и разбор фразы идут на телефоне. Для свободных вопросов («почему небо голубое», «как приготовить плов»)
 есть локальная модель **Qwen 3.5** на самом телефоне и, по желанию, облачные провайдеры.
-На том же ядре собран клиент для Windows.
-
-- Версия: **2.19.0** (`val APP_VERSION` в [app/build.gradle.kts](app/build.gradle.kts))
-- Android 7.0+ (`minSdk 24`), `targetSdk 35`, сборка под `arm64-v8a` / `armeabi-v7a`
-- Код версии выводится из номера (`2.19.0` → `21900`), поэтому новый APK всегда ставится поверх старого
-- Обновления проверяются в GitHub Releases этого репозитория (`BuildConfig.UPDATE_REPO`)
 
 ---
 
@@ -69,8 +63,6 @@
 
 ### Офлайн-модель Qwen 3.5
 
-`Настройки → AI → Офлайн-модель`. Установка и обновление — одной кнопкой, репозиторий указывать не нужно:
-
 | Вариант | Размер | Комментарий |
 |---|---|---|
 | Лёгкая · Qwen 3.5 0.8B | ~0,5 ГБ | быстрая, для коротких вопросов |
@@ -80,8 +72,6 @@
 - Файл подбирается по объёму памяти телефона, скачивается с докачкой и проверкой контрольной суммы; лимит — 3 ГБ.
 - Вместо «сырых» репозиториев Hugging Face показываются понятные варианты с размером и рекомендацией; для нестандартных случаев есть поле «свой `.gguf`» с мини-инструкцией.
 - Реализация: llama.cpp 0.5.0 (JNI, [app/src/main/cpp/nova_llm.cpp](app/src/main/cpp/nova_llm.cpp)), каталог и загрузка — [ModelCatalog.kt](app/src/main/java/ai/nova/app/llm/ModelCatalog.kt) и [OfflineLlm.kt](app/src/main/java/ai/nova/app/llm/OfflineLlm.kt).
-- Ответ ограничен по времени: если модель не успевает, Нова честно говорит об этом и не «висит». «Размышления» модели отбрасываются, пользователь видит только ответ.
-
 ---
 
 ## Данные и приватность
@@ -106,9 +96,6 @@ scripts/ fetch-vosk-model.sh, signing-key.sh, prepare-desktop-resources.ps1
 docs/    SIGNING.md, agent-core.md, ai-proxy.md
 ```
 
-Ключевые точки входа: [AppContainer.kt](app/src/main/java/ai/nova/app/AppContainer.kt) — сборка зависимостей,
-[AssistantEngine.kt](core/src/main/kotlin/ai/nova/core/assistant/AssistantEngine.kt) — разбор и выполнение фраз,
-[ui/Changelog.kt](app/src/main/java/ai/nova/app/ui/Changelog.kt) — тексты «Что нового».
 
 ---
 
@@ -136,38 +123,6 @@ NOVA_VERSION_NAME=2.19.0 ./gradlew :app:assembleRelease
 
 Полезные свойства Gradle: `-Pnova.skipAndroid=true` (не собирать Android), `-Pnova.skipDesktop=true`
 (не собирать Windows), `-Pnova.emulator=true` (добавить `x86_64`, чтобы работало на эмуляторе).
-
-Для Supabase передаются `SUPABASE_URL` и `SUPABASE_ANON_KEY` (переменные окружения или свойства Gradle);
-без них приложение собирается и работает локально, без аккаунта и синхронизации.
-
----
-
-## Тесты и CI
-
-- `:core:test` — около 500 тестов: разбор фраз, навыки, даты, поиск, синхронизация, каталог моделей.
-  Отдельный набор — живые разговорные формулировки.
-- `:app:test` / `:desktop:test` — вспомогательная логика клиентов; `:app:lintDebug` — статический анализ.
-- Инструментальные тесты — `app/src/androidTest` (например, реальная генерация офлайн-модели).
-
-Workflows в [.github/workflows](.github/workflows):
-
-| Файл | Что делает |
-|---|---|
-| `android.yml` | Тесты ядра, тесты и сборка Windows-клиента |
-| `release.yml` | По тегу `v*` (или вручную): тесты → подписанный APK → GitHub Release с файлом `nova-<версия>-release.apk` |
-| `models.yml`, `voices.yml`, `voices-female.yml` | Подготовка моделей и голосов Нова |
-| `keep-signing-key.yml` | Сохранение ключа подписи между запусками |
-
----
-
-## Релиз
-
-```bash
-git tag v2.19.0 && git push origin v2.19.0
-```
-
-Тег запускает `release.yml`: версия берётся из тега, APK подписывается постоянным ключом и публикуется
-в Releases. Приложение проверяет именно этот релиз (`/releases/latest`) и предлагает обновиться само.
 
 ---
 
