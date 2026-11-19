@@ -491,6 +491,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             Regex("""^(покажи|выведи|список|перечисли|какие)\s+(мои\s+|все\s+|были\s+)?(расход|трат|покупк)""").containsMatchIn(n) -> ReportMode.LIST
             Regex("""сколько.*(потрат|трат|расход|ушл|израсход|спустил|заплатил|отдал|вышл)|^(?:что|как)\s+(?:там\s+)?(?:по|с)\s+(?:деньгам|тратам|расходам|бюджету)""").containsMatchIn(n) -> ReportMode.TOTAL
             Regex("""^(мои\s+)?(расходы|траты)\s+(за|в|на)\s""").containsMatchIn(n) -> ReportMode.LIST
+            // «Мои расходы», «траты», «все расходы» — подсказка с главного экрана: итог за этот месяц.
+            Regex("""^(?:(?:мои|все|всё|общие)\s+)*(?:расходы|траты)$""").containsMatchIn(n) -> ReportMode.TOTAL
             Regex("""(итог|сумма|бюджет)\s+(расходов|трат)""").containsMatchIn(n) -> ReportMode.TOTAL
             else -> return null
         }
