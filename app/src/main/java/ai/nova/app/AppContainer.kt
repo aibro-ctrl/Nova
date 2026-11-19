@@ -286,6 +286,11 @@ class AppContainer(private val context: Context) {
         pitch = { settings.settings.value.speechPitch },
     )
     /** Кто озвучивает ответы: встроенный голос или проверенный синтезатор телефона. */
+    init {
+        // Если приложение закрыли во время приглушения музыки, возвращаем громкость на место.
+        appScope.launch(kotlinx.coroutines.Dispatchers.IO) { ai.nova.app.media.MusicDucker.restoreStale(context) }
+    }
+
     val speech = ai.nova.app.voice.SpeechOutput(
         system = { tts }, systemCreated = { ttsLazy.isInitialized() }, nova = novaVoice,
         mode = {
