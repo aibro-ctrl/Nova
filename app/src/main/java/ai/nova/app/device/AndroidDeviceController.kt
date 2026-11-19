@@ -1,0 +1,614 @@
+package ai.nova.app.device
+
+import android.Manifest
+import android.app.PendingIntent
+import android.app.SearchManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.media.AudioManager
+import android.net.Uri
+import android.os.BatteryManager
+import android.os.Build
+import android.provider.AlarmClock
+import android.provider.CalendarContract
+import android.provider.MediaStore
+import android.app.NotificationManager
+import android.content.ContentValues
+import android.provider.ContactsContract
+import android.provider.Settings
+import android.view.KeyEvent
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import ai.nova.app.R
+import ai.nova.app.reminders.Notifications
+import ai.nova.core.assistant.DeviceCommand
+import ai.nova.core.assistant.DeviceController
+import ai.nova.core.assistant.DevicePhrases
+import ai.nova.core.assistant.DeviceResult
+import ai.nova.core.assistant.GlobalAction
+import ai.nova.core.assistant.MediaAction
+import ai.nova.core.assistant.RuFormat
+import ai.nova.core.assistant.SettingsSection
+import ai.nova.core.assistant.VolumeChange
+import ai.nova.core.nlp.TextAnalysis
+import ai.nova.core.util.Logger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.LocalTime
+
+/**
+ * Выполнение команд телефону без интернета: будильники и таймеры в приложении «Часы», запуск приложений,
+ * звонки, фонарик, заряд, музыка, громкость, поиск, маршрут, системные настройки.
+ *
+ * Android запрещает открывать окна из фона. Если ассистент вызван голосом при свёрнутом приложении,
+ * таймер и будильник ставятся напоминаниями Нова, а остальное приходит уведомлением «нажмите, чтобы открыть».
+ */
+class AndroidDeviceController(
+    private val context: Context,
+    private val launcher: BackgroundLauncher,
+    private val access: AppAccess,
+    /** Спросить нужное разрешение прямо во время команды. */
+    private val permissions: PermissionBroker,
+    /** Запасной таймер/будильник: напоминание Нова на указанное время. */
+    private val fallbackReminder: suspend (text: String, at: Instant) -> Unit,
+    /** Свои таймеры Нова: не зависят от приложения «Часы», их можно спросить «сколько осталось» и отменить голосом. */
+    private val timers: ai.nova.app.reminders.NovaTimers? = null,
+    /** Дыхание и медитация с голосовыми подсказками. */
+    private val relaxation: ai.nova.app.health.Relaxation? = null,
+    /** «Я за рулём»: чтение новых сообщений вслух. */
+    private val driving: ai.nova.app.health.DrivingMode? = null,
+) : DeviceController {
+
+    override suspend fun perform(command: DeviceCommand): DeviceResult = withContext(Dispatchers.Main) {
+        try {
+            run(command)
+        } catch (e: SecurityException) {
+            Logger.w(TAG, "Нет разрешения для ${command::class.simpleName}", e)
+            DeviceResult("Телефон не дал разрешения на это действие.", ok = false)
+        } catch (e: Exception) {
+            Logger.w(TAG, "Команда ${command::class.simpleName} не выполнена", e)
+            DeviceResult("Не получилось выполнить команду на этом телефоне.", ok = false)
+        }
+    }
+
+    private suspend fun run(c: DeviceCommand): DeviceResult {
+        return when (c) {
+            is DeviceCommand.Timer -> {
+                val what = DevicePhrases.describeDuration(c.seconds)
+                // Свои таймеры умеют «сколько осталось» и «отмени таймер»; таймеры «Часов» — общие для телефона.
+                val own = timers?.takeIf { !ai.nova.app.reminders.Clocks.useSystem(context) }
+                if (own != null) return startOwnTimer(own, c, what)
+                val intent = Intent(AlarmClock.ACTION_SET_TIMER)
+                    .putExtra(AlarmClock.EXTRA_LENGTH, c.seconds)
+                    .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                    .putExtra(AlarmClock.EXTRA_MESSAGE, c.label.ifBlank { "Нова" })
+                if (launcher.launch(intent)) DeviceResult("Таймер на $what запущен в «Часах».")
+                else if (timers != null) startOwnTimer(timers, c, what)
+                else {
+                    fallbackReminder("Таймер: $what прошло", Instant.now().plusSeconds(c.seconds.toLong()))
+                    DeviceResult("Засекла $what — напомню, когда время выйдет.")
+                }
+            }
+            is DeviceCommand.Alarm -> {
+                val time = RuFormat.time(c.time)
+                val intent = Intent(AlarmClock.ACTION_SET_ALARM)
+                    .putExtra(AlarmClock.EXTRA_HOUR, c.time.hour)
+                    .putExtra(AlarmClock.EXTRA_MINUTES, c.time.minute)
+                    .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                    .putExtra(AlarmClock.EXTRA_MESSAGE, c.label.ifBlank { "Нова" })
+                if (c.days.isNotEmpty()) {
+                    intent.putIntegerArrayListExtra(AlarmClock.EXTRA_DAYS, ArrayList(c.days.map { (it.value % 7) + 1 }))
+                }
+                if (launcher.launch(intent)) DeviceResult("Будильник на $time поставлен${if (c.days.isNotEmpty()) ", с повтором" else ""}.")
+                else {
+                    fallbackReminder("Будильник $time", nextOccurrence(c.time))
+                    DeviceResult("Поставила напоминание-будильник на $time.")
+                }
+            }
+            DeviceCommand.ShowAlarms -> open(Intent(AlarmClock.ACTION_SHOW_ALARMS), "Открываю будильники.", "Будильники")
+            DeviceCommand.Stopwatch -> open(Intent(AlarmClock.ACTION_SHOW_ALARMS), "Открываю часы — секундомер там.", "Часы")
+            is DeviceCommand.OpenApp -> {
+                val app = findApp(c.name) ?: return DeviceResult("Не нашла приложение «${c.name}».", ok = false)
+                if (!access.isAllowed(app.first, app.second)) {
+                    return DeviceResult("Открывать «${app.second}» мне не разрешено. Разрешить можно в Настройки Нова → Доступ.", ok = false)
+                }
+                val launch = context.packageManager.getLaunchIntentForPackage(app.first)
+                    ?: return DeviceResult("Приложение «${app.second}» нельзя открыть.", ok = false)
+                open(launch, "Открываю ${app.second}.", app.second)
+            }
+            is DeviceCommand.Call -> {
+                askContactsIfNeeded(c.who)
+                val (number, name) = resolveNumber(c.who) ?: return contactsProblem(c.who)
+                val uri = Uri.parse("tel:" + Uri.encode(number))
+                // Помощник звонит сам: руки заняты, а человек может не видеть, что номер уже набран.
+                if (Dialer.autoDial(context) && canPlaceCalls()) {
+                    val placed = runCatching { launcher.launch(Intent(Intent.ACTION_CALL, uri)) }.getOrDefault(false)
+                    if (placed) return DeviceResult("Звоню ${name ?: number}.")
+                    runCatching { context.startActivity(Intent(Intent.ACTION_CALL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        .onSuccess { return DeviceResult("Звоню ${name ?: number}.") }
+                }
+                val hint = if (!canPlaceCalls()) " Разрешите «Звонки» в Настройки → Разрешения, чтобы я звонила сама." else ""
+                open(Intent(Intent.ACTION_DIAL, uri), "Набираю ${name ?: number} — нажмите вызов.$hint", "Звонок")
+            }
+            is DeviceCommand.Message -> {
+                askContactsIfNeeded(c.who)
+                val (number, name) = resolveNumber(c.who) ?: return contactsProblem(c.who)
+                val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number))).putExtra("sms_body", c.text)
+                open(intent, "Сообщение для ${name ?: number} готово — осталось отправить.", "Сообщение")
+            }
+            is DeviceCommand.Flashlight -> {
+                val cm = context.getSystemService(CameraManager::class.java)
+                val id = cm.cameraIdList.firstOrNull { cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true }
+                    ?: return DeviceResult("На этом телефоне нет вспышки.", ok = false)
+                cm.setTorchMode(id, c.on)
+                DeviceResult(if (c.on) "Фонарик включён." else "Фонарик выключен.")
+            }
+            DeviceCommand.Battery -> {
+                val bm = context.getSystemService(BatteryManager::class.java)
+                val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                val charging = bm.isCharging
+                DeviceResult("Заряд $level%${if (charging) ", телефон заряжается" else ""}.")
+            }
+            is DeviceCommand.Media -> {
+                val code = when (c.action) {
+                    MediaAction.PLAY -> KeyEvent.KEYCODE_MEDIA_PLAY
+                    MediaAction.PAUSE -> KeyEvent.KEYCODE_MEDIA_PAUSE
+                    MediaAction.NEXT -> KeyEvent.KEYCODE_MEDIA_NEXT
+                    MediaAction.PREVIOUS -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+                }
+                val am = context.getSystemService(AudioManager::class.java)
+                am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+                am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+                DeviceResult(
+                    when (c.action) {
+                        MediaAction.PLAY -> "Включаю."
+                        MediaAction.PAUSE -> "Пауза."
+                        MediaAction.NEXT -> "Следующий трек."
+                        MediaAction.PREVIOUS -> "Предыдущий трек."
+                    },
+                )
+            }
+            is DeviceCommand.Volume -> {
+                val am = context.getSystemService(AudioManager::class.java)
+                val stream = AudioManager.STREAM_MUSIC
+                val max = am.getStreamMaxVolume(stream)
+                when (c.change) {
+                    VolumeChange.UP -> repeat(2) { am.adjustStreamVolume(stream, AudioManager.ADJUST_RAISE, if (it == 1) AudioManager.FLAG_SHOW_UI else 0) }
+                    VolumeChange.DOWN -> repeat(2) { am.adjustStreamVolume(stream, AudioManager.ADJUST_LOWER, if (it == 1) AudioManager.FLAG_SHOW_UI else 0) }
+                    VolumeChange.MUTE -> am.adjustStreamVolume(stream, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
+                    VolumeChange.UNMUTE -> am.adjustStreamVolume(stream, AudioManager.ADJUST_UNMUTE, AudioManager.FLAG_SHOW_UI)
+                    VolumeChange.MAX -> am.setStreamVolume(stream, max, AudioManager.FLAG_SHOW_UI)
+                    VolumeChange.SET -> am.setStreamVolume(stream, (max * (c.percent ?: 50) / 100.0).toInt().coerceIn(0, max), AudioManager.FLAG_SHOW_UI)
+                }
+                val percent = am.getStreamVolume(stream) * 100 / max.coerceAtLeast(1)
+                DeviceResult(if (c.change == VolumeChange.MUTE) "Звук выключен." else "Громкость $percent%.")
+            }
+            is DeviceCommand.WebSearch -> {
+                val search = Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, c.query)
+                val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(c.query)))
+                open(if (resolves(search)) search else web, "Ищу «${c.query}».", "Поиск: ${c.query}")
+            }
+            is DeviceCommand.Navigate -> {
+                val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(c.destination)))
+                val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://yandex.ru/maps/?text=" + Uri.encode(c.destination)))
+                open(if (resolves(geo)) geo else web, "Строю маршрут: ${c.destination}.", "Маршрут")
+            }
+            is DeviceCommand.OpenSettings -> {
+                val q = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                val action = when (c.section) {
+                    // Android 10+ показывает компактную панель поверх экрана — включить Wi-Fi можно в одно касание.
+                    SettingsSection.WIFI -> if (q) Settings.Panel.ACTION_WIFI else Settings.ACTION_WIFI_SETTINGS
+                    SettingsSection.MOBILE_DATA -> if (q) Settings.Panel.ACTION_INTERNET_CONNECTIVITY else Settings.ACTION_WIRELESS_SETTINGS
+                    SettingsSection.NFC -> if (q) Settings.Panel.ACTION_NFC else Settings.ACTION_NFC_SETTINGS
+                    SettingsSection.BLUETOOTH -> Settings.ACTION_BLUETOOTH_SETTINGS
+                    SettingsSection.SOUND -> if (q) Settings.Panel.ACTION_VOLUME else Settings.ACTION_SOUND_SETTINGS
+                    SettingsSection.DISPLAY -> Settings.ACTION_DISPLAY_SETTINGS
+                    SettingsSection.BATTERY -> Settings.ACTION_BATTERY_SAVER_SETTINGS
+                    SettingsSection.LOCATION -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
+                    SettingsSection.APPS -> Settings.ACTION_APPLICATION_SETTINGS
+                    SettingsSection.AIRPLANE -> Settings.ACTION_AIRPLANE_MODE_SETTINGS
+                    SettingsSection.HOTSPOT -> Settings.ACTION_WIRELESS_SETTINGS
+                    SettingsSection.NOTIFICATIONS -> "android.settings.NOTIFICATION_SETTINGS"
+                    SettingsSection.SECURITY -> Settings.ACTION_SECURITY_SETTINGS
+                    SettingsSection.ACCESSIBILITY -> Settings.ACTION_ACCESSIBILITY_SETTINGS
+                    SettingsSection.DATE_TIME -> Settings.ACTION_DATE_SETTINGS
+                    SettingsSection.STORAGE -> Settings.ACTION_INTERNAL_STORAGE_SETTINGS
+                    SettingsSection.MAIN -> Settings.ACTION_SETTINGS
+                }
+                // Android 10+ не даёт приложениям самим включать Wi-Fi, Bluetooth и режим полёта — открываем нужный экран.
+                val intent = Intent(action)
+                open(if (resolves(intent)) intent else Intent(Settings.ACTION_SETTINGS), "Открываю настройки.", "Настройки")
+            }
+            is DeviceCommand.Camera -> {
+                // Фото делает сама: своя камера открывается сразу на нужной стороне и снимает по отсчёту —
+                // нажимать кнопку не нужно (это важно, когда руки заняты или человек плохо видит).
+                if (!c.video) {
+                    val intent = ai.nova.app.camera.PhotoSnapActivity.intent(context, front = c.selfie)
+                    val started = runCatching { launcher.launch(intent) }.getOrDefault(false) ||
+                        runCatching { context.startActivity(intent) }.isSuccess
+                    if (started) {
+                        return DeviceResult(
+                            if (c.selfie) "Делаю селфи фронтальной камерой — снимок сам окажется в галерее."
+                            else "Фотографирую — снимок сам окажется в галерее.",
+                        )
+                    }
+                }
+                val intent = Intent(MediaStore.INTENT_ACTION_VIDEO_CAMERA)
+                if (c.selfie) {
+                    intent.putExtra("android.intent.extras.CAMERA_FACING", 1)
+                        .putExtra("android.intent.extras.LENS_FACING_FRONT", 1)
+                        .putExtra("android.intent.extra.USE_FRONT_CAMERA", true)
+                }
+                open(intent, if (c.video) "Открываю видеокамеру." else "Открываю камеру.", "Камера")
+            }
+            is DeviceCommand.OpenUrl -> open(Intent(Intent.ACTION_VIEW, Uri.parse(c.url)), "Открываю ${Uri.parse(c.url).host ?: c.url}.", "Сайт")
+            is DeviceCommand.Play -> {
+                if (c.youtube) {
+                    val app = Intent(Intent.ACTION_SEARCH).setPackage(YOUTUBE).putExtra("query", c.query)
+                    val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(c.query)))
+                    open(if (resolves(app)) app else web, "Ищу на YouTube: ${c.query}.", "YouTube")
+                } else {
+                    val music = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+                        .putExtra(SearchManager.QUERY, c.query)
+                        .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+                    val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://music.youtube.com/search?q=" + Uri.encode(c.query)))
+                    open(if (resolves(music)) music else web, "Включаю ${c.query}.", "Музыка")
+                }
+            }
+            is DeviceCommand.CalendarEvent -> {
+                // Доступ к календарю спрашиваем сразу — тогда событие добавится без лишних экранов.
+                permissions.ensure(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
+                addEvent(c)
+            }
+            is DeviceCommand.AddContact -> {
+                val intent = Intent(ContactsContract.Intents.Insert.ACTION).setType(ContactsContract.RawContacts.CONTENT_TYPE)
+                    .putExtra(ContactsContract.Intents.Insert.NAME, c.name)
+                c.phone?.let { intent.putExtra(ContactsContract.Intents.Insert.PHONE, it) }
+                open(intent, "Проверьте и сохраните контакт «${c.name}».", "Новый контакт")
+            }
+            is DeviceCommand.Share -> {
+                val pkg = SHARE_APPS.entries.firstOrNull { c.app.startsWith(it.key) }?.value
+                if (pkg != null && !access.isAllowed(pkg, c.app)) {
+                    return DeviceResult("Отправлять в «${c.app}» мне не разрешено. Разрешить можно в Настройки Нова → Доступ.", ok = false)
+                }
+                val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, c.text)
+                if (pkg != null) send.setPackage(pkg)
+                val intent = if (pkg != null && resolves(send)) send else Intent.createChooser(send.setPackage(null), "Отправить")
+                open(intent, "Выберите, кому отправить.", "Отправить")
+            }
+            is DeviceCommand.DoNotDisturb -> {
+                val nm = context.getSystemService(NotificationManager::class.java)
+                if (!nm.isNotificationPolicyAccessGranted) {
+                    open(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS), "Разрешите Нова управлять режимом «Не беспокоить» — и повторите команду.", "Не беспокоить")
+                } else {
+                    nm.setInterruptionFilter(if (c.on) NotificationManager.INTERRUPTION_FILTER_PRIORITY else NotificationManager.INTERRUPTION_FILTER_ALL)
+                    DeviceResult(if (c.on) "Режим «Не беспокоить» включён." else "Режим «Не беспокоить» выключен.")
+                }
+            }
+            is DeviceCommand.Brightness -> {
+                if (!Settings.System.canWrite(context)) {
+                    open(
+                        Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}")),
+                        "Разрешите Нова менять системные настройки — и повторите команду.", "Яркость",
+                    )
+                } else {
+                    val cr = context.contentResolver
+                    Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+                    val current = Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS, 128) * 100 / 255
+                    val target = (c.percent ?: (current + c.delta)).coerceIn(1, 100)
+                    Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, target * 255 / 100)
+                    DeviceResult("Яркость $target%.")
+                }
+            }
+            is DeviceCommand.Relax -> {
+                val r = relaxation ?: return DeviceResult("Здесь так не умею.", ok = false)
+                if (c.kind == ai.nova.core.assistant.RelaxKind.STOP) DeviceResult(if (r.stop()) "Остановила." else "Упражнение и так не идёт.")
+                else { r.start(c.kind, c.minutes); DeviceResult("") }
+            }
+            DeviceCommand.OpenBackup -> open(
+                Intent(context, ai.nova.app.ui.MainActivity::class.java).setAction(ai.nova.app.ui.MainActivity.ACTION_BACKUP)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                "Открываю резервную копию. Пароль для файла введите на экране.", "Резервная копия",
+            )
+            is DeviceCommand.Focus -> {
+                if (!c.on) {
+                    return if (ai.nova.app.reminders.FocusSession.stop(context)) DeviceResult("Хватит так хватит. Отличная работа!") else DeviceResult("Помодоро сейчас не идёт.", ok = false)
+                }
+                ai.nova.app.reminders.FocusSession.start(context, c.workMinutes, c.restMinutes)
+                DeviceResult("Работаем ${RuFormat.count(c.workMinutes, "минуту", "минуты", "минут")}, потом отдых ${RuFormat.count(c.restMinutes, "минуту", "минуты", "минут")}. Скажу, когда пора. Остановить — «хватит работать».")
+            }
+            is DeviceCommand.SleepMode -> {
+                if (!c.on) {
+                    ai.nova.app.reminders.SleepMode.disable(context)
+                    return DeviceResult("Режим сна выключен.")
+                }
+                val nm = context.getSystemService(NotificationManager::class.java)
+                if (!nm.isNotificationPolicyAccessGranted) {
+                    return open(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS), "Разрешите Нова управлять режимом «Не беспокоить» — и повторите команду.", "Режим сна")
+                }
+                val from = c.from ?: LocalTime.of(23, 0)
+                val to = c.to ?: LocalTime.of(7, 0)
+                ai.nova.app.reminders.SleepMode.enable(context, from, to)
+                DeviceResult("Режим сна включён: «Не беспокоить» каждый день с ${RuFormat.time(from)} до ${RuFormat.time(to)}. Выключить — «выключи режим сна».")
+            }
+            is DeviceCommand.Parking -> parking(c)
+            DeviceCommand.VoiceMemo -> open(
+                Intent(context, ai.nova.app.ui.MainActivity::class.java).setAction(ai.nova.app.ui.MainActivity.ACTION_VOICE_MEMO)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                "Говорите — записываю. Закончу, когда замолчите, или нажмите «Готово».", "Голосовая заметка",
+            )
+            is DeviceCommand.ShareFile -> shareFile(c)
+            is DeviceCommand.Driving -> {
+                val d = driving ?: return DeviceResult("Здесь так не умею.", ok = false)
+                if (!c.on) { d.set(false); return DeviceResult("Режим «за рулём» выключен.") }
+                if (!ai.nova.app.notify.NovaNotificationListener.enabled(context)) {
+                    context.startActivity(ai.nova.app.notify.NovaNotificationListener.settingsIntent(context))
+                    return DeviceResult("Чтобы читать сообщения вслух, разрешите Нова доступ к уведомлениям — и повторите «я за рулём».", ok = false)
+                }
+                d.set(true)
+                DeviceResult("Режим «за рулём»: новые сообщения прочитаю вслух. Ответить — «ответь: …». Выключить — «я приехала». Сам выключится через 2 часа.")
+            }
+            is DeviceCommand.Global -> {
+                when (NovaAccessibilityService.perform(c.action)) {
+                    true -> DeviceResult(
+                        when (c.action) {
+                            GlobalAction.SCREENSHOT -> "Скриншот сделан."
+                            GlobalAction.LOCK -> "Блокирую экран."
+                            else -> "Готово."
+                        },
+                    )
+                    false -> DeviceResult("На этой версии Android так нельзя.", ok = false)
+                    null -> if (c.action == GlobalAction.HOME) {
+                        open(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), "Готово.", "Домой")
+                    } else {
+                        DeviceResult("Включите «Нова» в спецвозможностях (Настройки Нова → Разрешения) — тогда смогу нажимать системные кнопки.", ok = false)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Событие в календарь: сразу (если разрешён доступ к календарю) или через экран календаря. */
+    private fun addEvent(c: DeviceCommand.CalendarEvent): DeviceResult {
+        val start = c.start ?: java.time.ZonedDateTime.now().plusHours(1).withMinute(0).toInstant()
+        val begin = start.toEpochMilli()
+        val end = begin + if (c.allDay) 24 * 3600_000L else 3600_000L
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            val calendarId = context.contentResolver.query(
+                CalendarContract.Calendars.CONTENT_URI,
+                arrayOf(CalendarContract.Calendars._ID, CalendarContract.Calendars.IS_PRIMARY),
+                "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ${CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR} AND ${CalendarContract.Calendars.VISIBLE} = 1",
+                null, "${CalendarContract.Calendars.IS_PRIMARY} DESC",
+            )?.use { cur -> if (cur.moveToFirst()) cur.getLong(0) else null }
+            if (calendarId != null) {
+                val values = ContentValues().apply {
+                    put(CalendarContract.Events.CALENDAR_ID, calendarId)
+                    put(CalendarContract.Events.TITLE, c.title)
+                    put(CalendarContract.Events.DTSTART, begin)
+                    put(CalendarContract.Events.DTEND, end)
+                    put(CalendarContract.Events.ALL_DAY, if (c.allDay) 1 else 0)
+                    put(CalendarContract.Events.EVENT_TIMEZONE, if (c.allDay) "UTC" else java.util.TimeZone.getDefault().id)
+                }
+                context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
+                val whenText = ai.nova.core.assistant.RuFormat.dateTime(start, java.time.ZoneId.systemDefault(), Instant.now())
+                return DeviceResult("Добавила в календарь: «${c.title}», $whenText.")
+            }
+        }
+        val intent = Intent(Intent.ACTION_INSERT).setData(CalendarContract.Events.CONTENT_URI)
+            .putExtra(CalendarContract.Events.TITLE, c.title)
+            .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, begin)
+            .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, end)
+            .putExtra(CalendarContract.EXTRA_EVENT_ALL_DAY, c.allDay)
+        return open(intent, "Проверьте и сохраните событие «${c.title}».", "Календарь")
+    }
+
+    // ------------------------------------------------------------------ Вспомогательное
+
+    private fun resolves(intent: Intent): Boolean = intent.resolveActivity(context.packageManager) != null
+
+    /** Файл (таблица) — во временную папку и в системное «Поделиться»: почта, мессенджер, Диск, Excel. */
+    private suspend fun shareFile(c: DeviceCommand.ShareFile): DeviceResult {
+        val dir = java.io.File(context.cacheDir, "exports").apply { mkdirs() }
+        // Старые выгрузки не копим.
+        dir.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 24 * 3600_000L }?.forEach { it.delete() }
+        val safeName = c.name.replace(Regex("""[^\w.\-]"""), "_")
+        val file = java.io.File(dir, safeName)
+        withContext(Dispatchers.IO) { file.writeText(c.content, Charsets.UTF_8) }
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", file)
+        val send = Intent(Intent.ACTION_SEND).setType(c.mime).putExtra(Intent.EXTRA_STREAM, uri)
+            .putExtra(Intent.EXTRA_SUBJECT, safeName).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val chooser = Intent.createChooser(send, "Куда отправить таблицу").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        return open(chooser, "Выберите, куда сохранить или отправить: почта, мессенджер, Диск.", "Таблица готова")
+    }
+
+    /** Где машина: точка по GPS хранится только на телефоне, показывается в любом приложении карт. */
+    private suspend fun parking(c: DeviceCommand.Parking): DeviceResult {
+        val prefs = context.getSharedPreferences(PARKING_PREFS, Context.MODE_PRIVATE)
+        if (c.save) {
+            // «Я припарковалась» — заодно конец поездки: сообщения больше не читаем вслух.
+            driving?.set(false)
+            if (!permissions.ensure(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION) && !locator.hasCoarse()) {
+                return DeviceResult("Чтобы запомнить место машины, разрешите Нова доступ к местоположению — и повторите.", ok = false)
+            }
+            val loc = withContext(Dispatchers.IO) { locator.current(maxAgeMs = 2 * 60_000L, precise = true) }
+                ?: return DeviceResult("Не получилось определить место: включите геолокацию и повторите «запомни, где я припарковалась».", ok = false)
+            prefs.edit().putString("lat", loc.latitude.toString()).putString("lon", loc.longitude.toString())
+                .putLong("at", System.currentTimeMillis()).putString("note", c.note).apply()
+            val accuracy = if (loc.accuracy > 100) " Точность около ${loc.accuracy.toInt()} м — на подземной парковке GPS часто ошибается." else ""
+            val note = if (c.note.isNotBlank()) " Заметка: ${c.note}." else ""
+            return DeviceResult("Запомнила, где машина.$note$accuracy Спросите «где моя машина» — покажу на карте.")
+        }
+        val lat = prefs.getString("lat", null)?.toDoubleOrNull()
+        val lon = prefs.getString("lon", null)?.toDoubleOrNull()
+        if (lat == null || lon == null) return DeviceResult("Я не знаю, где машина. Когда припаркуетесь, скажите: «запомни, где я припарковалась».", ok = false)
+        val at = Instant.ofEpochMilli(prefs.getLong("at", 0))
+        val zone = java.time.ZoneId.systemDefault()
+        val note = prefs.getString("note", "").orEmpty().let { if (it.isNotBlank()) " Вы говорили: $it." else "" }
+        val point = String.format(java.util.Locale.US, "%.6f,%.6f", lat, lon)
+        val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:$point?q=$point(" + Uri.encode("Машина") + ")"))
+        val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://yandex.ru/maps/?pt=${String.format(java.util.Locale.US, "%.6f,%.6f", lon, lat)}&z=17"))
+        return open(
+            if (resolves(geo)) geo else web,
+            "Машина там, где вы её оставили ${RuFormat.dateTime(at, zone, Instant.now())}.$note Открываю карту.", "Где машина",
+        )
+    }
+
+    private val locator by lazy { Locator(context) }
+
+    /**
+     * Открывает экран — и при свёрнутом приложении (с разрешением «Поверх других приложений»).
+     * Без разрешения из фона — уведомление, которое откроет экран по нажатию.
+     */
+    private fun open(intent: Intent, done: String, title: String): DeviceResult {
+        if (launcher.canLaunch()) {
+            return if (launcher.launch(intent)) DeviceResult(done) else DeviceResult("На телефоне нет приложения для этого.", ok = false)
+        }
+        if (!Notifications.canPost(context)) return DeviceResult("Разрешите Нова «Поверх других приложений» (Настройки → Разрешения), чтобы открывать приложения из фона.", ok = false)
+        val pi = PendingIntent.getActivity(
+            context, title.hashCode(), intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val n = NotificationCompat.Builder(context, Notifications.CHANNEL_SYSTEM)
+            .setSmallIcon(R.drawable.ic_stat_nova)
+            .setContentTitle(title)
+            .setContentText("Нажмите, чтобы открыть")
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .build()
+        Notifications.notifySafely(context, ACTION_NOTIFICATION_ID, n)
+        return DeviceResult("Нажмите на уведомление — открою. Чтобы открывала сразу, разрешите «Поверх других приложений» в настройках Нова.")
+    }
+
+    private fun startOwnTimer(t: ai.nova.app.reminders.NovaTimers, c: DeviceCommand.Timer, what: String): DeviceResult {
+        t.start(c.seconds, c.label)
+        return DeviceResult("Засекла $what${if (c.label.isNotBlank()) " — «${c.label}»" else ""}. Спросите «сколько осталось» или скажите «отмени таймер».")
+    }
+
+    private fun canPlaceCalls(): Boolean =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
+
+    private fun nextOccurrence(t: LocalTime): Instant {
+        val now = java.time.ZonedDateTime.now()
+        var at = now.with(t).withSecond(0).withNano(0)
+        if (!at.isAfter(now)) at = at.plusDays(1)
+        return at.toInstant()
+    }
+
+    /** Приложение по сказанному названию: «телеграм», «камеру», «ютуб», «вк». Возвращает (пакет, название). */
+    private fun findApp(spoken: String): Pair<String, String>? {
+        val pm = context.packageManager
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = pm.queryIntentActivities(launcher, 0).map { it.activityInfo.packageName to it.loadLabel(pm).toString() }.distinctBy { it.first }
+        val query = norm(spoken)
+        val aliases = (ALIASES[query] ?: ALIASES.entries.firstOrNull { query.startsWith(it.key) }?.value).orEmpty() + translit(query)
+        val stem = TextAnalysis.stems(spoken).firstOrNull()?.let { norm(it) } ?: query
+        fun score(pkg: String, label: String): Int {
+            val l = norm(label)
+            return when {
+                l == query -> 100
+                aliases.any { a -> l == a || pkg.contains(a.replace(" ", "")) } -> 90
+                l.startsWith(query) || query.startsWith(l) -> 80
+                stem.length >= 3 && (l.startsWith(stem) || l.split(" ").any { it.startsWith(stem) }) -> 70
+                aliases.any { a -> l.contains(a) } -> 60
+                l.contains(query) -> 50
+                else -> 0
+            }
+        }
+        return apps.map { it to score(it.first, it.second) }.filter { it.second > 0 }.maxByOrNull { it.second }?.first
+    }
+
+    private fun norm(s: String) = s.lowercase().replace('ё', 'е').trim()
+
+    /** Номер из фразы или из контактов: «8 900 123-45-67», «маме», «Саше». Возвращает (номер, имя). */
+    private fun resolveNumber(who: String): Pair<String, String?>? {
+        val digits = who.filter { it.isDigit() || it == '+' }
+        if (digits.count { it.isDigit() } >= 3) return digits to null
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) return null
+        val hit = ContactLookup.find(context, who) ?: return null
+        val number = hit.phones.firstOrNull() ?: return null
+        return number to hit.name
+    }
+
+    /** «Позвони маме» без доступа к контактам — спрашиваем разрешение прямо сейчас (для номера цифрами не нужно). */
+    private suspend fun askContactsIfNeeded(who: String) {
+        if (who.count { it.isDigit() } >= 3) return
+        permissions.ensure(Manifest.permission.READ_CONTACTS)
+    }
+
+    private fun contactsProblem(who: String): DeviceResult =
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            DeviceResult("Чтобы звонить по имени, разрешите доступ к контактам: Настройки → Разрешения → Контакты.", ok = false)
+        } else {
+            DeviceResult("Не нашла «$who» в контактах.", ok = false)
+        }
+
+    companion object {
+        private const val PARKING_PREFS = "nova_parking"
+        private const val TAG = "Device"
+        private const val YOUTUBE = "com.google.android.youtube"
+        private val SHARE_APPS = mapOf(
+            "телеграм" to "org.telegram.messenger", "telegram" to "org.telegram.messenger",
+            "ватсап" to "com.whatsapp", "вотсап" to "com.whatsapp", "whatsapp" to "com.whatsapp",
+            "вк" to "com.vkontakte.android", "вконтакте" to "com.vkontakte.android",
+            "viber" to "com.viber.voip", "вайбер" to "com.viber.voip", "gmail" to "com.google.android.gm", "почту" to "com.google.android.gm",
+        )
+        private const val ACTION_NOTIFICATION_ID = 1003
+
+        /** Как популярные приложения называют вслух. */
+        private val ALIASES = mapOf(
+            "телеграм" to listOf("telegram"), "телега" to listOf("telegram"), "ютуб" to listOf("youtube"),
+            "вотсап" to listOf("whatsapp"), "ватсап" to listOf("whatsapp"), "вк" to listOf("vk", "вконтакте"),
+            "вконтакте" to listOf("vk", "вконтакте"), "инстаграм" to listOf("instagram"), "тикток" to listOf("tiktok"),
+            "хром" to listOf("chrome"), "гугл" to listOf("google"), "карты" to listOf("maps", "карты"),
+            "яндекс" to listOf("yandex", "яндекс"), "навигатор" to listOf("navigator", "навигатор"), "такси" to listOf("taxi", "go"),
+            "сбер" to listOf("sberbank", "сбер"), "тинькофф" to listOf("tinkoff", "т-банк"), "т-банк" to listOf("tinkoff", "т-банк"),
+            "госуслуги" to listOf("gosuslugi", "госуслуги"), "почта" to listOf("gmail", "mail", "почта"), "джимейл" to listOf("gmail"),
+            "камер" to listOf("camera", "камера"), "галере" to listOf("gallery", "photos", "галерея", "фото"), "фото" to listOf("photos", "фото"),
+            "часы" to listOf("clock", "часы"), "калькулятор" to listOf("calculator", "калькулятор"), "календар" to listOf("calendar", "календарь"),
+            "настройки" to listOf("settings", "настройки"), "плей маркет" to listOf("vending", "play store"), "маркет" to listOf("vending", "market"),
+            "музык" to listOf("music", "музыка"), "спотифай" to listOf("spotify"), "озон" to listOf("ozon"), "вайлдберриз" to listOf("wildberries"),
+            "дискорд" to listOf("discord"), "твиттер" to listOf("twitter", "x"), "макс" to listOf("max"), "контакты" to listOf("contacts", "контакты"),
+            "телефон" to listOf("dialer", "phone", "телефон"), "сообщения" to listOf("messaging", "mms", "сообщения"),
+            "вайбер" to listOf("viber"), "скайп" to listOf("skype"), "зум" to listOf("zoom"), "тимс" to listOf("teams"),
+            "одноклассник" to listOf("odnoklassniki", "ok"), "пинтерест" to listOf("pinterest"), "реддит" to listOf("reddit"),
+            "фейсбук" to listOf("facebook"), "снэпчат" to listOf("snapchat"), "лайк" to listOf("likee"), "дзен" to listOf("zen", "дзен"),
+            "кинопоиск" to listOf("kinopoisk", "кинопоиск"), "окко" to listOf("okko"), "иви" to listOf("ivi"), "нетфликс" to listOf("netflix"),
+            "вк музык" to listOf("vk music", "boom"), "яндекс музык" to listOf("yandex.music", "яндекс музыка"), "звук" to listOf("zvuk", "звук"),
+            "ютуб музык" to listOf("youtube.music", "youtube music"), "подкаст" to listOf("podcast"),
+            "яндекс карт" to listOf("yandexmaps", "яндекс карты"), "гугл карт" to listOf("apps.maps", "google maps"), "2гис" to listOf("dublgis", "2гис", "2gis"),
+            "дубльгис" to listOf("dublgis", "2gis"), "яндекс го" to listOf("taxi", "yandex go"), "убер" to listOf("uber"), "ситимобил" to listOf("citymobil"),
+            "самокат" to listOf("samokat", "самокат"), "вкусвилл" to listOf("vkusvill"), "лавка" to listOf("lavka", "лавка"), "купер" to listOf("kuper", "sbermarket"),
+            "сбермаркет" to listOf("sbermarket", "kuper"), "дельивери" to listOf("delivery"), "деливери" to listOf("delivery"), "авито" to listOf("avito"),
+            "алиэкспресс" to listOf("aliexpress"), "али" to listOf("aliexpress"), "яндекс маркет" to listOf("market", "маркет"), "мегамаркет" to listOf("megamarket"),
+            "ламода" to listOf("lamoda"), "лента" to listOf("lenta"), "пятерочк" to listOf("pyaterochka", "5ka"), "магнит" to listOf("magnit"),
+            "перекресток" to listOf("perekrestok"), "ашан" to listOf("auchan"), "спортмастер" to listOf("sportmaster"), "днс" to listOf("dns"),
+            "эльдорадо" to listOf("eldorado"), "мвидео" to listOf("mvideo"), "м видео" to listOf("mvideo"),
+            "альфа" to listOf("alfabank", "альфа"), "втб" to listOf("vtb"), "озон банк" to listOf("ozon bank", "финанс"), "мтс" to listOf("mts", "мой мтс"),
+            "билайн" to listOf("beeline"), "мегафон" to listOf("megafon"), "теле2" to listOf("tele2"), "йота" to listOf("yota"),
+            "почта россии" to listOf("russianpost", "почта россии"), "сдэк" to listOf("cdek"), "боксберри" to listOf("boxberry"),
+            "заметки" to listOf("notes", "keep", "заметки"), "кип" to listOf("keep"), "диск" to listOf("drive", "disk", "диск"),
+            "гугл диск" to listOf("apps.docs", "drive"), "яндекс диск" to listOf("yandex.disk", "диск"), "документы" to listOf("docs", "документы"),
+            "таблицы" to listOf("sheets"), "переводчик" to listOf("translate", "переводчик"), "погода" to listOf("weather", "погода"),
+            "браузер" to listOf("browser", "chrome", "браузер"), "файлы" to listOf("files", "файлы", "documentsui"), "проводник" to listOf("files", "filemanager"),
+            "диктофон" to listOf("recorder", "soundrecorder", "диктофон"), "фонарик" to listOf("flashlight", "torch"), "компас" to listOf("compass"),
+            "здоровье" to listOf("health", "fit", "здоровье"), "шаги" to listOf("fit", "health"), "будильник" to listOf("clock", "deskclock"),
+            "плеер" to listOf("player", "music"), "радио" to listOf("radio", "fm"), "книги" to listOf("books", "litres", "книги"), "литрес" to listOf("litres"),
+            "стим" to listOf("steam"), "твич" to listOf("twitch"), "чатгпт" to listOf("chatgpt", "openai"), "джипити" to listOf("chatgpt"),
+            "гемини" to listOf("gemini"), "алиса" to listOf("yandex", "алиса"), "умный дом" to listOf("iot", "smarthome", "дом с алисой", "mi home", "home"),
+        )
+
+        private val TRANSLIT = mapOf(
+            'а' to "a", 'б' to "b", 'в' to "v", 'г' to "g", 'д' to "d", 'е' to "e", 'ж' to "zh", 'з' to "z", 'и' to "i", 'й' to "y",
+            'к' to "k", 'л' to "l", 'м' to "m", 'н' to "n", 'о' to "o", 'п' to "p", 'р' to "r", 'с' to "s", 'т' to "t", 'у' to "u",
+            'ф' to "f", 'х' to "h", 'ц' to "ts", 'ч' to "ch", 'ш' to "sh", 'щ' to "sch", 'ы' to "y", 'э' to "e", 'ю' to "yu", 'я' to "ya",
+        )
+
+        fun translit(s: String): String = s.map { TRANSLIT[it] ?: if (it == 'ь' || it == 'ъ') "" else it.toString() }.joinToString("")
+    }
+}

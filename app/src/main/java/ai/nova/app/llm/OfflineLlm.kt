@@ -1,0 +1,280 @@
+package ai.nova.app.llm
+
+import android.content.Context
+import android.os.Build
+import ai.nova.core.ai.ChatMessage
+import ai.nova.core.ai.LocalChat
+import ai.nova.core.util.Logger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.RandomAccessFile
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.MessageDigest
+
+/** Мост к нативной библиотеке llama.cpp (libnova_llm.so, только arm64). */
+object LlamaNative {
+    fun interface TokenListener { fun onToken(piece: String): Boolean }
+
+    /** null — библиотека загружена; иначе причина, почему модель на этом телефоне недоступна. */
+    val unsupportedReason: String? by lazy {
+        when {
+            Build.SUPPORTED_64_BIT_ABIS.none { it == "arm64-v8a" } -> "нужен 64-битный процессор ARM"
+            // Сборка оптимизирована под ARMv8.2 с dot product (телефоны примерно с 2018 года).
+            !cpuHasDotProd() -> "процессор телефона слишком старый для офлайн-модели"
+            else -> runCatching { System.loadLibrary("nova_llm"); init(); null }.getOrElse { "библиотека не загрузилась: ${it.message}" }
+        }
+    }
+
+    private fun cpuHasDotProd(): Boolean = runCatching {
+        File("/proc/cpuinfo").readLines().any { it.startsWith("Features") && it.contains("asimddp") }
+    }.getOrDefault(false)
+
+    @JvmStatic external fun init()
+    @JvmStatic external fun load(path: String, nCtx: Int, nThreads: Int): Long
+    @JvmStatic external fun generate(handle: Long, messages: Array<String>, maxTokens: Int, temperature: Float, listener: TokenListener?): String
+    @JvmStatic external fun stop(handle: Long)
+    @JvmStatic external fun free(handle: Long)
+}
+
+/**
+ * Офлайн-модель для разговора: Qwen 2.5 1.5B Instruct (Apache-2.0), ~1 ГБ.
+ * Скачивается один раз из служебного релиза models-v1 этого репозитория (с докачкой), проверяется по sha256.
+ * Загружается в память при первом вопросе и выгружается после 5 минут без вопросов — чтобы не держать 1,5 ГБ ОЗУ.
+ */
+class OfflineLlm(private val context: Context, private val scope: CoroutineScope) : LocalChat {
+    sealed interface State {
+        data object Missing : State
+        data class Downloading(val progress: Float) : State
+        data object Verifying : State
+        data object Ready : State
+        data class Failed(val message: String) : State
+        data class Unsupported(val reason: String) : State
+    }
+
+    private val dir = File(context.filesDir, "llm").apply { mkdirs() }
+    private val file = File(dir, FILE)
+    private val part = File(dir, "$FILE.part")
+    private val prefs = context.getSharedPreferences("nova_llm", Context.MODE_PRIVATE)
+    private val _state = MutableStateFlow(fileState())
+    val state: StateFlow<State> = _state.asStateFlow()
+
+    private val lock = Mutex()
+    private val downloadLock = Mutex()
+    @Volatile private var handle = 0L
+    /** stop() и free() не должны пересекаться: иначе stop попадёт в уже освобождённую память. */
+    private val nativeLock = Any()
+    /** «Стоп» сказали во время загрузки модели или до начала ответа — не теряем его. */
+    @Volatile private var cancelled = false
+    private var unloadJob: Job? = null
+
+    init {
+        // Проверка процессора и загрузка библиотеки (~десятки мс) — не на главном потоке при запуске.
+        scope.launch(Dispatchers.Default) {
+            LlamaNative.unsupportedReason?.let { _state.value = State.Unsupported(it) }
+        }
+    }
+
+    private fun fileState(): State = if (file.isFile && prefs.getBoolean(KEY_VERIFIED, false)) State.Ready else State.Missing
+
+    private fun initialState(): State {
+        LlamaNative.unsupportedReason?.let { return State.Unsupported(it) }
+        return fileState()
+    }
+
+    /** Пользователь включил офлайн-модель (скачал) и не выключил. */
+    var enabled: Boolean
+        get() = prefs.getBoolean(KEY_ENABLED, true)
+        set(v) { prefs.edit().putBoolean(KEY_ENABLED, v).apply(); if (!v) scope.launch { unload() } }
+
+    override val available: Boolean get() = enabled && _state.value == State.Ready
+
+    val sizeBytes: Long get() = SIZE
+
+    suspend fun download(): Boolean = downloadLock.withLock {
+        if (_state.value is State.Unsupported) return@withLock false
+        if (_state.value == State.Ready) return@withLock true
+        withContext(Dispatchers.IO) {
+            try {
+                fetch()
+                _state.value = State.Verifying
+                if (sha256(part) != SHA256) { part.delete(); error("файл повреждён — попробуйте ещё раз") }
+                file.delete()
+                if (!part.renameTo(file)) error("не удалось сохранить модель")
+                prefs.edit().putBoolean(KEY_VERIFIED, true).putBoolean(KEY_ENABLED, true).apply()
+                _state.value = State.Ready
+                true
+            } catch (e: Exception) {
+                Logger.w(TAG, "Модель не скачана", e)
+                _state.value = State.Failed(
+                    when (e) {
+                        is java.net.UnknownHostException -> "нет интернета"
+                        is java.net.SocketTimeoutException -> "сервер не отвечает — нажмите ещё раз, загрузка продолжится"
+                        is java.io.IOException -> if (dir.usableSpace < SIZE) "не хватает места (нужно ~1 ГБ)" else "связь прервалась — нажмите ещё раз, загрузка продолжится"
+                        else -> e.message ?: "ошибка загрузки"
+                    },
+                )
+                false
+            }
+        }
+    }
+
+    /** Докачка: если связь оборвалась, продолжаем с того же места (Range). */
+    private fun fetch() {
+        if (dir.usableSpace + part.length() < SIZE + 50_000_000) error("не хватает места (нужно ~1 ГБ)")
+        var url = MODEL_URL
+        var conn: HttpURLConnection
+        var redirects = 0
+        while (true) {
+            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 20_000
+                readTimeout = 60_000
+                instanceFollowRedirects = false
+                setRequestProperty("User-Agent", "NovaAssistant")
+                if (part.length() > 0) setRequestProperty("Range", "bytes=${part.length()}-")
+            }
+            if (conn.responseCode in 300..399 && redirects++ < 6) {
+                url = java.net.URL(URL(url), conn.getHeaderField("Location") ?: error("редирект без адреса")).toString()
+                conn.disconnect()
+                continue
+            }
+            break
+        }
+        val resume = conn.responseCode == 206
+        if (conn.responseCode == 416) { conn.disconnect(); return } // уже скачано целиком
+        if (conn.responseCode !in 200..299) error("сервер ответил ${conn.responseCode}")
+        if (!resume) part.delete()
+        var done = part.length()
+        var last = 0f
+        conn.inputStream.use { input ->
+            RandomAccessFile(part, "rw").use { out ->
+                out.seek(done)
+                val buf = ByteArray(256 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    done += n
+                    val p = (done.toFloat() / SIZE).coerceIn(0f, 1f)
+                    if (p - last >= 0.005f) { last = p; _state.value = State.Downloading(p) }
+                }
+            }
+        }
+        conn.disconnect()
+    }
+
+    private fun sha256(f: File): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        f.inputStream().buffered(1 shl 20).use { input ->
+            val buf = ByteArray(1 shl 20)
+            while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun delete() {
+        scope.launch {
+            unload()
+            file.delete(); part.delete()
+            prefs.edit().putBoolean(KEY_VERIFIED, false).apply()
+            _state.value = initialState()
+        }
+    }
+
+    override suspend fun reply(system: String, history: List<ChatMessage>, maxTokens: Int): String? {
+        if (!available || LlamaNative.unsupportedReason != null) return null
+        // Второй телефон в фоне съел память — не рискуем закрытием приложения.
+        if (handle == 0L && !memoryOk()) { Logger.w(TAG, "мало памяти — отвечаю без модели"); return null }
+        cancelled = false
+        return lock.withLock {
+            withContext(Dispatchers.Default) {
+                val h = ensureLoaded() ?: return@withContext null
+                if (cancelled) return@withContext null
+                // Недавний разговор, но не длиннее контекста (2048 токенов): старые реплики отбрасываем,
+                // а последний вопрос пользователя берём всегда (при необходимости — укороченным).
+                val msgs = ArrayList<String>()
+                msgs += "system"; msgs += clean(system).take(1500)
+                val last = history.lastOrNull()
+                var budget = HISTORY_CHARS - (last?.content?.length ?: 0).coerceAtMost(LAST_CHARS)
+                val earlier = history.dropLast(1).takeLast(8).reversed().takeWhile { m -> budget -= m.content.length; budget > 0 }.reversed()
+                for (m in earlier + listOfNotNull(last)) {
+                    msgs += if (m.role == ChatMessage.Role.ASSISTANT) "assistant" else "user"
+                    msgs += clean(m.content).let { if (m === last) it.take(LAST_CHARS) else it }
+                }
+                val listener = LlamaNative.TokenListener { !cancelled }
+                val out = runCatching { LlamaNative.generate(h, msgs.toTypedArray(), maxTokens, 0.6f, listener) }
+                    .onFailure { Logger.w(TAG, "Генерация не удалась", it) }.getOrNull()
+                scheduleUnload()
+                out?.trim()?.takeIf { it.isNotEmpty() }
+            }
+        }
+    }
+
+    /** Остановить ответ («стоп»). */
+    fun stop() {
+        cancelled = true
+        synchronized(nativeLock) { handle.takeIf { it != 0L }?.let { LlamaNative.stop(it) } }
+    }
+
+    /**
+     * Модель ~1 ГБ плюс контекст: если свободной памяти мало, телефон может «убить» приложение
+     * (OOM-killer) — тогда лучше ответить без модели, чем закрыться.
+     */
+    private fun memoryOk(): Boolean = runCatching {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager ?: return@runCatching true
+        val info = android.app.ActivityManager.MemoryInfo()
+        am.getMemoryInfo(info)
+        info.availMem >= NEEDED_MEMORY
+    }.getOrDefault(true)
+
+    private fun ensureLoaded(): Long? {
+        if (handle != 0L) return handle
+        if (!memoryOk()) { Logger.w(TAG, "мало свободной памяти для офлайн-модели"); return null }
+        val threads = Runtime.getRuntime().availableProcessors().let { (it - 2).coerceIn(2, 4) }
+        val h = runCatching { LlamaNative.load(file.absolutePath, CONTEXT, threads) }.getOrDefault(0L)
+        if (h == 0L) { Logger.w(TAG, "Модель не загрузилась"); return null }
+        handle = h
+        return h
+    }
+
+    private fun scheduleUnload() {
+        unloadJob?.cancel()
+        unloadJob = scope.launch { delay(5 * 60_000L); unload() }
+    }
+
+    private suspend fun unload() = lock.withLock {
+        val h = synchronized(nativeLock) { handle.also { handle = 0L } }
+        if (h != 0L) withContext(Dispatchers.Default) { runCatching { LlamaNative.free(h) } }
+    }
+
+    /** Эмодзи и прочие символы вне BMP модели не нужны, а в JNI передаются неудобно. */
+    // «<|im_start|>» в тексте (сообщение, страница) не должно стать служебной меткой модели.
+    private fun clean(s: String) = buildString { s.forEach { ch -> if (!Character.isSurrogate(ch)) append(ch) } }
+        .replace("<|", "< |").replace("|>", "| >").take(2000)
+
+    companion object {
+        private const val TAG = "OfflineLlm"
+        private const val FILE = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+        private const val MODEL_URL = "https://github.com/Lucky2356/loli_ai/releases/download/models-v1/loli-llm-qwen2.5-1.5b-q4_k_m.gguf"
+        private const val SHA256 = "1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370"
+        const val SIZE = 986_048_768L
+        private const val CONTEXT = 2048
+        /** Сколько нужно свободной памяти, чтобы загрузить модель и не быть выгруженным системой. */
+        private const val NEEDED_MEMORY = 1_800_000_000L
+        /** Русский текст — примерно 2–3 символа на токен: так промпт и ответ помещаются в контекст. */
+        private const val HISTORY_CHARS = 2400
+        private const val LAST_CHARS = 1200
+        private const val KEY_VERIFIED = "verified"
+        private const val KEY_ENABLED = "enabled"
+    }
+}

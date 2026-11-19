@@ -1,0 +1,133 @@
+name: Release APK
+
+# Автопубликация релиза: push тега v2.18.1 (или Run workflow) → тесты → подписанный APK →
+# GitHub Release с ассетом nova-<версия>-release.apk. Приложение проверяет именно этот релиз
+# (GET /repos/{repo}/releases/latest) и ставит APK поверх себя.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия без v (например 2.18.1). Пусто — берём из app/build.gradle.kts"
+        required: false
+        default: ""
+      prerelease:
+        description: "Пререлиз (последней версией не считается, обновления его не видят)"
+        type: boolean
+        default: false
+      new_key:
+        description: "Разрешить создание НОВОГО ключа подписи (установленная Нова перестанет обновляться поверх)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+# Два релиза одновременно писать в один тег не должны.
+concurrency:
+  group: release-apk
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    name: Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve version
+        id: v
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="$(sed -nE 's/^val APP_VERSION = "([^"]+)".*/\1/p' app/build.gradle.kts | head -1)"
+          fi
+          case "$VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::Не удалось разобрать версию '$VERSION'"; exit 1 ;;
+          esac
+          echo "Версия: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Подпись: одинаковый ключ у всех релизов, иначе Android не поставит APK поверх старого.
+      - name: Restore signing key from cache
+        id: keycache
+        uses: actions/cache/restore@v4
+        with:
+          path: .signing
+          key: nova-signing-key-v1
+
+      - name: Prepare signing key
+        env:
+          LOLI_KEYSTORE_BASE64: ${{ secrets.LOLI_KEYSTORE_BASE64 }}
+          LOLI_KEYSTORE_PASSWORD_SECRET: ${{ secrets.NOVA_KEYSTORE_PASSWORD }}
+          LOLI_KEY_ALIAS_SECRET: ${{ secrets.NOVA_KEY_ALIAS }}
+          LOLI_KEY_PASSWORD_SECRET: ${{ secrets.NOVA_KEY_PASSWORD }}
+          LOLI_ALLOW_NEW_KEY: ${{ inputs.new_key == true && '1' || '' }}
+        run: ./scripts/signing-key.sh
+
+      - name: Save signing key to cache
+        if: steps.keycache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .signing
+          key: nova-signing-key-v1
+
+      - name: Cache Vosk model
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/vosk-assets
+            app/vosk-cache
+          key: vosk-model-small-ru-0.22
+
+      - name: Offline speech model (встраивается в APK)
+        run: ./scripts/fetch-vosk-model.sh
+
+      - name: Tests and release build
+        env:
+          NOVA_VERSION_NAME: ${{ steps.v.outputs.version }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL || secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          ./gradlew --no-daemon :core:test :app:assembleRelease
+
+      - name: Package asset
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          APK="$(ls app/build/outputs/apk/release/*.apk | head -1)"
+          cp "$APK" "dist/nova-${{ steps.v.outputs.version }}-release.apk"
+          ls -la dist
+          for lib in libnova_llm.so libsherpa-onnx-jni.so libvosk.so; do
+            unzip -l "$APK" | grep -q "lib/arm64-v8a/$lib" || { echo "::error::$lib не попала в APK"; exit 1; }
+          done
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.version }}
+          name: Нова ${{ steps.v.outputs.version }}
+          files: dist/nova-${{ steps.v.outputs.version }}-release.apk
+          draft: false
+          prerelease: ${{ inputs.prerelease == true || contains(steps.v.outputs.version, '-') }}
+          make_latest: ${{ (inputs.prerelease == true || contains(steps.v.outputs.version, '-')) && 'false' || 'true' }}
+          generate_release_notes: true
+          body: |
+            Сборка из коммита ${{ github.sha }}.
+
+            Установка: скачайте APK ниже или дождитесь предложения обновиться в самом приложении
+            («Настройки → О приложении → Проверить обновления»).

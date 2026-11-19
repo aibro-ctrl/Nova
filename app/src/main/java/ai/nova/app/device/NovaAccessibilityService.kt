@@ -1,0 +1,199 @@
+package ai.nova.app.device
+
+import android.accessibilityservice.AccessibilityService
+import android.content.Intent
+import android.os.Build
+import android.view.accessibility.AccessibilityEvent
+import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.KeyEvent
+import ai.nova.app.NovaApp
+import ai.nova.app.assist.AssistActivity
+import ai.nova.app.settings.KeyTrigger
+import ai.nova.core.assistant.GlobalAction
+
+/**
+ * Спецвозможности Нова: системные кнопки по голосу — «назад», «домой», «недавние», «скриншот»,
+ * «заблокируй экран», «открой уведомления». Текст экрана читается только по команде («что на экране»,
+ * «перескажи экран») и никуда не сохраняется; окна самой Нова, поля паролей и чужие клавиатуры пропускаются.
+ * Включается пользователем вручную: Настройки → Спецвозможности → Нова.
+ */
+class NovaAccessibilityService : AccessibilityService() {
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        instance = this
+        // Системная «кнопка/жест спецвозможностей» и быстрое включение (удержание обеих кнопок громкости),
+        // если в настройках телефона они назначены на Нова.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching {
+                accessibilityButtonController.registerAccessibilityButtonCallback(object : android.accessibilityservice.AccessibilityButtonController.AccessibilityButtonCallback() {
+                    override fun onClicked(controller: android.accessibilityservice.AccessibilityButtonController) = summon()
+                })
+            }
+        }
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+
+    /** Видимый текст активного окна (без полей паролей), по порядку на экране. */
+    fun screenText(): String? {
+        val root = rootInActiveWindow ?: return null
+        if (root.packageName?.toString() == packageName) {
+            // Сверху окно Нова (ассистент) — читаем окно под ним.
+            // Клавиатуру пропускаем: по тексту её окна можно было бы восстановить набираемое.
+            val other = windows.filter { it.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+                .mapNotNull { it.root }.firstOrNull { it.packageName?.toString() != packageName } ?: return null
+            return collect(other)
+        }
+        return collect(root)
+    }
+
+    private fun collect(root: android.view.accessibility.AccessibilityNodeInfo): String {
+        val out = LinkedHashSet<String>()
+        fun walk(n: android.view.accessibility.AccessibilityNodeInfo?, depth: Int) {
+            if (n == null || depth > 40 || out.size > 400) return
+            if (!n.isPassword && n.isVisibleToUser) {
+                val t = (n.text ?: n.contentDescription)?.toString()?.trim()
+                if (!t.isNullOrEmpty() && t.length > 1) out += t
+            }
+            for (i in 0 until n.childCount) walk(n.getChild(i), depth + 1)
+        }
+        walk(root, 0)
+        return out.joinToString("\n")
+    }
+
+    private val handler = Handler(Looper.getMainLooper())
+    private var upDownAt = 0L
+    private var downDownAt = 0L
+    private var holdFired = false
+    private var pendingDown: Runnable? = null
+    private var lastDownTap = 0L
+
+    /**
+     * Вызов Нова кнопками громкости. Остальные нажатия не теряются: если жест не состоялся,
+     * громкость меняется так же, как без Нова.
+     */
+    override fun onKeyEvent(event: KeyEvent): Boolean {
+        val trigger = (application as NovaApp).container.settings.settings.value.keyTrigger
+        if (trigger == KeyTrigger.NONE) return false
+        val up = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
+        val down = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+        if (!up && !down) return false
+        // Во время звонка и входящего вызова кнопки громкости — только для звонка (например, выключить звонок).
+        val audio = getSystemService(AudioManager::class.java)
+        if (audio != null && audio.mode != AudioManager.MODE_NORMAL) return false
+        val pressed = event.action == KeyEvent.ACTION_DOWN
+        val now = SystemClock.uptimeMillis()
+        return when (trigger) {
+            KeyTrigger.HOLD_VOLUME_UP -> {
+                if (!up) return false
+                if (pressed && event.repeatCount == 0) {
+                    holdFired = false
+                    handler.postDelayed(holdRunnable, HOLD_MS)
+                } else if (!pressed) {
+                    handler.removeCallbacks(holdRunnable)
+                    if (!holdFired) adjust(AudioManager.ADJUST_RAISE)
+                }
+                true
+            }
+            KeyTrigger.DOUBLE_VOLUME_DOWN -> {
+                if (!down) return false
+                // Удержание «−» — обычное плавное уменьшение громкости.
+                if (pressed && event.repeatCount > 0) {
+                    pendingDown?.let { handler.removeCallbacks(it) }
+                    pendingDown = null
+                    lastDownTap = 0
+                    adjust(AudioManager.ADJUST_LOWER)
+                    return true
+                }
+                if (pressed && event.repeatCount == 0) {
+                    if (now - lastDownTap < DOUBLE_MS) {
+                        pendingDown?.let { handler.removeCallbacks(it) }
+                        pendingDown = null
+                        lastDownTap = 0
+                        summon()
+                    } else {
+                        lastDownTap = now
+                        val r = Runnable { pendingDown = null; adjust(AudioManager.ADJUST_LOWER) }
+                        pendingDown = r
+                        handler.postDelayed(r, DOUBLE_MS)
+                    }
+                }
+                true
+            }
+            KeyTrigger.BOTH_VOLUME -> {
+                if (pressed) {
+                    if (up) upDownAt = now else downDownAt = now
+                    if (upDownAt > 0 && downDownAt > 0 && kotlin.math.abs(upDownAt - downDownAt) < BOTH_MS) {
+                        upDownAt = 0; downDownAt = 0
+                        summon()
+                        return true
+                    }
+                } else {
+                    if (up) upDownAt = 0 else downDownAt = 0
+                }
+                false // обычная регулировка громкости не блокируется
+            }
+            KeyTrigger.NONE -> false
+        }
+    }
+
+    private val holdRunnable = Runnable { holdFired = true; summon() }
+
+    private fun adjust(direction: Int) {
+        runCatching {
+            getSystemService(AudioManager::class.java)
+                .adjustSuggestedStreamVolume(direction, AudioManager.USE_DEFAULT_STREAM_TYPE, AudioManager.FLAG_SHOW_UI)
+        }
+    }
+
+    /** Открыть окно ассистента поверх текущего экрана (в том числе на экране блокировки). */
+    private fun summon() {
+        val c = (application as NovaApp).container
+        val intent = Intent(this, AssistActivity::class.java).setAction(Intent.ACTION_ASSIST)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        if (!c.launcher.launch(intent)) runCatching { startActivity(intent) }
+    }
+    override fun onInterrupt() = Unit
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        instance = null
+        return super.onUnbind(intent)
+    }
+
+    override fun onDestroy() {
+        instance = null
+        super.onDestroy()
+    }
+
+    companion object {
+        private const val HOLD_MS = 550L
+        private const val DOUBLE_MS = 350L
+        private const val BOTH_MS = 300L
+
+        @Volatile private var instance: NovaAccessibilityService? = null
+
+        val isEnabled: Boolean get() = instance != null
+        /** Работающая служба (для чтения экрана по команде). */
+        val current: NovaAccessibilityService? get() = instance
+
+        /** null — служба не включена; false — действие недоступно на этой версии Android. */
+        fun perform(action: GlobalAction): Boolean? {
+            val service = instance ?: return null
+            val code = when (action) {
+                GlobalAction.BACK -> GLOBAL_ACTION_BACK
+                GlobalAction.HOME -> GLOBAL_ACTION_HOME
+                GlobalAction.RECENTS -> GLOBAL_ACTION_RECENTS
+                GlobalAction.NOTIFICATIONS -> GLOBAL_ACTION_NOTIFICATIONS
+                GlobalAction.QUICK_SETTINGS -> GLOBAL_ACTION_QUICK_SETTINGS
+                GlobalAction.POWER_MENU -> GLOBAL_ACTION_POWER_DIALOG
+                GlobalAction.SPLIT_SCREEN -> GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN
+                GlobalAction.LOCK -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) GLOBAL_ACTION_LOCK_SCREEN else return false
+                GlobalAction.SCREENSHOT -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) GLOBAL_ACTION_TAKE_SCREENSHOT else return false
+            }
+            return service.performGlobalAction(code)
+        }
+    }
+}

@@ -1,0 +1,90 @@
+-- Состояние агента: задачи, шаги и долгоживущий контекст.
+-- Нужно, чтобы многошаговый сценарий (рецепт → покупки → шаги готовки) переживал перезапуск приложения.
+
+CREATE TABLE agent_task (
+    id TEXT NOT NULL PRIMARY KEY,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    state TEXT NOT NULL,
+    step_index INTEGER NOT NULL DEFAULT 0,
+    total_steps INTEGER NOT NULL DEFAULT 0,
+    payload TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX agent_task_state_idx ON agent_task(state, updated_at);
+
+CREATE TABLE agent_step (
+    id TEXT NOT NULL PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    skill TEXT NOT NULL,
+    input TEXT NOT NULL,
+    output TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL,
+    error TEXT,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX agent_step_task_idx ON agent_step(task_id, step_index);
+
+CREATE TABLE agent_context (
+    key TEXT NOT NULL PRIMARY KEY,
+    content TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+upsertTask:
+INSERT OR REPLACE INTO agent_task(id, kind, title, state, step_index, total_steps, payload, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectTask:
+SELECT * FROM agent_task WHERE id = ?;
+
+selectActive:
+SELECT * FROM agent_task WHERE state IN ('NOT_STARTED', 'IN_PROGRESS', 'WAITING_FOR_USER', 'PAUSED') ORDER BY updated_at DESC LIMIT 1;
+
+selectRecent:
+SELECT * FROM agent_task ORDER BY updated_at DESC LIMIT ?;
+
+updateTaskState:
+UPDATE agent_task SET state = ?, step_index = ?, updated_at = ? WHERE id = ?;
+
+deleteTask:
+DELETE FROM agent_task WHERE id = ?;
+
+deleteTasksOlderThan:
+DELETE FROM agent_task WHERE updated_at < ?;
+
+upsertStep:
+INSERT OR REPLACE INTO agent_step(id, task_id, step_index, skill, input, output, state, error, duration_ms, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectSteps:
+SELECT * FROM agent_step WHERE task_id = ? ORDER BY step_index, created_at;
+
+deleteSteps:
+DELETE FROM agent_step WHERE task_id = ?;
+
+upsertContext:
+INSERT OR REPLACE INTO agent_context(key, content, updated_at) VALUES (?, ?, ?);
+
+selectContext:
+SELECT * FROM agent_context WHERE key = ?;
+
+deleteContext:
+DELETE FROM agent_context WHERE key = ?;
+
+deleteExpiredContext:
+DELETE FROM agent_context WHERE updated_at < ?;
+
+deleteAllTasks:
+DELETE FROM agent_task;
+
+deleteAllSteps:
+DELETE FROM agent_step;
+
+deleteAllContext:
+DELETE FROM agent_context;
