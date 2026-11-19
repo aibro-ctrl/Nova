@@ -81,6 +81,29 @@ class AndroidSkillHost(
         return withContext(Dispatchers.IO) { ContactLookup.find(context, name)?.let { ContactInfo(it.name, it.phones) } }
     }
 
+    /** Имена и номера из контактов для «где я»: кого можно позвать на помощь. Разрешение не спрашиваем — без него пусто. */
+    override suspend fun contacts(limit: Int): List<ContactInfo> {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return emptyList()
+        return withContext(Dispatchers.IO) {
+            val found = LinkedHashMap<String, MutableList<String>>()
+            runCatching {
+                context.contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
+                    null, null,
+                    "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC",
+                )?.use { c ->
+                    while (c.moveToNext() && found.size < limit) {
+                        val name = c.getString(0)?.trim()?.takeIf { it.isNotBlank() } ?: continue
+                        val number = c.getString(1)?.trim()?.takeIf { it.isNotBlank() } ?: continue
+                        found.getOrPut(name) { ArrayList() }.add(number)
+                    }
+                }
+            }
+            found.map { (name, phones) -> ContactInfo(name, phones) }
+        }
+    }
+
     /** Дни рождения из контактов — только если доступ уже выдан: вопрос «у кого скоро ДР» не должен дёргать разрешения. */
     override suspend fun contactBirthdays(): List<Pair<String, java.time.MonthDay>> {
         if (androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return emptyList()

@@ -359,8 +359,10 @@ object DevicePhrases {
         // Звонок и сообщение: «позвони маме», «набери 8 900 …», «напиши Саше что я задержусь».
         re("""^(?:позвони|набери|вызови|звонок|звякни|брякни|сделай звонок|соедини с)\s+(?:на\s+номер\s+|номер\s+)?(.+)$""").find(t)?.let {
             // «соедини с интернетом» — не звонок.
-            if (!re("""^(?:интернет|вай|wi|сет|блют|bluetooth|сервер|компьютер|ноутбук|телевизор|колонк|наушник)""").containsMatchIn(it.groupValues[1].trim())) {
-                return cmd(DeviceCommand.Call(it.groupValues[1].trim()))
+            val who = it.groupValues[1].trim()
+            if (!re("""^(?:интернет|вай|wi|сет|блют|bluetooth|сервер|компьютер|ноутбук|телевизор|колонк|наушник)""").containsMatchIn(who)) {
+                // «Вызови скорую», «позвони в полицию» — сразу нужный номер, а не поиск в контактах.
+                return cmd(DeviceCommand.Call(emergencyNumber(who) ?: who))
             }
         }
         re("""^(?:напиши|черкни|(?:отправь|скинь|пошли)\s+(?:смс|сообщение|эсэмэску|смску))\s+(\S+(?:\s+\S+)?)\s*(?:,|что|:)\s*(.+)$""").find(t)?.let {
@@ -420,6 +422,18 @@ object DevicePhrases {
     private val NOT_RECIPIENTS = setOf("мне", "нам", "все", "всем", "что", "про", "это", "по", "еще", "ещё", "одно", "одну", "такое", "там", "тут", "сейчас", "срочно", "быстро", "потом", "завтра")
 
     /** «напиши красивое сообщение», «отправь еще сообщение» — прилагательные и наречия не адресаты. */
+    /** Номера экстренных служб: «скорая» → 103, «полиция» → 102, «пожарные» → 101, «спасатели» → 112. */
+    fun emergencyNumber(who: String): String? {
+        val n = who.lowercase()
+        return when {
+            Regex("""(?:скор|неотлож|врач|доктор|фельдшер|реанимац)""").containsMatchIn(n) -> "103"
+            Regex("""(?:полици|милици|мент)""").containsMatchIn(n) -> "102"
+            Regex("""(?:пожар)""").containsMatchIn(n) -> "101"
+            Regex("""(?:спасател|спасени|мчс|чрезвычайн|112)""").containsMatchIn(n) -> "112"
+            else -> null
+        }
+    }
+
     private fun isRecipient(who: String): Boolean =
         who.lowercase() !in NOT_RECIPIENTS && !Regex("""(?:ое|ее|ие|ые)$""").containsMatchIn(who.lowercase())
 

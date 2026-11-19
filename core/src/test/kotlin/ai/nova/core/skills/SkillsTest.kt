@@ -1,7 +1,10 @@
 package ai.nova.core.skills
 
 import ai.nova.core.TestEnv
+import ai.nova.core.assistant.AssistantAction
 import ai.nova.core.assistant.AssistantSettings
+import ai.nova.core.assistant.DeviceCommand
+import ai.nova.core.assistant.DevicePhrases
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -41,6 +44,8 @@ class SkillsTest {
     private val borscht = """{"batchcomplete":"","query":{"pages":{"471":{"pageid":471,"ns":0,"title":"Борщ","extract":"Бо́рщ — суп из свёклы, распространённый в Восточной Европе.\n\n== Ингредиенты ==\nСвёкла, капуста, мясо, картофель, морковь, лук, томат, сметана и зелень.\n\n== Приготовление ==\n1. Сварите бульон.\n2. Добавьте свёклу и капусту.\n3. Варите 20 минут и подавайте со сметаной.\n\n== История ==\nСуп известен с давних времён."}}}}"""
     private val radio = """[{"name":"\tЕвропа Плюс","url":"http://ep256.hostingradio.ru:8052/europaplus256.mp3","url_resolved":"http://ep256.hostingradio.ru:8052/europaplus256.mp3"},{"name":"Some Station","url":"http://1.2.3.4:8000/x","url_resolved":"http://1.2.3.4:8000/x"},{"name":"Secure","url":"https://s.example/stream","url_resolved":"https://s.example/stream"}]"""
 
+    private val nominatim = """{"display_name":"улица Баумана, 12, Казань, Россия","address":{"road":"улица Баумана","house_number":"12","city":"Казань"}}"""
+
     private val requested = ArrayList<String>()
 
     private fun http() = HttpClient(MockEngine { r ->
@@ -58,6 +63,7 @@ class SkillsTest {
             u.contains("wikipedia") && u.contains("%D0%93%D0%B0%D0%B3%D0%B0%D1%80%D0%B8%D0%BD") -> wikiExtract
             u.contains("wikipedia") -> wikiMissing
             u.contains("radio-browser") -> radio
+            u.contains("nominatim") -> nominatim
             else -> return@MockEngine respond("", HttpStatusCode.NotFound)
         }
         respond(body, HttpStatusCode.OK, headersOf("Content-Type", "application/json; charset=utf-8"))
@@ -82,6 +88,11 @@ class SkillsTest {
         override suspend fun reply(message: IncomingMessage, text: String): Boolean { sent += message.sender to text; return true }
         override suspend fun screenText() = "Статья о том, как вырастить помидоры на балконе. Нужно много солнца."
         override suspend fun contact(name: String) = if (name.startsWith("мам")) ContactInfo("Мама", listOf("+79161234567")) else null
+        var contactsAllowed = true
+        override suspend fun contacts(limit: Int) = if (!contactsAllowed) emptyList() else listOf(
+            ContactInfo("Мама", listOf("+79161234567")),
+            ContactInfo("Дочь Аня", listOf("+79161234568")),
+        )
         override suspend fun calendar(from: Instant, to: Instant) = listOf(CalendarItem("Стоматолог", Instant.parse("2026-09-25T14:00:00Z"), null, false, "Клиника"))
             .filter { !it.start.isBefore(from) && it.start.isBefore(to) }
         override suspend fun playRadio(station: RadioStation): Boolean { radioPlayed += station.name; return true }
@@ -559,5 +570,73 @@ class SkillsTest {
         val e = env(host)
         e.engine.handle("отмени таймер на 10 минут")
         assertEquals(listOf("t1"), host.cancelledIds)
+    }
+
+    // ------------------------------------------------------------------ «Где я» и помощь
+
+    @Test fun whereAmIOffersAmbulanceAndRelatives() = runTest {
+        val host = FakeHost()
+        val skills = Skills(host, http(), TestEnv().time)
+        val out = skills.handle("где я", AssistantSettings(), null) as SkillOutcome.Say
+        assertTrue(out.text.contains("улица Баумана, 12, Казань"), out.text)
+        assertTrue(out.followUp, "предложение помощи ждёт ответа")
+        assertTrue(out.sensitive, "адрес — личное")
+        assertTrue(out.text.contains("вызови скорую"), out.text)
+        assertTrue(out.text.contains("Мама") && out.text.contains("Дочь Аня"), out.text)
+    }
+
+    @Test fun whereAmIWithoutContactsStillOffersAmbulance() = runTest {
+        val host = FakeHost().apply { contactsAllowed = false }
+        val skills = Skills(host, http(), TestEnv().time)
+        val out = skills.handle("где я", AssistantSettings(), null) as SkillOutcome.Say
+        assertTrue(out.text.contains("вызови скорую"), out.text)
+        assertTrue(out.text.contains("доступ к контактам"), out.text)
+        assertFalse(out.text.contains("Близкие в контактах"), out.text)
+    }
+
+    @Test fun ambulanceCallAfterWhereAmI() = runTest {
+        val skills = Skills(FakeHost(), http(), TestEnv().time)
+        skills.handle("где я", AssistantSettings(), null)
+        val out = skills.handle("вызови скорую", AssistantSettings(), null) as SkillOutcome.Run
+        assertTrue(out.plan.preface.contains("103"), out.plan.preface)
+        assertTrue(out.plan.preface.contains("улица Баумана, 12"), "диспетчеру нужен адрес: ${out.plan.preface}")
+        val call = out.plan.actions.filterIsInstance<AssistantAction.Device>().first().command as DeviceCommand.Call
+        assertEquals("103", call.who)
+    }
+
+    @Test fun messageToRelativeCarriesAddress() = runTest {
+        val skills = Skills(FakeHost(), http(), TestEnv().time)
+        skills.handle("где я", AssistantSettings(), null)
+        val out = skills.handle("напиши маме", AssistantSettings(), null) as SkillOutcome.Run
+        val msg = out.plan.actions.filterIsInstance<AssistantAction.Device>().first().command as DeviceCommand.Message
+        assertEquals("маме", msg.who)
+        assertTrue(msg.text.contains("улица Баумана, 12, Казань"), msg.text)
+    }
+
+    @Test fun callToRelativeAfterWhereAmI() = runTest {
+        val skills = Skills(FakeHost(), http(), TestEnv().time)
+        skills.handle("где я", AssistantSettings(), null)
+        val out = skills.handle("позвони дочери", AssistantSettings(), null) as SkillOutcome.Run
+        val call = out.plan.actions.filterIsInstance<AssistantAction.Device>().first().command as DeviceCommand.Call
+        assertEquals("дочери", call.who)
+    }
+
+    @Test fun noHelpClosesOffer() = runTest {
+        val skills = Skills(FakeHost(), http(), TestEnv().time)
+        skills.handle("где я", AssistantSettings(), null)
+        val out = skills.handle("нет, спасибо", AssistantSettings(), null) as SkillOutcome.Say
+        assertTrue(out.text.contains("где я"), out.text)
+        // Предложение закрыто: «позвони маме» снова обычная команда телефона, а не помощь.
+        assertNull(skills.handle("позвони маме", AssistantSettings(), null))
+    }
+
+    @Test fun emergencyNumbersForAnyCall() = runTest {
+        assertEquals("103", DevicePhrases.emergencyNumber("скорую"))
+        assertEquals("103", DevicePhrases.emergencyNumber("в скорую помощь"))
+        assertEquals("102", DevicePhrases.emergencyNumber("полицию"))
+        assertEquals("101", DevicePhrases.emergencyNumber("пожарных"))
+        assertEquals("112", DevicePhrases.emergencyNumber("спасателей"))
+        assertNull(DevicePhrases.emergencyNumber("маме"))
+        assertNull(DevicePhrases.emergencyNumber("такси"))
     }
 }

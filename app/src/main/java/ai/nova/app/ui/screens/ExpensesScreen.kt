@@ -14,7 +14,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Payments
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,10 +32,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.nova.app.AppContainer
+import ai.nova.app.settings.BankPushMode
+import ai.nova.app.notify.NovaNotificationListener
 import ai.nova.app.ui.components.ConfirmDialog
 import ai.nova.app.ui.components.EditorSheet
 import ai.nova.app.ui.components.EmptyState
@@ -43,10 +49,12 @@ import ai.nova.app.ui.components.NovaField
 import ai.nova.app.ui.components.NovaScreen
 import ai.nova.app.ui.components.Pills
 import ai.nova.app.ui.components.PrimaryButton
+import ai.nova.app.ui.components.Hint
 import ai.nova.app.ui.components.RowItem
 import ai.nova.app.ui.components.SecondaryButton
 import ai.nova.app.ui.components.SectionLabel
 import ai.nova.core.assistant.RuFormat
+import ai.nova.core.finance.BankPushParser
 import ai.nova.core.finance.ExpenseAnalytics
 import ai.nova.core.finance.PeriodPreset
 import ai.nova.core.model.Expense
@@ -69,7 +77,10 @@ private val presets = listOf(
 @Composable
 fun ExpensesScreen(c: AppContainer) {
     val all by remember { c.store.expenses.observe() }.collectAsStateWithLifecycle(emptyList())
-    val name = c.settings.settings.collectAsStateWithLifecycle().value.assistantName
+    val settings by c.settings.settings.collectAsStateWithLifecycle()
+    val name = settings.assistantName
+    val context = LocalContext.current
+    var bankSheet by remember { mutableStateOf(false) }
     var presetIndex by rememberSaveable { mutableIntStateOf(2) }
     var adding by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Expense?>(null) }
@@ -78,7 +89,15 @@ fun ExpensesScreen(c: AppContainer) {
     val range = ExpenseAnalytics.range(presets[presetIndex].first, today)
     val report = ExpenseAnalytics.report(all, range)
 
-    NovaScreen(title = "Расходы", fab = { NovaFab(Icons.Rounded.Add, "Добавить расход") { adding = true } }) {
+    NovaScreen(
+        title = "Расходы",
+        actions = {
+            IconButton(onClick = { bankSheet = true }) {
+                Icon(Icons.Rounded.NotificationsActive, contentDescription = "Траты из уведомлений банков")
+            }
+        },
+        fab = { NovaFab(Icons.Rounded.Add, "Добавить расход") { adding = true } },
+    ) {
         item(key = "total") {
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                 Text(range.label.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -147,6 +166,16 @@ fun ExpensesScreen(c: AppContainer) {
         }
     }
 
+    if (bankSheet) {
+        BankPushSheet(
+            current = settings.bankPushes,
+            access = NovaNotificationListener.enabled(context),
+            onSelect = { scope.launch { c.settings.setBankPushes(it) } },
+            onAllow = { runCatching { context.startActivity(NovaNotificationListener.settingsIntent(context)) } },
+            onDismiss = { bankSheet = false },
+        )
+    }
+
     if (adding) {
         ExpenseEditor(today, null, onDismiss = { adding = false }, onSave = { amount, category, description, date ->
             scope.launch { c.expenses.create(Money.toMinor(amount), "RUB", category, description, date) }
@@ -198,4 +227,36 @@ private fun ExpenseEditor(
     }
     if (askDelete && initial != null) ConfirmDialog("Удалить расход?", "${Money.format(initial.amountMinor, initial.currency)} — ${initial.category}", "Удалить",
         onConfirm = onDelete, onDismiss = { askDelete = false })
+}
+
+/**
+ * Траты из уведомлений банков. Нова не входит в банк: она разбирает пуш, который телефон и так показал,
+ * и спрашивает, записать ли покупку. Ничего не уходит в интернет.
+ */
+@Composable
+private fun BankPushSheet(
+    current: BankPushMode,
+    access: Boolean,
+    onSelect: (BankPushMode) -> Unit,
+    onAllow: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    EditorSheet("Траты из уведомлений банков", onDismiss) {
+        Text(
+            "Банк присылает пуш «Покупка 850 ₽ · Пятёрочка» — Нова записывает трату в расходы. " +
+                "Данные остаются на телефоне, в банк приложение не входит.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Group {
+            BankPushMode.entries.forEachIndexed { i, mode ->
+                if (i > 0) GroupDivider(inset = 52.dp)
+                RadioRow(mode.title, mode.hint, current == mode) { onSelect(mode) }
+            }
+        }
+        if (!access && current != BankPushMode.OFF) {
+            SecondaryButton("Разрешить доступ к уведомлениям", onAllow)
+        }
+        Hint("Поддерживаются банки: " + BankPushParser.supportedBanks.joinToString(", ") + ".")
+        Hint("Если банк не в списке — Нова спросит подтверждение, но запишет трату, когда в уведомлении есть «покупка», «оплата» или «списание».")
+    }
 }

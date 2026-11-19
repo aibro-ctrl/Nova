@@ -22,10 +22,15 @@ object Notifications {
     const val CHANNEL_MEDIA = "media"
     /** Быстрый ввод из шторки. */
     const val CHANNEL_QUICK = "quick"
+    /** Траты из уведомлений банков: Нова спрашивает, записать ли покупку. */
+    const val CHANNEL_BANK = "bank"
     const val RING_ID = 1010
     /** Утренняя сводка. Раньше делила id 1010 с сигналом таймера: сигнал затирал сводку и убирал её при остановке. */
     const val BRIEF_ID = 1012
     const val QUICK_ID = 1013
+    /** Банковские пуши: id уведомления о трате и о уже записанной трате. */
+    const val BANK_BASE_ID = 400_000
+    const val BANK_DONE_BASE_ID = 420_000
     const val EVENING_ID = 1014
     const val AUTO_BACKUP_ID = 1015
     const val WEEKLY_ID = 1016
@@ -68,6 +73,14 @@ object Notifications {
                 description = "Поле «Что записать?» в шторке"
                 setShowBadge(false)
                 lockscreenVisibility = Notification.VISIBILITY_SECRET
+            },
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_BANK, "Траты из банковских уведомлений", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Нова предлагает записать покупку из пуша банка в расходы"
+                // Покупки — личное: на заблокированном экране текст скрыт.
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+                setShowBadge(false)
             },
         )
         nm.createNotificationChannel(

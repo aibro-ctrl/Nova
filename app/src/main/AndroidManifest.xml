@@ -352,6 +352,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".finance.BankPushReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".reminders.BootReceiver"
             android:exported="true">
             <intent-filter>

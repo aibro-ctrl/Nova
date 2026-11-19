@@ -89,6 +89,19 @@ enum class ThemeMode(val id: String, val title: String) {
     }
 }
 
+/**
+ * Что делать с тратами, которые Нова видит в уведомлениях банковских приложений.
+ */
+enum class BankPushMode(val id: String, val title: String, val hint: String) {
+    OFF("off", "Выключено", "Уведомления банков Нова не читает"),
+    ASK("ask", "Спрашивать", "Показывает трату и ждёт подтверждения — по умолчанию"),
+    AUTO("auto", "Записывать сразу", "Траты сами попадают в расходы, без вопросов");
+
+    companion object {
+        fun fromId(id: String?) = entries.firstOrNull { it.id == id } ?: ASK
+    }
+}
+
 /** Настройки одного AI-провайдера. API-ключ хранится отдельно, в Keystore. */
 data class ProviderSettings(val type: AIProviderType, val enabled: Boolean, val model: String, val endpoint: String) {
     val effectiveModel: String get() = model.ifBlank { type.defaultModel }
@@ -161,6 +174,8 @@ data class AppSettings(
     val persona: String = "caring",
     /** Постоянное уведомление с полем быстрого ввода («кофе 250»). */
     val quickInput: Boolean = false,
+    /** Траты из пушей банков: выключено, спрашивать или записывать сразу. */
+    val bankPushes: BankPushMode = BankPushMode.ASK,
     val supabaseUrlOverride: String = "",
     val localOnly: Boolean = false,
     val onboardingDone: Boolean = false,
@@ -208,6 +223,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val weeklyReview = booleanPreferencesKey("weekly_review")
         val persona = stringPreferencesKey("persona")
         val quickInput = booleanPreferencesKey("quick_input")
+        val bankPushes = stringPreferencesKey("bank_pushes")
         val pitch = floatPreferencesKey("speech_pitch")
         val voice = stringPreferencesKey("voice_name")
         val ttsEngine = stringPreferencesKey("tts_engine")
@@ -302,6 +318,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             weeklyReview = p[K.weeklyReview] ?: false,
             persona = p[K.persona] ?: "caring",
             quickInput = p[K.quickInput] ?: false,
+            bankPushes = BankPushMode.fromId(p[K.bankPushes]),
             autoUpdate = p[K.autoUpdate] ?: true,
             novaCloud = p[K.novaCloud] ?: true,
             lockScreenEnabled = p[K.lockEnabled] ?: true,
@@ -393,6 +410,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setWeeklyReview(v: Boolean) = store.edit { it[K.weeklyReview] = v }
     suspend fun setPersona(v: String) = store.edit { it[K.persona] = v }
     suspend fun setQuickInput(v: Boolean) = store.edit { it[K.quickInput] = v }
+    suspend fun setBankPushes(v: BankPushMode) = store.edit { it[K.bankPushes] = v.id }
     suspend fun setSecureScreen(v: Boolean) = store.edit { it[K.secureScreen] = v }
     suspend fun setSpeechPause(v: SpeechPause) = store.edit { it[K.speechPause] = v.id }
     suspend fun setSpeechPitch(v: Float) = store.edit { it[K.pitch] = v.coerceIn(0.5f, 2f) }

@@ -125,14 +125,16 @@ class AndroidDeviceController(
                 val (number, name) = resolveNumber(c.who) ?: return contactsProblem(c.who)
                 val uri = Uri.parse("tel:" + Uri.encode(number))
                 // Помощник звонит сам: руки заняты, а человек может не видеть, что номер уже набран.
+                // «Вызови скорую» → номер 103: произносим службу, а не цифры.
+                val spoken = name ?: emergencyName(number) ?: number
                 if (Dialer.autoDial(context) && canPlaceCalls()) {
                     val placed = runCatching { launcher.launch(Intent(Intent.ACTION_CALL, uri)) }.getOrDefault(false)
-                    if (placed) return DeviceResult("Звоню ${name ?: number}.")
+                    if (placed) return DeviceResult("Звоню $spoken.")
                     runCatching { context.startActivity(Intent(Intent.ACTION_CALL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                        .onSuccess { return DeviceResult("Звоню ${name ?: number}.") }
+                        .onSuccess { return DeviceResult("Звоню $spoken.") }
                 }
                 val hint = if (!canPlaceCalls()) " Разрешите «Звонки» в Настройки → Разрешения, чтобы я звонила сама." else ""
-                open(Intent(Intent.ACTION_DIAL, uri), "Набираю ${name ?: number} — нажмите вызов.$hint", "Звонок")
+                open(Intent(Intent.ACTION_DIAL, uri), "Набираю $spoken — нажмите вызов.$hint", "Звонок")
             }
             is DeviceCommand.Message -> {
                 askContactsIfNeeded(c.who)
@@ -533,6 +535,16 @@ class AndroidDeviceController(
         val hit = ContactLookup.find(context, who) ?: return null
         val number = hit.phones.firstOrNull() ?: return null
         return number to hit.name
+    }
+
+    /** Как назвать экстренную службу вслух: «скорую помощь», а не «103». */
+    private fun emergencyName(number: String): String? = when (number.filter { it.isDigit() }) {
+        "101" -> "пожарных"
+        "102" -> "полицию"
+        "103" -> "скорую помощь"
+        "104" -> "газовую службу"
+        "112" -> "службу спасения"
+        else -> null
     }
 
     /** «Позвони маме» без доступа к контактам — спрашиваем разрешение прямо сейчас (для номера цифрами не нужно). */

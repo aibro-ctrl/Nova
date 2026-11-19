@@ -45,6 +45,12 @@ interface SkillHost {
     suspend fun screenText(): String? = throw NeedsPermission(Permission.ACCESSIBILITY, "нет доступа к экрану")
 
     suspend fun contact(name: String): ContactInfo? = null
+
+    /**
+     * Контакты с телефонами — чтобы после «где я» предложить близкого человека для звонка или сообщения.
+     * Без разрешения на контакты — пусто: спрашивать разрешение посреди вопроса «где я» неуместно.
+     */
+    suspend fun contacts(limit: Int = 10): List<ContactInfo> = emptyList()
     suspend fun calendar(from: Instant, to: Instant): List<CalendarItem> = emptyList()
     /** Дни рождения из контактов телефона (только если доступ к контактам уже выдан). */
     suspend fun contactBirthdays(): List<Pair<String, java.time.MonthDay>> = emptyList()

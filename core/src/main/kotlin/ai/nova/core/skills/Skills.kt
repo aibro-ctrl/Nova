@@ -68,6 +68,8 @@ class Skills(
     private var lastNews: List<NewsService.Item> = emptyList()
     private var newsShown = 0
     private var replyTarget: IncomingMessage? = null
+    /** После «где я»: адрес, координаты и когда спросили — чтобы вызвать помощь или передать адрес близкому. */
+    private var helpPlace: HelpPlace? = null
     /** Спросили «Что ответить Маше?» — следующая фраза и есть ответ. */
     private var awaitReply = false
     private var stations: List<RadioStation> = emptyList()
@@ -81,16 +83,17 @@ class Skills(
 
     /** Навык ждёт ответа — движок передаёт следующую фразу сюда. Ожидание не вечное: через 3 минуты молчания забываем. */
     val busy: Boolean get() {
-        val waiting = game != null || awaitGameChoice || awaitCity != null || awaitReply
+        if (helpPlace?.let { Duration.between(it.at, time.now()) > PENDING_TTL } == true) helpPlace = null
+        val waiting = game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null
         if (waiting && Duration.between(lastTurn, time.now()) > PENDING_TTL) reset()
-        return game != null || awaitGameChoice || awaitCity != null || awaitReply
+        return game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null
     }
 
     /** Экран погас: забываем, кому отвечали, — игра и прочее остаются. */
-    fun forgetPrivate() { replyTarget = null; awaitReply = false }
+    fun forgetPrivate() { replyTarget = null; awaitReply = false; helpPlace = null }
 
     fun reset() {
-        game = null; awaitGameChoice = false; awaitCity = null; replyTarget = null; awaitReply = false
+        game = null; awaitGameChoice = false; awaitCity = null; replyTarget = null; awaitReply = false; helpPlace = null
     }
 
     /**
@@ -100,6 +103,8 @@ class Skills(
     fun interruptedBy(text: String, cfg: AssistantSettings, isCommand: (String) -> Boolean): Boolean {
         if (!busy) return false
         val t = SkillPhrases.norm(text)
+        // После «где я» ответ про помощь — это ответ, а не новая команда.
+        if (helpPlace != null && (HELP_REPLY.containsMatchIn(t) || LocalCommandParser.isNo(t))) return false
         if (game == null && (LocalCommandParser.isDialogEnd(t) || LocalCommandParser.isNo(t) || t in setOf("спасибо", "не надо", "отмена", "отмени"))) return true
         if (t.split(' ').size < 2) return false
         // Текст ответа («буду через 10 минут») похож на команду, но это ответ: прерывает только явный навык.
@@ -222,6 +227,11 @@ class Skills(
     // ------------------------------------------------------------------ Продолжение разговора
 
     private suspend fun continuation(text: String, cfg: AssistantSettings, ai: SkillAi?): SkillOutcome? {
+        helpPlace?.let { h ->
+            // Предложение помощи живёт недолго: через несколько минут адрес мог устареть.
+            if (Duration.between(h.at, time.now()) > PENDING_TTL) helpPlace = null
+            else help(h, text)?.let { return it }
+        }
         if (awaitReply) {
             awaitReply = false
             val t = SkillPhrases.norm(text)
@@ -264,6 +274,47 @@ class Skills(
             }
         }
         return null
+    }
+
+    /**
+     * Ответ на «нужна помощь» после «где я»: скорая, звонок близкому или сообщение с адресом.
+     * Возвращает null, если фраза к помощи не относится — её разберут другие навыки.
+     */
+    private suspend fun help(h: HelpPlace, text: String): SkillOutcome? {
+        val t = SkillPhrases.norm(text)
+        if (LocalCommandParser.isNo(t) || NO_HELP.containsMatchIn(t)) {
+            helpPlace = null
+            return SkillOutcome.Say("Хорошо. Если понадобится — скажите «где я» ещё раз.")
+        }
+        if (AMBULANCE.containsMatchIn(t)) {
+            helpPlace = null
+            // Адрес говорим до звонка: диспетчер спросит его первым, а руки могут быть заняты.
+            return SkillOutcome.Run(
+                AssistantPlan(
+                    reply = "",
+                    preface = "Вызываю скорую — 103. Если не отвечают, наберите 112. Диспетчеру скажите: ${h.address}, координаты ${h.coords}.",
+                    actions = listOf(AssistantAction.Device(DeviceCommand.Call("103"))),
+                ),
+            )
+        }
+        val call = Regex("""^(?:позвони|набери|соедини(?:сь)? с|звонок)\s+(?:в\s+|на\s+|номер\s+)?(.+)$""").find(t)
+        val message = Regex("""^(?:напиши|отправь|скинь|пошли|передай|сообщи)\s+(?:сообщение\s+|смс\s+|эсэмэску\s+)?(?:в\s+|на\s+)?(.+)$""").find(t)
+        if (call == null && message == null) return null
+        val who = (call ?: message)!!.groupValues[1]
+            .substringBefore(',').substringBefore(" что ").trim()
+        if (who.isBlank()) return SkillOutcome.Say("Кому? Скажите, например: «позвони маме».", followUp = true)
+        helpPlace = null
+        if (call != null) {
+            return SkillOutcome.Run(AssistantPlan(reply = "", actions = listOf(AssistantAction.Device(DeviceCommand.Call(who)))))
+        }
+        val body = "Я здесь: ${h.address}. Координаты: ${h.coords}."
+        return SkillOutcome.Run(
+            AssistantPlan(
+                reply = "",
+                preface = "Пишу $who: «$body»",
+                actions = listOf(AssistantAction.Device(DeviceCommand.Message(who, body))),
+            ),
+        )
     }
 
     // ------------------------------------------------------------------ Выполнение
@@ -799,7 +850,22 @@ class Skills(
         val svc = reverseGeo ?: return SkillOutcome.Say("Без интернета адрес не подскажу. Координаты: $coords.")
         val address = orNull { svc.address(p.lat, p.lon) }
             ?: return SkillOutcome.Say("Не получилось узнать адрес — связь слабая. Координаты: $coords.")
-        return SkillOutcome.Say("Вы сейчас здесь: $address. Если нужна помощь, продиктуйте этот адрес.", sensitive = true)
+        val place = HelpPlace(address, coords, time.now())
+        helpPlace = place
+        // Близкие из контактов: без доступа к контактам список пустой и предложение просто короче.
+        val relatives = orNull { host.contacts(4) }.orEmpty().filter { it.phones.isNotEmpty() }
+        return SkillOutcome.Say(helpText(place, relatives), followUp = true, sensitive = true)
+    }
+
+    /** Адрес и что можно сделать дальше: скорая или близкий человек из контактов. */
+    private fun helpText(h: HelpPlace, relatives: List<ContactInfo>): String = buildString {
+        append("Вы сейчас здесь: ").append(h.address).append('.')
+        append("\nКоординаты: ").append(h.coords).append(" — их можно продиктовать спасателям.")
+        append("\n\nЕсли нужна помощь, скажите:")
+        append("\n• «вызови скорую» — наберу 103;")
+        append("\n• «позвони маме» — позвоню, «напиши маме» — отправлю адрес сообщением.")
+        if (relatives.isNotEmpty()) append("\nБлизкие в контактах: ").append(relatives.joinToString(", ") { it.name }).append('.')
+        else append("\nРазрешите доступ к контактам — и я смогу позвонить близкому.")
     }
 
     private fun coordinates(p: GeoPoint) = "%.5f, %.5f".format(java.util.Locale.US, p.lat, p.lon)
@@ -834,9 +900,17 @@ class Skills(
         return SkillOutcome.Say("«${t.title}». ${t.text}")
     }
 
+    /** Адрес, координаты и время вопроса «где я». */
+    private data class HelpPlace(val address: String, val coords: String, val at: java.time.Instant)
+
     companion object {
         private const val TAG = "Skills"
         private val PENDING_TTL: Duration = Duration.ofMinutes(3)
+        /** «Вызови скорую», «мне плохо», «нужен врач» — звоним 103. */
+        private val AMBULANCE = Regex("""(?:скор|неотлож|врач|доктор|фельдшер|реанимац|спасател|мне\s+плохо|плохо\s+мне|103|112|03\b)""")
+        /** Что считается ответом на предложение помощи: «позвони маме», «напиши сыну», «вызови скорую», «нет». */
+        private val HELP_REPLY = Regex("""^(?:позвони|набери|соедини|звонок|напиши|отправь|скинь|пошли|передай|сообщи|вызови|скор|неотлож|врач|доктор|фельдшер|спас|помог)""")
+        private val NO_HELP = Regex("""^(?:нет|не\s+надо|не\s+нужно|спасибо|ничего|всё\s+хорошо|все\s+хорошо)$""")
 
         fun permissionText(p: Permission, name: String): String = when (p) {
             Permission.LOCATION -> "Чтобы знать, где вы, разрешите $name доступ к геолокации."

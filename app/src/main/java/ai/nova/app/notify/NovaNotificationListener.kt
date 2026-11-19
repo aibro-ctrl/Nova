@@ -43,6 +43,16 @@ class NovaNotificationListener : NotificationListenerService() {
         val n = sbn.notification ?: return
         if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         val extras = n.extras ?: return
+        // Пуш банка: «Покупка 850 ₽ · ПЯТЁРОЧКА» → расход в Нова (если включено в настройках расходов).
+        // Смотрим все уведомления: банк может быть не в списке — тогда Нова спросит подтверждение.
+        if (fresh) {
+            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+            val body = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
+                ?: extras.getCharSequence(Notification.EXTRA_TEXT))?.toString().orEmpty()
+            runCatching { ai.nova.app.finance.BankPushIngest.onNotification(this, sbn.packageName, title, body) }
+                .onFailure { Logger.w("BankPush", "Пуш банка не разобран", it) }
+            if (ai.nova.core.finance.BankPushParser.bank(sbn.packageName) != null) return
+        }
         // Только известные мессенджеры и приложение SMS по умолчанию: иначе любое приложение могло бы выдать себя
         // за «Машу» и получить ответ, продиктованный Нова.
         val trusted = sbn.packageName in MESSENGERS ||
