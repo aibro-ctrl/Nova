@@ -326,7 +326,7 @@ class VoiceController(
                 ?: run {
                     runCatching { onStop() }
                     AssistantReply(
-                        "Не успела ответить за полминуты: похоже, сеть или модель не отвечают. Попробуйте ещё раз или скажите короче.",
+                        "Не успела ответить: сеть или офлайн-модель не отвечают. Попробуйте ещё раз или скажите короче.",
                         offline = true,
                     )
                 }
@@ -362,7 +362,7 @@ class VoiceController(
         private const val TAG = "Voice"
         private const val MAX_FOLLOW_UPS = 30
         /** Сколько секунд ждём ответа, прежде чем честно сказать, что не успели. */
-        private const val PROCESS_TIMEOUT_MS = 30_000L
+        private const val PROCESS_TIMEOUT_MS = 50_000L
         /** В диктовке человек думает дольше: пауза до конца куска — 5 секунд. */
         private const val DICTATION_PAUSE_MS = 5000L
         /** Сколько пауз подряд завершают разговор. */

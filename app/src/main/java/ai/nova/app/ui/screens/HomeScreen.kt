@@ -62,6 +62,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -92,6 +93,7 @@ import ai.nova.core.assistant.RuFormat
 import ai.nova.core.model.MessageRole
 import ai.nova.core.nlp.Money
 import java.time.LocalTime
+import kotlinx.coroutines.delay
 
 /** Примеры команд: нажатие выполняет команду. Порядок меняется при каждом запуске — так человек узнаёт новое. */
 private val allSuggestions = listOf(
@@ -240,8 +242,22 @@ fun HomeScreen(
     }
 }
 
-/** Быстрые фразы: одно касание — и команда выполнена. Работают и без голоса. */
-private val quickPhrases = listOf("Какая погода?", "Мои планы на сегодня", "Мои расходы")
+/**
+ * Быстрые фразы: одно касание — и команда выполнена. Работают и без голоса.
+ * Десять частых запросов и только нейтральные формулировки — приложением пользуются и мужчины, и женщины.
+ */
+private val quickPhrases = listOf(
+    "Какая погода?",
+    "Мои планы на сегодня",
+    "Мои расходы",
+    "Курс доллара",
+    "Что у меня в календаре завтра?",
+    "Напомни через час выпить воды",
+    "Добавь в покупки молоко и хлеб",
+    "Таймер на 5 минут",
+    "Включи радио",
+    "Что ты умеешь?",
+)
 
 /** Нижняя панель главной: быстрые фразы, последний обмен репликами, поле ввода и отдельная кнопка микрофона. */
 @Composable
@@ -496,6 +512,16 @@ private fun SummaryLine(
     onReminders: () -> Unit,
     onExample: () -> Unit,
 ) {
+    val hints = remember { capabilityExamples.ifEmpty { allSuggestions } }
+    var hintIndex by remember { mutableIntStateOf(0) }
+    // Подсказка меняется каждые 15 секунд: в ней настоящие примеры из «Что умеет Нова».
+    LaunchedEffect(hints.size) {
+        if (hints.size < 2) return@LaunchedEffect
+        while (true) {
+            delay(15_000)
+            hintIndex = (hintIndex + 1) % hints.size
+        }
+    }
     val parts = buildList {
         if (summary.todayExpensesMinor > 0) add(SummaryPart("Сегодня ${Money.format(summary.todayExpensesMinor, "RUB")}", onExpenses))
         if (summary.activeTasks > 0) add(SummaryPart(RuFormat.count(summary.activeTasks, "задача", "задачи", "задач"), onTasks))
@@ -507,13 +533,15 @@ private fun SummaryLine(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (parts.isEmpty()) {
-            // Пустое состояние — не заглушка, а живая подсказка: фраза из «Что умеет Нова» меняется каждый день.
-            val hint = remember { allSuggestions[java.time.LocalDate.now().dayOfYear % allSuggestions.size] }
-            Text(
-                "Скажите: «" + hint.removeSuffix("?") + "»",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.clickable(onClick = onExample).heightIn(min = 48.dp).padding(vertical = 12.dp),
-            )
+            // Пустое состояние — не заглушка, а живая подсказка из «Что умеет Нова», меняется каждые 15 секунд.
+            Crossfade(hints[hintIndex % hints.size], animationSpec = androidx.compose.animation.core.tween(280), label = "hint") { hint ->
+                Text(
+                    "Скажите: «" + hint.removeSuffix("?") + "»",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable(onClick = onExample).heightIn(min = 48.dp).padding(vertical = 12.dp),
+                )
+            }
         } else {
             parts.forEachIndexed { i, part ->
                 if (i > 0) {

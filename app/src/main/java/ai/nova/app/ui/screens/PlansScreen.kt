@@ -59,6 +59,14 @@ import ai.nova.core.model.TaskItem
 import ai.nova.core.nlp.RuDateTimeParser
 import kotlinx.coroutines.launch
 
+/** План → календарь телефона: одно нажатие вместо ручного ввода события. */
+private fun addToCalendar(c: AppContainer, context: android.content.Context, title: String, at: java.time.Instant, allDay: Boolean, scope: kotlinx.coroutines.CoroutineScope) {
+    scope.launch {
+        val result = c.device.perform(ai.nova.core.assistant.DeviceCommand.CalendarEvent(title, at, allDay))
+        android.widget.Toast.makeText(context, result.text, android.widget.Toast.LENGTH_LONG).show()
+    }
+}
+
 /** Вкладка «Планы»: задачи и напоминания. */
 @Composable
 fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
@@ -210,6 +218,9 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
             )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 SecondaryButton("Удалить", { askDelete = true }, danger = true)
+                if (r.active && r.recurrence == null) SecondaryButton("В календарь", {
+                    addToCalendar(c, context, r.text, r.triggerAt, allDay = false, scope = scope)
+                })
                 Spacer(Modifier.weight(1f))
                 if (r.active) PrimaryButton("Отключить", {
                     scope.launch { c.reminderScheduler.cancel(r.id); c.store.reminders.cancel(r.id) }
@@ -227,6 +238,7 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
 @Composable
 private fun TaskEditor(c: AppContainer, task: TaskItem?, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val today = c.time.today()
     var title by rememberSaveable { mutableStateOf(task?.title.orEmpty()) }
     var details by rememberSaveable { mutableStateOf(task?.details.orEmpty()) }
@@ -244,6 +256,14 @@ private fun TaskEditor(c: AppContainer, task: TaskItem?, onDismiss: () -> Unit) 
         NovaField(details, { details = it }, "Подробности", singleLine = false, minLines = 2)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             if (task != null) SecondaryButton("Удалить", { askDelete = true }, danger = true)
+            val date = task?.dueDate ?: dueDate
+            if (date != null) SecondaryButton("В календарь", {
+                val zone = c.time.zone()
+                val at = if (task != null && task.dueTime != null) date.atTime(task.dueTime).atZone(zone).toInstant()
+                else if (task == null && parsed.spec.time != null) date.atTime(parsed.spec.time).atZone(zone).toInstant()
+                else date.atStartOfDay(zone).toInstant()
+                addToCalendar(c, context, (task?.title ?: title).ifBlank { "План" }, at, task?.dueTime == null && parsed.spec.time == null, scope)
+            })
             Spacer(Modifier.weight(1f))
             PrimaryButton(if (task == null) "Добавить" else "Сохранить", {
                 scope.launch {

@@ -60,6 +60,8 @@ class ActionExecutor(
     private val contactBirthdays: suspend () -> List<Pair<String, java.time.MonthDay>> = { emptyList() },
     /** Напоминание «настойчиво, пока не отмечу» создано: приложение запоминает его id и повторяет срабатывание. */
     private val onPersistentReminder: (String) -> Unit = {},
+    /** Создан план с датой: ассистент предложит добавить его в календарь. */
+    private val onPlanCreated: (PlanCalendar) -> Unit = {},
 ) {
     /**
      * Сценарий по расписанию выполняется сам, когда телефон обычно заблокирован. Его создал владелец на разблокированном
@@ -70,6 +72,15 @@ class ActionExecutor(
     private val things = ai.nova.core.personal.ThingsBook(memories)
     private val debts = ai.nova.core.personal.DebtBook(memories)
     private val deadlines = ai.nova.core.personal.DeadlineBook(memories)
+
+    /** Задача с датой — запоминаем её, чтобы следующая фраза «в календарь» добавила событие. */
+    private fun calendarOffer(title: String, date: java.time.LocalDate?, time: java.time.LocalTime?, details: String? = null) {
+        if (date == null) return
+        val zone = this.time.zone()
+        val at = if (time != null) date.atTime(time).atZone(zone).toInstant() else date.atStartOfDay(zone).toInstant()
+        val name = listOfNotNull(title, details?.takeIf { it.isNotBlank() }).joinToString(": ")
+        runCatching { onPlanCreated(PlanCalendar(name, at, allDay = time == null)) }
+    }
 
     private fun longDate(d: java.time.LocalDate): String = "${d.dayOfMonth} ${MONTHS_GEN[d.monthValue - 1]}" + if (d.year != time.today().year) " ${d.year}" else ""
 
@@ -280,7 +291,12 @@ class ActionExecutor(
                 val due = t.dueDate?.let { d -> " на ${RuFormat.dateFull(d, today).removePrefix("в ")}" + (t.dueTime?.let { " в ${RuFormat.time(it)}" } ?: "") } ?: ""
                 // Задача со временем — напоминание к сроку, чтобы она не прошла незамеченной.
                 val alarm = TaskReminders.schedule(t, reminders, scheduler, time.zone(), time.now())
-                changed("Добавила задачу ${RuFormat.quote(t.title)}$due." + (if (alarm != null) " Напомню в ${RuFormat.time(t.dueTime!!)}." else ""), RecordRef(RecordType.TASK, t.id, t.title))
+                calendarOffer(t.title, t.dueDate, t.dueTime, t.details)
+                changed(
+                    "Добавила задачу ${RuFormat.quote(t.title)}$due." + (if (alarm != null) " Напомню в ${RuFormat.time(t.dueTime!!)}." else "") +
+                        if (t.dueDate != null) " Скажите «в календарь» — запишу это в календарь телефона." else "",
+                    RecordRef(RecordType.TASK, t.id, t.title),
+                )
             }
 
             is AssistantAction.CompleteTask -> when (val r = resolver.resolve(action.target, ctx.focus, ctx.recent)) {
@@ -310,7 +326,10 @@ class ActionExecutor(
                 val whenText = RuFormat.dateTime(reminder.triggerAt, zone, now)
                 val repeat = action.recurrence?.let { " Повтор: ${it.describeRu()}." } ?: ""
                 val nag = if (action.persistent) " Буду напоминать каждые 10 минут, пока не нажмёте «Готово»." else ""
-                changed("Напомню ${RuFormat.quote(reminder.text)} $whenText.$repeat$nag", RecordRef(RecordType.REMINDER, reminder.id, reminder.text))
+                if (action.recurrence == null) {
+                    runCatching { onPlanCreated(PlanCalendar(reminder.text, reminder.triggerAt, allDay = false)) }
+                }
+                changed("Напомню ${RuFormat.quote(reminder.text)} $whenText.$repeat$nag" + " Скажите «в календарь» — запишу это в календарь телефона.", RecordRef(RecordType.REMINDER, reminder.id, reminder.text))
             }
 
             is AssistantAction.CancelReminder -> when (val r = resolver.resolve(action.target, ctx.focus, ctx.recent)) {

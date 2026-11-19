@@ -58,6 +58,7 @@ class Skills(
     private val wikiService = http?.let(::WikiService)
     private val radioCatalog = RadioCatalog(http)
     private val musicSearch = MusicSearch(http)
+    private val reverseGeo = http?.let(::ReverseGeoService)
 
     /** Идёт игра — реплики уходят в неё. */
     var game: Game? = null
@@ -269,7 +270,7 @@ class Skills(
 
     private fun private(cmd: SkillCommand) = cmd is SkillCommand.ReadMessages || cmd is SkillCommand.ReplyMessage || cmd is SkillCommand.Screen ||
         cmd is SkillCommand.ContactNumber || cmd is SkillCommand.Calendar || cmd is SkillCommand.ListPlaces || cmd is SkillCommand.SavePlace ||
-        cmd is SkillCommand.Finance
+        cmd is SkillCommand.Finance || cmd is SkillCommand.WhereAmI
 
     /** Что можно на экране блокировки: см. [LockPolicy.allowsSkill]. */
     private fun access(cmd: SkillCommand): SkillAccess = when (cmd) {
@@ -287,6 +288,8 @@ class Skills(
         is SkillCommand.MusicText, is SkillCommand.MusicLike, SkillCommand.FindPhone,
         SkillCommand.TimersLeft, is SkillCommand.TimersCancel -> SkillAccess.DEVICE
         SkillCommand.AskName -> SkillAccess.VIEW
+        // Адрес — личное: на заблокированном экране не называем.
+        SkillCommand.WhereAmI -> SkillAccess.PRIVATE
         is SkillCommand.ReadMessages, is SkillCommand.ReplyMessage, is SkillCommand.Screen, is SkillCommand.ContactNumber,
         is SkillCommand.Calendar, SkillCommand.ListPlaces, is SkillCommand.SavePlace, is SkillCommand.Finance -> SkillAccess.PRIVATE
     }
@@ -297,6 +300,7 @@ class Skills(
         is SkillCommand.ContactNumber -> "контакты"
         is SkillCommand.Calendar -> "календарь"
         is SkillCommand.Finance -> "деньги"
+        SkillCommand.WhereAmI -> "ваш адрес"
         else -> "места"
     }
 
@@ -328,6 +332,7 @@ class Skills(
         is SkillCommand.MusicPlay -> musicPlay(cmd)
         SkillCommand.RadioStop -> SkillOutcome.Say(if (host.stopRadio()) "Выключила радио." else "Радио и так не играет.")
         SkillCommand.RadioNext -> radioNext()
+        SkillCommand.WhereAmI -> whereAmI()
         SkillCommand.FindPhone -> SkillOutcome.Say(if (host.ringPhone()) "Я здесь! Звоню погромче — коснитесь уведомления, чтобы остановить." else "Я здесь!")
         SkillCommand.TimersLeft -> timersLeft()
         is SkillCommand.TimersCancel -> {
@@ -780,6 +785,24 @@ class Skills(
         val whenText = if (cmd.onLeave) "когда уйдёте ${placeFrom(place.name)}" else "когда будете ${placeWhen(place.name)}"
         return SkillOutcome.Say("Напомню «${cmd.text}», $whenText.")
     }
+
+    /**
+     * «Где я?» — адрес по геолокации до улицы и ближайшего дома.
+     * Нужно прежде всего тем, кто потерялся: адрес можно продиктовать прохожему или спасателям.
+     */
+    private suspend fun whereAmI(): SkillOutcome {
+        val p = host.location() ?: return SkillOutcome.Say(
+            "Не могу определить, где вы: включите геолокацию и спросите ещё раз.",
+            permission = Permission.LOCATION,
+        )
+        val coords = coordinates(p)
+        val svc = reverseGeo ?: return SkillOutcome.Say("Без интернета адрес не подскажу. Координаты: $coords.")
+        val address = orNull { svc.address(p.lat, p.lon) }
+            ?: return SkillOutcome.Say("Не получилось узнать адрес — связь слабая. Координаты: $coords.")
+        return SkillOutcome.Say("Вы сейчас здесь: $address. Если нужна помощь, продиктуйте этот адрес.", sensitive = true)
+    }
+
+    private fun coordinates(p: GeoPoint) = "%.5f, %.5f".format(java.util.Locale.US, p.lat, p.lon)
 
     private fun listPlaces(): SkillOutcome {
         val places = host.places()

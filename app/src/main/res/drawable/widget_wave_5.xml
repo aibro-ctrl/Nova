@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Кадр 6 фирменной волны Нова для виджета: живая волна вместо статичной иконки микрофона. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="26dp"
+    android:height="26dp"
+    android:viewportWidth="26"
+    android:viewportHeight="26">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M3.27,5.90 h0.00 a1.60,1.60 0 0 1 1.60,1.60 v10.99 a1.60,1.60 0 0 1 -1.60,1.60 h-0.00 a1.60,1.60 0 0 1 -1.60,-1.60 v-10.99 a1.60,1.60 0 0 1 1.60,-1.60 z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M8.13,4.01 h0.00 a1.60,1.60 0 0 1 1.60,1.60 v14.77 a1.60,1.60 0 0 1 -1.60,1.60 h-0.00 a1.60,1.60 0 0 1 -1.60,-1.60 v-14.77 a1.60,1.60 0 0 1 1.60,-1.60 z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M13.00,6.53 h0.00 a1.60,1.60 0 0 1 1.60,1.60 v9.73 a1.60,1.60 0 0 1 -1.60,1.60 h-0.00 a1.60,1.60 0 0 1 -1.60,-1.60 v-9.73 a1.60,1.60 0 0 1 1.60,-1.60 z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M17.87,9.25 h0.00 a1.60,1.60 0 0 1 1.60,1.60 v4.30 a1.60,1.60 0 0 1 -1.60,1.60 h-0.00 a1.60,1.60 0 0 1 -1.60,-1.60 v-4.30 a1.60,1.60 0 0 1 1.60,-1.60 z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M22.73,4.88 h0.00 a1.60,1.60 0 0 1 1.60,1.60 v13.04 a1.60,1.60 0 0 1 -1.60,1.60 h-0.00 a1.60,1.60 0 0 1 -1.60,-1.60 v-13.04 a1.60,1.60 0 0 1 1.60,-1.60 z" />
+</vector>

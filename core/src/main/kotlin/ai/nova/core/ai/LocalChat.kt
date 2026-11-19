@@ -9,7 +9,7 @@ interface LocalChat {
     val available: Boolean
 
     /** Ответ на реплику с учётом недавнего разговора; null — не получилось. */
-    suspend fun reply(system: String, history: List<ChatMessage>, maxTokens: Int = 320): String?
+    suspend fun reply(system: String, history: List<ChatMessage>, maxTokens: Int = 160): String?
 
     companion object {
         /** Реплика — вопрос или просьба к собеседнику, а не команда и не заметка. */

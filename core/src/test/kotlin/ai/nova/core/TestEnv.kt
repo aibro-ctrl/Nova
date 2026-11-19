@@ -37,6 +37,9 @@ class TestEnv(
     val scheduler = RecordingScheduler()
     /** Напоминания, созданные как «настойчивые». */
     val persistent = mutableListOf<String>()
+    /** Планы голосом, которые ещё не в календаре (для «в календарь»). */
+    val plans = mutableListOf<ai.nova.core.assistant.PlanCalendar>()
+    private var engineRef: AssistantEngine? = null
     var embeddings: EmbeddingProvider? = null
     val search = SearchService(store.notes, store.tasks, store.reminders, store.memories, store.embeddings) { embeddings }
     val resolver = TargetResolver(search, store.notes, store.tasks, store.reminders, store.memories)
@@ -45,6 +48,7 @@ class TestEnv(
         store.notes, expenses, store.tasks, store.reminders, store.memories, search, resolver, scheduler, time, device, lockPolicy,
         shopping = store.shopping, routines = store.routines, secrets = store.secrets,
         onPersistentReminder = { persistent += it },
+        onPlanCreated = { plans += it; engineRef?.notePlan(it) },
     )
     var settings = AssistantSettings(useAI = true)
     var ai: AIProvider? = null
@@ -68,7 +72,7 @@ class TestEnv(
         expensesBetween = { a, b -> store.expenses.between(a, b) },
         agent = AgentCore(store.agent, time),
         cooking = store.cooking,
-    )
+    ).also { engineRef = it }
 }
 
 class RecordingScheduler : ReminderScheduler {

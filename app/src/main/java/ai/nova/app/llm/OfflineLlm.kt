@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Build
 import ai.nova.core.ai.ChatMessage
 import ai.nova.core.ai.LocalChat
+import ai.nova.core.ai.LocalModels
+import ai.nova.core.ai.ModelFile
 import ai.nova.core.util.Logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,13 +50,20 @@ object LlamaNative {
 }
 
 /**
- * Офлайн-модель для разговора: Qwen 2.5 1.5B Instruct (Apache-2.0), ~1 ГБ.
- * Скачивается один раз из служебного релиза models-v1 этого репозитория (с докачкой), проверяется по sha256.
+ * Офлайн-модель для разговора. По умолчанию — встроенная Qwen 2.5 1.5B Instruct (Apache-2.0), ~1 ГБ:
+ * скачивается из служебного релиза models-v1 этого репозитория (с докачкой) и проверяется по sha256.
+ * Активную модель можно сменить на любую .gguf с Hugging Face (см. [ModelCatalog]) — выбор хранится в настройках.
  * Загружается в память при первом вопросе и выгружается после 5 минут без вопросов — чтобы не держать 1,5 ГБ ОЗУ.
  */
-class OfflineLlm(private val context: Context, private val scope: CoroutineScope) : LocalChat {
+class OfflineLlm(
+    private val context: Context,
+    private val scope: CoroutineScope,
+    private val catalog: ModelCatalog = ModelCatalog(),
+) : LocalChat {
     sealed interface State {
         data object Missing : State
+        /** Ищем, есть ли модель новее: пара секунд, интернета может и не быть. */
+        data object Resolving : State
         data class Downloading(val progress: Float) : State
         data object Verifying : State
         data object Ready : State
@@ -63,11 +72,20 @@ class OfflineLlm(private val context: Context, private val scope: CoroutineScope
     }
 
     private val dir = File(context.filesDir, "llm").apply { mkdirs() }
-    private val file = File(dir, FILE)
-    private val part = File(dir, "$FILE.part")
     private val prefs = context.getSharedPreferences("nova_llm", Context.MODE_PRIVATE)
+
+    /** Какая модель выбрана: встроенная Qwen 2.5 или скачанная с Hugging Face. */
+    data class Active(val file: String, val url: String, val sha256: String?, val size: Long, val label: String)
+
+    @Volatile private var model: Active = readActive()
+    private val file: File get() = File(dir, model.file)
+    private val part: File get() = File(dir, model.file + ".part")
     private val _state = MutableStateFlow(fileState())
     val state: StateFlow<State> = _state.asStateFlow()
+
+    /** Короткая подсказка после «Обновить»: «Уже самая свежая модель» и подобное. */
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice.asStateFlow()
 
     private val lock = Mutex()
     private val downloadLock = Mutex()
@@ -99,28 +117,140 @@ class OfflineLlm(private val context: Context, private val scope: CoroutineScope
 
     override val available: Boolean get() = enabled && _state.value == State.Ready
 
-    val sizeBytes: Long get() = SIZE
+    /** Размер активной модели — для экрана настроек. */
+    val sizeBytes: Long get() = model.size
+
+    /** Название активной модели: «Qwen 2.5 1.5B · Q4_K_M» или выбранный файл с Hugging Face. */
+    val modelLabel: String get() = model.label
+
+    /** Встроенная модель (та, что по умолчанию): к ней можно вернуться в один шаг. */
+    val isDefaultModel: Boolean get() = model.file == FILE
+
+    private fun readActive(): Active = Active(
+        file = prefs.getString(KEY_FILE, null) ?: FILE,
+        url = prefs.getString(KEY_URL, null) ?: MODEL_URL,
+        sha256 = prefs.getString(KEY_SHA, null) ?: SHA256,
+        size = prefs.getLong(KEY_SIZE, SIZE),
+        label = prefs.getString(KEY_LABEL, null) ?: DEFAULT_LABEL,
+    )
+
+    private fun writeActive(m: Active) {
+        prefs.edit().putString(KEY_FILE, m.file).putString(KEY_URL, m.url)
+            .putString(KEY_SHA, m.sha256.orEmpty()).putLong(KEY_SIZE, m.size).putString(KEY_LABEL, m.label).apply()
+        model = m
+    }
+
+    /** Скачать и включить другую модель (.gguf с Hugging Face). */
+    suspend fun download(other: ModelFile): Boolean {
+        // Уже скачана — просто переключаемся на неё.
+        val target = Active(other.fileName, other.url, other.sha256, other.size, LocalModels.label(other) + " · " + LocalModels.sizeText(other.size))
+        if (File(dir, other.fileName).isFile && other.size > 0 && File(dir, other.fileName).length() == other.size) {
+            writeActive(target)
+            prefs.edit().putBoolean(KEY_VERIFIED, true).putBoolean(KEY_ENABLED, true).apply()
+            // Старая модель больше не нужна — освобождаем место.
+            cleanup(keep = target.file)
+            unloadAsync()
+            _state.value = State.Ready
+            return true
+        }
+        return downloadLock.withLock {
+            // Другая модель уже была активной — начинаем её загрузку с нуля.
+            if (model.file != target.file) File(dir, model.file + ".part").delete()
+            writeActive(target)
+            prefs.edit().putBoolean(KEY_VERIFIED, false).apply()
+            _state.value = State.Downloading(0f)
+            fetch(target)
+        }
+    }
+
+    /**
+     * Обновление модели в одно нажатие: находим свежую Qwen 3.5 под этот телефон и скачиваем её.
+     * Если каталог недоступен (нет сети, Hugging Face заблокирован) — берём встроенную модель,
+     * чтобы кнопка всегда доводила дело до рабочей офлайн-модели.
+     */
+    suspend fun update(): Boolean {
+        LlamaNative.unsupportedReason?.let { _state.value = State.Unsupported(it); return false }
+        val current = _state.value
+        if (current is State.Downloading || current is State.Verifying || current is State.Resolving) return false
+        _state.value = State.Resolving
+        _notice.value = null
+        val target = runCatching { catalog.recommend(totalRam()) }
+            .onFailure { Logger.w(TAG, "Каталог моделей недоступен", it) }
+            .getOrNull()
+        // Уже стоит самая свежая — не тратим гигабайты трафика.
+        if (target != null && target.fileName == model.file && file.isFile && file.length() == target.size) {
+            prefs.edit().putBoolean(KEY_VERIFIED, true).putBoolean(KEY_ENABLED, true).apply()
+            _notice.value = "Уже самая свежая модель"
+            _state.value = State.Ready
+            return true
+        }
+        if (target != null) {
+            if (download(target)) { _notice.value = "Модель обновлена"; return true }
+            // Не получилось с новой — вернёмся к встроенной и попробуем её.
+            Logger.w(TAG, "Свежая модель не скачалась — пробую встроенную")
+        }
+        writeActive(Active(FILE, MODEL_URL, SHA256, SIZE, DEFAULT_LABEL))
+        prefs.edit().putBoolean(KEY_VERIFIED, file.isFile).apply()
+        if (file.isFile) {
+            unloadAsync()
+            _state.value = State.Ready
+            return true
+        }
+        return download()
+    }
+
+    /** Сколько всего памяти у телефона: по нему выбираем, 4B или 2B. */
+    private fun totalRam(): Long = runCatching {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager ?: return@runCatching 0L
+        val info = android.app.ActivityManager.MemoryInfo()
+        am.getMemoryInfo(info)
+        info.totalMem
+    }.getOrDefault(0L)
+
+    /** Вернуться к встроенной модели Qwen 2.5 1.5B (если её файл ещё на телефоне — сразу готово). */
+    fun useDefault() {
+        if (isDefaultModel) return
+        writeActive(Active(FILE, MODEL_URL, SHA256, SIZE, DEFAULT_LABEL))
+        prefs.edit().putBoolean(KEY_VERIFIED, file.isFile).apply()
+        unloadAsync()
+        _state.value = initialState()
+    }
 
     suspend fun download(): Boolean = downloadLock.withLock {
         if (_state.value is State.Unsupported) return@withLock false
         if (_state.value == State.Ready) return@withLock true
-        withContext(Dispatchers.IO) {
+        fetch(model)
+    }
+
+    /** Загрузка активной модели. Вызывать только под [downloadLock]: Mutex не реентрантный. */
+    private suspend fun fetch(current: Active): Boolean {
+        return withContext(Dispatchers.IO) {
             try {
-                fetch()
+                streamToPart(current)
                 _state.value = State.Verifying
-                if (sha256(part) != SHA256) { part.delete(); error("файл повреждён — попробуйте ещё раз") }
+                val expected = current.sha256?.takeIf { it.length == 64 }
+                if (expected != null && sha256(part) != expected) {
+                    part.delete()
+                    error("файл повреждён — попробуйте ещё раз")
+                }
+                if (current.size > 0 && part.length() != current.size) {
+                    part.delete()
+                    error("файл скачался не целиком — попробуйте ещё раз")
+                }
                 file.delete()
                 if (!part.renameTo(file)) error("не удалось сохранить модель")
                 prefs.edit().putBoolean(KEY_VERIFIED, true).putBoolean(KEY_ENABLED, true).apply()
+                cleanup(keep = current.file)
                 _state.value = State.Ready
                 true
             } catch (e: Exception) {
                 Logger.w(TAG, "Модель не скачана", e)
+                val need = current.size.coerceAtLeast(SIZE)
                 _state.value = State.Failed(
                     when (e) {
                         is java.net.UnknownHostException -> "нет интернета"
                         is java.net.SocketTimeoutException -> "сервер не отвечает — нажмите ещё раз, загрузка продолжится"
-                        is java.io.IOException -> if (dir.usableSpace < SIZE) "не хватает места (нужно ~1 ГБ)" else "связь прервалась — нажмите ещё раз, загрузка продолжится"
+                        is java.io.IOException -> if (dir.usableSpace < need) "не хватает места (нужно ~${LocalModels.sizeText(need)})" else "связь прервалась — нажмите ещё раз, загрузка продолжится"
                         else -> e.message ?: "ошибка загрузки"
                     },
                 )
@@ -129,10 +259,13 @@ class OfflineLlm(private val context: Context, private val scope: CoroutineScope
         }
     }
 
+    private fun unloadAsync() { scope.launch { unload() } }
+
     /** Докачка: если связь оборвалась, продолжаем с того же места (Range). */
-    private fun fetch() {
-        if (dir.usableSpace + part.length() < SIZE + 50_000_000) error("не хватает места (нужно ~1 ГБ)")
-        var url = MODEL_URL
+    private fun streamToPart(m: Active) {
+        val size = m.size.coerceAtLeast(1)
+        if (dir.usableSpace + part.length() < size + 50_000_000) error("не хватает места (нужно ~${LocalModels.sizeText(size)})")
+        var url = m.url
         var conn: HttpURLConnection
         var redirects = 0
         while (true) {
@@ -165,12 +298,19 @@ class OfflineLlm(private val context: Context, private val scope: CoroutineScope
                     if (n < 0) break
                     out.write(buf, 0, n)
                     done += n
-                    val p = (done.toFloat() / SIZE).coerceIn(0f, 1f)
+                    val p = (done.toFloat() / size).coerceIn(0f, 1f)
                     if (p - last >= 0.005f) { last = p; _state.value = State.Downloading(p) }
                 }
             }
         }
         conn.disconnect()
+    }
+
+    /** На телефоне держим только активную модель: иначе обновления копят по гигабайту. */
+    private fun cleanup(keep: String) {
+        dir.listFiles()?.forEach { f ->
+            if (f.name != keep && f.name != "$keep.part") runCatching { f.delete() }
+        }
     }
 
     private fun sha256(f: File): String {
@@ -183,10 +323,13 @@ class OfflineLlm(private val context: Context, private val scope: CoroutineScope
     }
 
     fun delete() {
+        _notice.value = null
         scope.launch {
             unload()
             file.delete(); part.delete()
             prefs.edit().putBoolean(KEY_VERIFIED, false).apply()
+            // Удалили выбранную с Hugging Face — возвращаемся к встроенной модели.
+            if (!isDefaultModel) writeActive(Active(FILE, MODEL_URL, SHA256, SIZE, DEFAULT_LABEL))
             _state.value = initialState()
         }
     }
@@ -211,11 +354,26 @@ class OfflineLlm(private val context: Context, private val scope: CoroutineScope
                     msgs += if (m.role == ChatMessage.Role.ASSISTANT) "assistant" else "user"
                     msgs += clean(m.content).let { if (m === last) it.take(LAST_CHARS) else it }
                 }
-                val listener = LlamaNative.TokenListener { !cancelled }
-                val out = runCatching { LlamaNative.generate(h, msgs.toTypedArray(), maxTokens, 0.6f, listener) }
-                    .onFailure { Logger.w(TAG, "Генерация не удалась", it) }.getOrNull()
+                // Отмена (пользователь ушёл, сработал общий таймаут) должна останавливать генерацию:
+                // иначе модель держит память и очередь следующих вопросов.
+                val job = kotlinx.coroutines.currentCoroutineContext()
+                val listener = LlamaNative.TokenListener { !cancelled && job[kotlinx.coroutines.Job]?.isActive != false }
+                // Модель может «задуматься» надолго: по истечении времени останавливаем её, чтобы
+                // разговор не замирал и следующая фраза не ждала бесконечно.
+                val watchdog = scope.launch {
+                    delay(REPLY_TIMEOUT_MS)
+                    Logger.w(TAG, "Ответ не уложился в ${REPLY_TIMEOUT_MS / 1000} с — останавливаю модель")
+                    cancelled = true
+                    synchronized(nativeLock) { LlamaNative.stop(h) }
+                }
+                val out = try {
+                    runCatching { LlamaNative.generate(h, msgs.toTypedArray(), maxTokens, 0.6f, listener) }
+                        .onFailure { Logger.w(TAG, "Генерация не удалась", it) }.getOrNull()
+                } finally {
+                    watchdog.cancel()
+                }
                 scheduleUnload()
-                out?.trim()?.takeIf { it.isNotEmpty() }
+                out?.let { LocalModels.stripThinking(it) }?.takeIf { it.isNotEmpty() }
             }
         }
     }
@@ -234,7 +392,8 @@ class OfflineLlm(private val context: Context, private val scope: CoroutineScope
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager ?: return@runCatching true
         val info = android.app.ActivityManager.MemoryInfo()
         am.getMemoryInfo(info)
-        info.availMem >= NEEDED_MEMORY
+        // Нужен сам файл модели плюс запас на контекст и работу приложения.
+        info.availMem >= model.size + MEMORY_RESERVE
     }.getOrDefault(true)
 
     private fun ensureLoaded(): Long? {
@@ -269,12 +428,20 @@ class OfflineLlm(private val context: Context, private val scope: CoroutineScope
         private const val SHA256 = "1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370"
         const val SIZE = 986_048_768L
         private const val CONTEXT = 2048
-        /** Сколько нужно свободной памяти, чтобы загрузить модель и не быть выгруженным системой. */
-        private const val NEEDED_MEMORY = 1_800_000_000L
+        /** Сколько ждём ответ: на телефоне это секунды, но «задумавшуюся» модель пора останавливать. */
+        private const val REPLY_TIMEOUT_MS = 40_000L
+        /** Запас памяти сверх файла модели: контекст, граф вычислений, само приложение. */
+        private const val MEMORY_RESERVE = 900_000_000L
         /** Русский текст — примерно 2–3 символа на токен: так промпт и ответ помещаются в контекст. */
         private const val HISTORY_CHARS = 2400
         private const val LAST_CHARS = 1200
         private const val KEY_VERIFIED = "verified"
         private const val KEY_ENABLED = "enabled"
+        private const val KEY_FILE = "file"
+        private const val KEY_URL = "url"
+        private const val KEY_SHA = "sha"
+        private const val KEY_SIZE = "size"
+        private const val KEY_LABEL = "label"
+        private const val DEFAULT_LABEL = "Qwen 2.5 1.5B · Q4_K_M"
     }
 }

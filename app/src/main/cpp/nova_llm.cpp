@@ -75,6 +75,22 @@ std::string chatml(const std::vector<std::string> &roles, const std::vector<std:
     return p;
 }
 
+/**
+ * Qwen3 и Qwen3.5 — «думающие» модели: их шаблон при выключенном enable_thinking сам вставляет
+ * пустой блок «<think>\n\n</think>\n\n» после «assistant». llama.cpp 0.5.0 не умеет jinja-шаблоны,
+ * распознаёт такие модели как ChatML и этот префикс теряет — тогда модель уходит в долгие рассуждения,
+ * и ответа не дождаться. Возвращаем префикс сами.
+ */
+void disable_thinking_if_needed(llama_model *model, std::string &prompt) {
+    if (prompt.empty()) return;
+    char arch[64] = {0};
+    if (llama_model_meta_val_str(model, "general.architecture", arch, sizeof(arch)) < 0) return;
+    if (std::string(arch).rfind("qwen3", 0) != 0 && std::string(arch).rfind("qwen35", 0) != 0) return;
+    static const std::string tail = "<|im_start|>assistant\n";
+    if (prompt.size() < tail.size() || prompt.compare(prompt.size() - tail.size(), tail.size(), tail) != 0) return;
+    prompt += "<think>\n\n</think>\n\n";
+}
+
 }  // namespace
 
 extern "C" JNIEXPORT void JNICALL
@@ -187,6 +203,7 @@ jstring generate_impl(JNIEnv *env, jlong handle, jobjectArray jmessages, jint ma
         if (len > 0) prompt.assign(buf.data(), len);
     }
     if (prompt.empty()) prompt = chatml(roles, texts);
+    disable_thinking_if_needed(s->model, prompt);
 
     // Токены запроса.
     const int32_t n_prompt = -llama_tokenize(s->vocab, prompt.c_str(), (int32_t) prompt.size(), nullptr, 0, true, true);

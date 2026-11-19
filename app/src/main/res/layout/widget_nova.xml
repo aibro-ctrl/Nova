@@ -15,12 +15,14 @@
         android:layout_height="44dp"
         android:background="@drawable/widget_orb">
 
+        <!-- Фирменная волна: кадры меняет приложение, пока Нова слушает — как на главном экране. -->
         <ImageView
-            android:layout_width="22dp"
-            android:layout_height="22dp"
+            android:id="@+id/widget_wave"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
             android:layout_gravity="center"
             android:contentDescription="@string/widget_label"
-            android:src="@drawable/ic_tile" />
+            android:src="@drawable/widget_wave_0" />
     </FrameLayout>
 
     <LinearLayout

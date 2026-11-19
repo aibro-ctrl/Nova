@@ -225,6 +225,13 @@ private fun SettingsRoot(c: AppContainer, open: (SettingsPage) -> Unit) {
                 }
                 ValueItem("Голос", voiceTitle, Icons.Rounded.RecordVoiceOver) { open(SettingsPage.VOICE) }
                 GroupDivider(inset = 66.dp)
+                // Будильники и таймеры живут рядом с голосовыми настройками: это часть разговора с Новой.
+                ValueItem(
+                    "Будильники и таймеры",
+                    if (ai.nova.app.reminders.Clocks.mode(context) == ai.nova.app.reminders.Clocks.SYSTEM) "телефона" else "свои",
+                    Icons.Rounded.Alarm,
+                ) { open(SettingsPage.CLOCK) }
+                GroupDivider(inset = 66.dp)
                 SwitchItem("Отвечать голосом", null, s.ttsEnabled, icon = Icons.Rounded.VolumeUp) { v -> scope.launch { c.settings.setTts(v) } }
                 GroupDivider(inset = 66.dp)
                 var autoDial by remember { mutableStateOf(ai.nova.app.device.Dialer.autoDial(context)) }
@@ -294,7 +301,8 @@ private fun SettingsRoot(c: AppContainer, open: (SettingsPage) -> Unit) {
                 }
             }
             Group(Modifier.padding(top = 16.dp)) {
-                SettingsPage.entries.filter { !it.main }.forEachIndexed { i, p ->
+                // CLOCK уже в карточке Нова — второй раз не показываем.
+                SettingsPage.entries.filter { !it.main && it != SettingsPage.CLOCK }.forEachIndexed { i, p ->
                     if (i > 0) GroupDivider(inset = 66.dp)
                     RowItem(title = p.title, icon = p.icon, chevron = true, onClick = { open(p) })
                 }
@@ -578,12 +586,22 @@ fun PermissionsGroup(c: AppContainer) {
 private fun AboutPage(c: AppContainer, onBack: () -> Unit) {
     val s by c.settings.settings.collectAsStateWithLifecycle()
     val update by c.updates.state.collectAsStateWithLifecycle()
+    val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     NovaScreen(title = "О приложении", onBack = onBack) {
         item(key = "update") {
             SectionLabel("Обновления")
             UpdateCard(c)
+            var whatsNew by remember { mutableStateOf(false) }
+            val notes = remember { ai.nova.app.ui.WhatsNew(appContext) }
             Group {
+                RowItem(
+                    title = "Что нового",
+                    subtitle = "Изменения в ${ai.nova.app.ui.Changelog.latest.version}: ${ai.nova.app.ui.Changelog.latest.title}",
+                    icon = Icons.Rounded.AutoAwesome,
+                    onClick = { whatsNew = true },
+                )
+                GroupDivider()
                 ValueItem("Версия", c.updates.currentVersion)
                 GroupDivider()
                 SwitchItem("Обновлять автоматически", "Проверять раз в 12 часов, скачивать и устанавливать новые версии", s.autoUpdate) { v ->
@@ -621,10 +639,17 @@ private fun AboutPage(c: AppContainer, onBack: () -> Unit) {
                     onClick = { scope.launch { c.updates.check() } },
                 )
             }
+            if (whatsNew) {
+                ai.nova.app.ui.components.WhatsNewSheet(ai.nova.app.ui.Changelog.releases) {
+                    notes.markSeen()
+                    whatsNew = false
+                }
+            }
         }
         item(key = "feedback") {
             val context = LocalContext.current
-            var phrases by remember { mutableStateOf(ai.nova.app.diagnostics.Diagnostics.unknownPhrases(context)) }
+            // Счётчик перечитываем при каждом возвращении на экран: новые фразы появляются после разговора с Новой.
+            var phrases by remember(rememberResumeTick()) { mutableStateOf(ai.nova.app.diagnostics.Diagnostics.unknownPhrases(context)) }
             SectionLabel("Помочь улучшить ${s.assistantName}")
             Group {
                 RowItem(

@@ -185,8 +185,10 @@ class AppContainer(private val context: Context) {
         },
     )
     val skills = ai.nova.core.skills.Skills(skillHost, http, time)
+    /** Каталог моделей Hugging Face: свежие Qwen без обновления приложения. */
+    val modelCatalog = ai.nova.app.llm.ModelCatalog()
     /** Офлайн-модель для разговора (~1 ГБ, скачивается по кнопке). */
-    val offlineLlm = ai.nova.app.llm.OfflineLlm(context, appScope)
+    val offlineLlm = ai.nova.app.llm.OfflineLlm(context, appScope, modelCatalog)
     private val keyguard = context.getSystemService(android.app.KeyguardManager::class.java)
 
     /** Телефон заблокирован (экран блокировки показан). */
@@ -215,6 +217,7 @@ class AppContainer(private val context: Context) {
             agendaExtras = { date -> skills.agendaExtras(date, assistantSettings()) },
             contactBirthdays = { if (assistantSettings().locked) emptyList() else skillHost.contactBirthdays() },
             onPersistentReminder = { nags.mark(it) },
+            onPlanCreated = { plan -> engine.notePlan(plan) },
         )
     }
 
@@ -313,6 +316,8 @@ class AppContainer(private val context: Context) {
                 v.state.collect { st ->
                     if (st is ai.nova.app.voice.VoiceState.Listening) ai.nova.app.media.MusicDucker.request(context, "listen")
                     else ai.nova.app.media.MusicDucker.release(context, "listen")
+                    // Волна в виджете «дышит», пока Нова слушает, — как орб на главном экране.
+                    ai.nova.app.widget.NovaWidget.wave(context, appScope, st is ai.nova.app.voice.VoiceState.Listening)
                 }
             }
             val stopWords = ai.nova.app.voice.StopWordWatcher(context, voskEngine, voskModels)

@@ -34,6 +34,8 @@ sealed interface SkillCommand {
     /** «Поставь лайк на песню X» — лайк ставится в приложении, Нова только открывает песню. */
     data class MusicLike(val query: String?) : SkillCommand
     data object FindPhone : SkillCommand
+    /** «Где я?» — адрес по геолокации до улицы и дома. */
+    data object WhereAmI : SkillCommand
     data object TimersLeft : SkillCommand
     data class TimersCancel(val label: String?) : SkillCommand
     data class SavePlace(val name: String) : SkillCommand
@@ -90,6 +92,7 @@ object SkillPhrases {
         radio(t)?.let { return it }
         music(t)?.let { return it }
         if (isFindPhone(t)) return SkillCommand.FindPhone
+        if (isWhereAmI(t)) return SkillCommand.WhereAmI
         timers(t)?.let { return it }
         Game.parseStart(t)?.let { return SkillCommand.StartGame(it) }
         if (Game.isWhatToPlay(t)) return SkillCommand.StartGame(null)
@@ -522,6 +525,11 @@ object SkillPhrases {
     // ------------------------------------------------------------------ Найти телефон
 
     fun isFindPhone(t: String) = rx("""^(?:где\s+ты|ты\s+где|где\s+(?:мой\s+)?телефон|найди\s+(?:мой\s+)?(?:телефон|смартфон)|подай\s+голос|отзовись|позвони\s+(?:мне\s+)?громко|я\s+тебя\s+(?:не\s+)?(?:вижу|найду|потерял|потеряла)|где\s+же\s+ты)$""").containsMatchIn(t)
+
+    // ------------------------------------------------------------------ Где я
+
+    /** «Где я», «где я нахожусь», «какой у меня адрес» — для тех, кто потерялся. */
+    fun isWhereAmI(t: String) = rx("""^(?:нова,?\s+)?(?:а\s+)?(?:где\s+(?:я|мы|сейчас|это\s+место)(?:\s+(?:нахожусь|сейчас|нахожуся|стою|нахожусь\s+сейчас))*|я\s+где|какой\s+(?:у\s+меня\s+)?(?:сейчас\s+)?адрес|мой\s+адрес|покажи\s+(?:где\s+я|мой\s+адрес)|назови\s+(?:мой\s+)?адрес)$""").containsMatchIn(t)
 
     // ------------------------------------------------------------------ Таймеры
 

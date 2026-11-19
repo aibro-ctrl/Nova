@@ -127,6 +127,7 @@ class MainActivity : ComponentActivity() {
                     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
                         NovaRoot(container, listenRequest, openSettingsRequest, openBackupRequest, quickRequest)
                         ai.nova.app.ui.components.VoiceMemoOverlay(container)
+                        ai.nova.app.ui.components.WhatsNewAutoShow()
                     }
                 }
             }

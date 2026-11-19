@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.async
 import ai.nova.app.AppContainer
 import ai.nova.app.security.KeystoreSecretStore
 import ai.nova.app.ui.components.Group
@@ -362,12 +364,18 @@ private fun ModelPicker(c: AppContainer, type: AIProviderType, current: String, 
 }
 
 
-/** Офлайн-модель: свободный разговор без интернета и ключей (~1 ГБ, скачивается один раз). */
+/**
+ * Офлайн-модель: свободный разговор без интернета и ключей.
+ * Главный путь — одна кнопка: Нова сама находит свежую Qwen 3.5 под этот телефон и заменяет модель.
+ * Выбор репозитория вручную остался для тех, кому нужен особый файл.
+ */
 @Composable
 private fun OfflineModelSection(c: AppContainer) {
     val state by c.offlineLlm.state.collectAsStateWithLifecycle()
+    val notice by c.offlineLlm.notice.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var enabled by remember { mutableStateOf(c.offlineLlm.enabled) }
+    var picking by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val metered = remember {
         context.getSystemService(android.net.ConnectivityManager::class.java)?.isActiveNetworkMetered != false
@@ -378,22 +386,44 @@ private fun OfflineModelSection(c: AppContainer) {
             ai.nova.app.llm.OfflineLlm.State.Ready -> {
                 SwitchItem(
                     "Отвечать на любые вопросы",
-                    "Qwen 2.5 1.5B на телефоне: «почему небо голубое», «посоветуй фильм». Если подключён облачный AI — отвечает он",
+                    "${c.offlineLlm.modelLabel} на телефоне: «почему небо голубое», «посоветуй фильм». Если подключён облачный AI — отвечает он",
                     enabled, icon = Icons.Rounded.AutoAwesome,
                 ) { v -> enabled = v; c.offlineLlm.enabled = v }
                 GroupDivider()
-                RowItem(title = "Удалить модель", subtitle = "Освободит ~1 ГБ", onClick = { c.offlineLlm.delete() })
+                RowItem(
+                    title = "Обновить модель",
+                    subtitle = "Сейчас ${c.offlineLlm.modelLabel}. Нажмите — найду свежую Qwen 3.5, скачаю и заменю. Выбирать ничего не нужно",
+                    icon = Icons.Rounded.SystemUpdate,
+                    onClick = { scope.launch { c.offlineLlm.update() } },
+                    trailing = { TextButton(onClick = { scope.launch { c.offlineLlm.update() } }) { Text("Обновить") } },
+                )
+                if (!c.offlineLlm.isDefaultModel) {
+                    GroupDivider()
+                    RowItem(
+                        title = "Вернуться к встроенной Qwen 2.5 1.5B",
+                        subtitle = "Скачивать заново не нужно, если файл остался на телефоне",
+                        onClick = { c.offlineLlm.useDefault() },
+                    )
+                }
+                GroupDivider()
+                RowItem(title = "Удалить модель", subtitle = "Освободит ${ai.nova.core.ai.LocalModels.sizeText(c.offlineLlm.sizeBytes)}", onClick = { c.offlineLlm.delete() })
             }
             ai.nova.app.llm.OfflineLlm.State.Missing, is ai.nova.app.llm.OfflineLlm.State.Failed -> RowItem(
-                title = "Скачать офлайн-модель (~1 ГБ)",
+                title = "Скачать офлайн-модель",
                 subtitle = (st as? ai.nova.app.llm.OfflineLlm.State.Failed)?.let { "Не получилось: ${it.message}" }
-                    ?: ("Свободный разговор без интернета и без ключей. Ответ за несколько секунд на современных телефонах" +
+                    ?: ("Qwen 3.5, около 1,3 ГБ. Свободный разговор без интернета и без ключей" +
                         if (metered) ". Сейчас мобильный интернет — лучше по Wi‑Fi" else ""),
                 icon = Icons.Rounded.AutoAwesome,
-                trailing = { TextButton(onClick = { scope.launch { c.offlineLlm.download() } }) { Text(if (st is ai.nova.app.llm.OfflineLlm.State.Failed) "Ещё раз" else "Скачать") } },
+                trailing = { TextButton(onClick = { scope.launch { c.offlineLlm.update() } }) { Text(if (st is ai.nova.app.llm.OfflineLlm.State.Failed) "Ещё раз" else "Скачать") } },
+            )
+            ai.nova.app.llm.OfflineLlm.State.Resolving -> RowItem(
+                title = "Ищу модель новее…",
+                subtitle = "Проверяю каталог Qwen 3.5 — пара секунд",
+                icon = Icons.Rounded.SystemUpdate,
+                trailing = { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) },
             )
             is ai.nova.app.llm.OfflineLlm.State.Downloading -> Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                Text("Скачиваю модель · ${(st.progress * 100).toInt()}%", style = MaterialTheme.typography.bodyLarge)
+                Text("Скачиваю ${c.offlineLlm.modelLabel} · ${(st.progress * 100).toInt()}%", style = MaterialTheme.typography.bodyLarge)
                 androidx.compose.material3.LinearProgressIndicator(progress = { st.progress }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
                 Text("Можно закрыть экран — при обрыве загрузка продолжится с того же места.", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
@@ -402,7 +432,37 @@ private fun OfflineModelSection(c: AppContainer) {
             is ai.nova.app.llm.OfflineLlm.State.Unsupported -> RowItem(title = "Недоступна на этом телефоне", subtitle = st.reason.replaceFirstChar { it.uppercase() }, icon = Icons.Rounded.AutoAwesome)
         }
     }
-    Hint("Модель Qwen 2.5 (Apache-2.0) работает прямо на телефоне: вопросы никуда не отправляются. По уму она проще облачных AI — для бытовых вопросов и советов.")
+    if (notice != null) {
+        Text(
+            notice.orEmpty(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 20.dp, top = 8.dp),
+        )
+    }
+    val idle = state == ai.nova.app.llm.OfflineLlm.State.Ready
+    if (!idle && state !is ai.nova.app.llm.OfflineLlm.State.Downloading && state !is ai.nova.app.llm.OfflineLlm.State.Resolving) {
+        Group(Modifier.padding(top = 12.dp)) {
+            RowItem(
+                title = "Выбрать модель",
+                subtitle = "Лёгкая, сбалансированная или умная — с размером и подсказкой, какая подходит телефону",
+                icon = Icons.Rounded.SystemUpdate,
+                onClick = { picking = true },
+            )
+        }
+    }
+    if (idle) {
+        Group(Modifier.padding(top = 12.dp)) {
+            RowItem(
+                title = "Сменить модель",
+                subtitle = "Лёгкая, сбалансированная, умная или свой файл .gguf с Hugging Face",
+                icon = Icons.Rounded.SystemUpdate,
+                onClick = { picking = true },
+            )
+        }
+    }
+    Hint("Модель работает прямо на телефоне: вопросы никуда не отправляются. По уму она проще облачных AI — для бытовых вопросов и советов.")
+    if (picking) OfflineModelPicker(c, onDismiss = { picking = false })
 }
 
 
@@ -424,5 +484,245 @@ private fun NovaCloudSection(c: AppContainer) {
             },
             s.novaCloud && signedIn, enabled = signedIn, icon = Icons.Rounded.AutoAwesome,
         ) { v -> scope.launch { c.settings.setNovaCloud(v) } }
+    }
+}
+
+/** Готовые варианты модели: простые названия вместо репозиториев Hugging Face. */
+private data class ModelOption(val kind: String, val repo: String, val note: String) {
+    val title: String get() = "$kind · ${ai.nova.core.ai.LocalModels.friendlyName(repo)}"
+}
+
+private val MODEL_OPTIONS = listOf(
+    ModelOption("Лёгкая", "unsloth/Qwen3.5-0.8B-GGUF", "самая быстрая, для коротких вопросов и бытовых советов"),
+    ModelOption("Сбалансированная", "unsloth/Qwen3.5-2B-GGUF", "лучший баланс: быстро, но уже умеет рассуждать и помнит диалог"),
+    ModelOption("Умная", "unsloth/Qwen3.5-4B-GGUF", "заметно умнее в сложных вопросах"),
+)
+
+/**
+ * Выбор модели: три понятных варианта под телефон (размер и рекомендация считаются сами)
+ * и, если нужно, свой файл .gguf с короткой инструкцией. Скачивание видно прямо в листе.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OfflineModelPicker(c: AppContainer, onDismiss: () -> Unit) {
+    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    val state by c.offlineLlm.state.collectAsStateWithLifecycle()
+    val notice by c.offlineLlm.notice.collectAsStateWithLifecycle()
+
+    val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val totalRam = remember {
+        val am = context.getSystemService(android.app.ActivityManager::class.java)
+        val info = android.app.ActivityManager.MemoryInfo()
+        if (am != null) am.getMemoryInfo(info)
+        info.totalMem
+    }
+    val suitable = remember(totalRam) { ai.nova.core.ai.LocalModels.recommended(totalRam) }
+    val recommendedRepo = suitable.firstOrNull()
+
+    // Размеры подтягиваем заранее: пользователь должен видеть «1,3 ГБ», а не гадать.
+    var files by remember { mutableStateOf<Map<String, ai.nova.core.ai.ModelFile?>>(emptyMap()) }
+    var preparing by remember { mutableStateOf(true) }
+    var advanced by remember { mutableStateOf(false) }
+    var custom by remember { mutableStateOf("") }
+    var customFiles by remember { mutableStateOf<List<ai.nova.core.ai.ModelFile>?>(null) }
+    var customLoading by remember { mutableStateOf(false) }
+    var customError by remember { mutableStateOf<String?>(null) }
+    var retry by remember { mutableStateOf<ai.nova.core.ai.ModelFile?>(null) }
+
+    fun start(file: ai.nova.core.ai.ModelFile) {
+        retry = file
+        scope.launch { c.offlineLlm.download(file) }
+    }
+
+    LaunchedEffect(Unit) {
+        // Три запроса разом: иначе список размеров собирается заметно дольше.
+        files = kotlinx.coroutines.coroutineScope {
+            val deferred = MODEL_OPTIONS.map { o ->
+                async {
+                    o.repo to runCatching { ai.nova.core.ai.LocalModels.pick(c.modelCatalog.files(o.repo)) }.getOrNull()
+                }
+            }
+            deferred.map { it.await() }.toMap()
+        }
+        preparing = false
+    }
+
+    fun showFiles(query: String) {
+        val repo = query.trim().removePrefix("https://huggingface.co/").trim('/').removeSuffix(".git")
+        if (repo.isBlank() || !repo.contains('/')) {
+            customError = "Нужно название вида «автор/модель», например unsloth/Qwen2.5-3B-Instruct-GGUF"
+            return
+        }
+        customLoading = true; customError = null; customFiles = null
+        scope.launch {
+            val list = c.modelCatalog.files(repo)
+            customFiles = list
+            customError = if (list.isEmpty()) "В «$repo» нет готовых файлов .gguf. Нужна сборка со словом GGUF в названии" else null
+            customLoading = false
+        }
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 660.dp)) {
+            item(key = "head") {
+                Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 12.dp)) {
+                    Text("Модель на телефоне", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "Отвечает без интернета и без ключей. Выберите одну — Нова скачает её сама",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+
+            // Что происходит сейчас: скачивание, проверка, ошибка или готово.
+            item(key = "status") {
+                when (val st = state) {
+                    is ai.nova.app.llm.OfflineLlm.State.Downloading -> Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
+                        Text("Скачиваю ${c.offlineLlm.modelLabel} · ${(st.progress * 100).toInt()}%", style = MaterialTheme.typography.bodyLarge)
+                        androidx.compose.material3.LinearProgressIndicator(progress = { st.progress }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+                        Text(
+                            "Лист можно закрыть: загрузка продолжится в фоне и докачается с того же места",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                    ai.nova.app.llm.OfflineLlm.State.Verifying, ai.nova.app.llm.OfflineLlm.State.Resolving -> Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text(
+                            if (st == ai.nova.app.llm.OfflineLlm.State.Verifying) "Проверяю файл — несколько секунд" else "Ищу свежую модель в каталоге",
+                            style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 12.dp),
+                        )
+                    }
+                    is ai.nova.app.llm.OfflineLlm.State.Failed -> Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
+                        Text("Не получилось скачать: ${st.message}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                        Text(
+                            "Проверьте интернет и свободное место, затем попробуйте ещё раз — докачка начнётся с того же места",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                        retry?.let { f -> PrimaryButton("Повторить", { start(f) }, modifier = Modifier.padding(top = 10.dp)) }
+                    }
+                    ai.nova.app.llm.OfflineLlm.State.Ready -> RowItem(
+                        title = "Модель готова",
+                        subtitle = "${c.offlineLlm.modelLabel} уже работает — можно закрывать",
+                        icon = Icons.Rounded.Check,
+                        trailing = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
+                    )
+                    else -> Unit
+                }
+            }
+
+            item(key = "pick") {
+                Column(Modifier.fillMaxWidth().padding(top = 8.dp)) { SectionLabel("Подобрать для телефона") }
+            }
+            item(key = "options") {
+                Group {
+                    MODEL_OPTIONS.forEachIndexed { i, option ->
+                        if (i > 0) GroupDivider()
+                        val file = files[option.repo]
+                        val size = file?.let { ai.nova.core.ai.LocalModels.sizeText(it.size) }
+                        val subtitle = listOfNotNull(
+                            size,
+                            if (option.repo == recommendedRepo) "рекомендуем вашему телефону"
+                            else if (option.repo !in suitable) "может не хватить памяти" else null,
+                            option.note,
+                        ).joinToString(" · ")
+                        RowItem(
+                            title = option.title,
+                            subtitle = subtitle,
+                            icon = if (option.repo == recommendedRepo) Icons.Rounded.Check else Icons.Rounded.Memory,
+                            onClick = file?.let { f -> { start(f) } },
+                            trailing = {
+                                when {
+                                    preparing -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    file != null -> TextButton(onClick = { start(file) }) { Text("Скачать") }
+                                    else -> TextButton(onClick = { retry = null; scope.launch { c.offlineLlm.update() } }) { Text("Скачать") }
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+            item(key = "pick-hint") {
+                Hint("Все три — разговорные Qwen 3.5: понимают вопрос, помнят диалог, работают без интернета. Картинки и код они не делают — на телефоне это лишнее. Крупнее модель — умнее ответы, но и памяти нужно больше.")
+            }
+
+            item(key = "advanced") {
+                Column(Modifier.fillMaxWidth().padding(top = 8.dp)) { SectionLabel("Своя модель") }
+            }
+            item(key = "advanced-row") {
+                Group {
+                    RowItem(
+                        title = "Файл .gguf с Hugging Face",
+                        subtitle = if (advanced) "Свернуть инструкцию" else "Если нужна конкретная модель — покажу, где взять название",
+                        icon = Icons.Rounded.Link,
+                        onClick = { advanced = !advanced },
+                        trailing = { Icon(if (advanced) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown, contentDescription = null) },
+                    )
+                }
+            }
+            if (advanced) {
+                item(key = "advanced-help") {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
+                        Text(
+                            ".gguf — это сама модель одним файлом: работает на телефоне без интернета. Где взять название:\n" +
+                                "1. Откройте huggingface.co и найдите модель со словом GGUF, например «Qwen2.5 3B Instruct GGUF».\n" +
+                                "2. На странице модели нажмите «⋯» → «Copy model name» — получится «автор/название».\n" +
+                                "3. Вставьте это в поле ниже. Подходящий файл Нова выберет сама — для телефона это обычно Q4_K_M.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        NovaField(
+                            value = custom, onChange = { custom = it }, label = "Репозиторий",
+                            placeholder = "unsloth/Qwen2.5-3B-Instruct-GGUF",
+                            supporting = "Можно вставить ссылку на страницу модели целиком",
+                            modifier = Modifier.padding(top = 12.dp),
+                        )
+                        PrimaryButton(
+                            text = "Показать файлы",
+                            onClick = { showFiles(custom) },
+                            enabled = custom.isNotBlank() && !customLoading,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                        if (customLoading) {
+                            androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+                        }
+                        customError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
+                    }
+                }
+                val list = customFiles.orEmpty()
+                if (list.isNotEmpty()) {
+                    item(key = "custom-list") {
+                        Group(Modifier.padding(horizontal = 12.dp)) {
+                            list.forEachIndexed { i, f ->
+                                if (i > 0) GroupDivider()
+                                val quant = f.quant.ifBlank { f.title }
+                                RowItem(
+                                    title = "$quant · ${ai.nova.core.ai.LocalModels.sizeText(f.size)}",
+                                    subtitle = listOfNotNull(
+                                        ai.nova.core.ai.LocalModels.quantNote(f.quant).takeIf { it.isNotBlank() },
+                                        f.fileName,
+                                    ).joinToString(" · "),
+                                    maxSubtitleLines = 2,
+                                    trailing = { TextButton(onClick = { start(f) }) { Text("Скачать") } },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (notice != null) {
+                item(key = "notice") {
+                    Text(notice.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 20.dp, top = 12.dp))
+                }
+            }
+            item(key = "bottom") {
+                TextButton(onClick = onDismiss, modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 24.dp)) { Text("Закрыть") }
+            }
+        }
     }
 }

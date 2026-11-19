@@ -126,6 +126,12 @@ class AssistantEngine(
         expenses = expensesBetween, time = time,
     )
 
+    /** Задача или напоминание с датой созданы — запоминаем план, чтобы «в календарь» сработало. */
+    fun notePlan(plan: PlanCalendar) {
+        pendingCalendar = plan
+        pendingCalendarAt = time.now()
+    }
+
     /** Итоги недели для воскресной сводки — тот же текст, что и по голосовой команде. */
     suspend fun weeklySummary(): String = review.week()
 
@@ -142,6 +148,9 @@ class AssistantEngine(
     private var lastMoreable: String? = null
     private var lastWasChat = false
     private var repeating = false
+    /** План голосом, который ещё не в календаре: «в календарь» добавит именно его. */
+    private var pendingCalendar: PlanCalendar? = null
+    private var pendingCalendarAt: java.time.Instant = java.time.Instant.EPOCH
 
     /** Откуда пришла текущая фраза: диктовка возможна только голосом. */
     @Volatile private var currentSource: InputSource = InputSource.TEXT
@@ -283,6 +292,30 @@ class AssistantEngine(
             null
         }?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         return AssistantReply(out, offline = cfg.useAI, provider = "Офлайн-модель")
+    }
+
+    /**
+     * «В календарь» после созданной задачи или напоминания: событие уходит в календарь телефона.
+     * Предложение живёт 10 минут — дальше фраза обрабатывается как обычная команда.
+     */
+    private suspend fun calendarTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val plan = pendingCalendar ?: return null
+        if (java.time.Duration.between(pendingCalendarAt, time.now()).toMinutes() > 10) {
+            pendingCalendar = null
+            return null
+        }
+        val t = ai.nova.core.nlp.RuTokenizer.normalize(text)
+        if (!IN_CALENDAR.containsMatchIn(t)) return null
+        if (cfg.locked && cfg.lockPolicy?.edit == false) {
+            return AssistantReply("Разблокируйте телефон — добавлять события в календарь без разблокировки не разрешено.")
+        }
+        pendingCalendar = null
+        return execute(
+            AssistantPlan("", listOf(AssistantAction.Device(DeviceCommand.CalendarEvent(plan.title, plan.at, allDay = plan.allDay)))),
+            usedAI = false,
+            offline = false,
+            name = cfg.assistantName,
+        )
     }
 
     /** Дневник дня: настроение, итоги, неделя. Личное — на заблокированном экране не показываем. */
@@ -1011,6 +1044,7 @@ class AssistantEngine(
         reviewTurn(text, cfg)?.let { return it }
         chatSearchTurn(text, cfg)?.let { return it }
         diaryTurn(text, cfg)?.let { return it }
+        calendarTurn(text, cfg)?.let { return it }
         // 0.5. Живой диалог: «повтори», «ещё», «а завтра?», «продолжай».
         dialogTurn(text, cfg)?.let { return it }
         // 1. Ожидаем подтверждение опасного действия.
@@ -1148,10 +1182,12 @@ class AssistantEngine(
                 is AIException.Unauthorized -> " (AI: ключ не принят — выполнено на устройстве)"
                 else -> ""
             }
+            // Разбор команд не узнал фразу — записываем её для «Непонятных фраз» (даже если ответила модель).
+            if (parsed == null) runCatching { onNotUnderstood(text) }
             return reply.copy(text = reply.text + note, aiError = aiError?.let { shortReason(it) })
         }
         localAnswer(text, cfg)?.let { return it }
-        runCatching { onNotUnderstood(text) }
+        if (parsed != null) runCatching { onNotUnderstood(text) }
         val reason = when {
             !cfg.useAI -> "Не совсем поняла."
             aiError is AIException.NotConfigured || aiError == null -> "Не поняла, а облачный AI не настроен."
@@ -1454,6 +1490,8 @@ class AssistantEngine(
         private val UNDO = Regex("""^(?:отмени|удали|убери)\s+(?:последнее|это|то что (?:я )?(?:только что )?(?:сказала|сказал|добавила|добавил))$|^(?:отмени|отмена последнего)$""")
         private val CONTINUE = Regex("""^(?:продолжай|продолжи|дальше|и что дальше|а дальше|что было дальше|рассказывай дальше|продолжай рассказ|и\?)$""")
         private const val MAX_CANDIDATES = 20
+        /** «В календарь» — согласие на событие в календаре телефона после созданного плана. */
+        private val IN_CALENDAR = Regex("""(?:(?:добавь|добавить|внеси|запиши|записать|поставь|помести|сохрани|кинь)\s+(?:это\s+|его\s+|ее\s+|её\s+|план\s+)?)?(?:в|во)\s+календарь(?![а-яе])""")
         /** Сколько времени после последнего шага готовку можно продолжить («продолжим готовить»). */
         private const val COOKING_RESUME_TTL = 6 * 60 * 60 * 1000L
         /** С таких слов начинается вопрос или команда, а не идея. */
