@@ -187,13 +187,8 @@ namespace {
 
 // Внутренняя часть generate. Любое C++ исключение llama.cpp (нехватка памяти, некорректный батч)
 // перехватывается в JNI-обёртке ниже: иначе std::terminate → SIGABRT → приложение закрывается.
-jstring generate_impl(JNIEnv *env, jlong handle, jobjectArray jmessages, jint max_tokens,
-                      jfloat temperature, jobject listener) {
-    auto *s = reinterpret_cast<Session *>(handle);
-    if (!s) return env->NewStringUTF("");
-    s->stop = false;
-
-    // Сообщения диалога и шаблон модели (у Qwen — ChatML).
+// Промпт из сообщений диалога по шаблону модели (у Qwen — ChatML).
+std::string build_prompt(JNIEnv *env, Session *s, jobjectArray jmessages) {
     std::vector<std::string> roles, texts;
     const jsize n = env->GetArrayLength(jmessages);
     for (jsize i = 0; i + 1 < n; i += 2) {
@@ -219,23 +214,27 @@ jstring generate_impl(JNIEnv *env, jlong handle, jobjectArray jmessages, jint ma
     }
     if (prompt.empty()) prompt = chatml(roles, texts);
     disable_thinking_if_needed(s->model, prompt);
+    return prompt;
+}
 
+/**
+ * Разбирает промпт, переиспользуя общую часть с прошлым запросом: у диалога она занимает
+ * почти весь промпт, и без этого каждый ответ начинался с 2–5 секунд ожидания.
+ * Возвращает число токенов промпта (0 — не получилось).
+ */
+int32_t decode_prompt(Session *s, const std::string &prompt) {
     // Токены запроса.
     const int32_t n_prompt = -llama_tokenize(s->vocab, prompt.c_str(), (int32_t) prompt.size(), nullptr, 0, true, true);
     std::vector<llama_token> tokens(n_prompt > 0 ? n_prompt : 0);
     if (n_prompt <= 0 || llama_tokenize(s->vocab, prompt.c_str(), (int32_t) prompt.size(), tokens.data(), n_prompt, true, true) < 0) {
-        return env->NewStringUTF("");
+        return 0;
     }
     const int32_t n_ctx = (int32_t) llama_n_ctx(s->ctx);
-    // Длинный вопрос: ответ укорачиваем, но не молчим; совсем не помещается — пусто (Kotlin ответит без модели).
-    if (n_prompt + max_tokens + 8 > n_ctx) max_tokens = n_ctx - n_prompt - 8;
-    if (max_tokens < 32) {
+    if (n_prompt + 32 + 8 > n_ctx) {
         LOGW("prompt too long: %d", n_prompt);
-        return env->NewStringUTF("");
+        return 0;
     }
 
-    // Переиспользуем общую часть с прошлым запросом (системный промпт и начало разговора):
-    // разбираем только новый хвост, остальное уже лежит в памяти контекста.
     llama_memory_t mem = llama_get_memory(s->ctx);
     int32_t common = 0;
     while (common < (int32_t) s->cached.size() && common < n_prompt && s->cached[common] == tokens[common]) common++;
@@ -250,9 +249,31 @@ jstring generate_impl(JNIEnv *env, jlong handle, jobjectArray jmessages, jint ma
     for (int32_t i = common; i < n_prompt; i += 512) {
         const int32_t chunk = std::min<int32_t>(512, n_prompt - i);
         llama_batch batch = llama_batch_get_one(tokens.data() + i, chunk);
-        if (llama_decode(s->ctx, batch) != 0) { LOGW("decode prompt failed"); s->cached.clear(); return env->NewStringUTF(""); }
+        if (llama_decode(s->ctx, batch) != 0) { LOGW("decode prompt failed"); s->cached.clear(); return 0; }
     }
     s->cached.assign(tokens.begin(), tokens.end());
+    return n_prompt;
+}
+
+// Подготовить системный промпт заранее: к первому вопросу он уже будет в памяти контекста.
+jint prefill_impl(JNIEnv *env, jlong handle, jobjectArray jmessages) {
+    auto *s = reinterpret_cast<Session *>(handle);
+    if (!s || !jmessages) return 0;
+    return decode_prompt(s, build_prompt(env, s, jmessages));
+}
+
+jstring generate_impl(JNIEnv *env, jlong handle, jobjectArray jmessages, jint max_tokens,
+                      jfloat temperature, jobject listener) {
+    auto *s = reinterpret_cast<Session *>(handle);
+    if (!s) return env->NewStringUTF("");
+    s->stop = false;
+
+    const std::string prompt = build_prompt(env, s, jmessages);
+    const int32_t n_prompt = (int32_t) llama_tokenize(s->vocab, prompt.c_str(), (int32_t) prompt.size(), nullptr, 0, true, true);
+    // Длинный вопрос: ответ укорачиваем, но не молчим; совсем не помещается — пусто (Kotlin ответит без модели).
+    if (n_prompt + max_tokens + 8 > llama_n_ctx(s->ctx)) max_tokens = (int32_t) llama_n_ctx(s->ctx) - n_prompt - 8;
+    if (max_tokens < 32) { LOGW("prompt too long: %d", n_prompt); return env->NewStringUTF(""); }
+    if (decode_prompt(s, prompt) <= 0) return env->NewStringUTF("");
 
     SamplerGuard sampler;
     sampler.smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
@@ -318,4 +339,16 @@ Java_ai_nova_app_llm_LlamaNative_generate(JNIEnv *env, jclass, jlong handle, job
         LOGW("generate failed");
     }
     return env->NewStringUTF("");
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_ai_nova_app_llm_LlamaNative_prefill(JNIEnv *env, jclass, jlong handle, jobjectArray jmessages) {
+    try {
+        return prefill_impl(env, handle, jmessages);
+    } catch (const std::exception &e) {
+        LOGW("prefill failed: %s", e.what());
+    } catch (...) {
+        LOGW("prefill failed");
+    }
+    return 0;
 }

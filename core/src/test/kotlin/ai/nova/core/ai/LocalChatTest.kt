@@ -12,7 +12,7 @@ class LocalChatTest {
     private class FakeChat : LocalChat {
         val asked = ArrayList<String>()
         override val available = true
-        override suspend fun reply(system: String, history: List<ChatMessage>, maxTokens: Int): String {
+        override suspend fun reply(system: String, history: List<ChatMessage>, maxTokens: Int, onChunk: ((String) -> Unit)?): String {
             asked += history.last().content
             return "Из-за рассеяния света в атмосфере."
         }

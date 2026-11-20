@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.takeWhile
@@ -319,38 +320,74 @@ class VoiceController(
             return AssistantReply("", endsDialog = true)
         }
         _state.value = VoiceState.Thinking(text)
-        // Отказоустойчивость: ответ не должен «думать» бесконечно. Если поиск или модель зависли —
-        // говорим об этом и остаёмся в приложении (раньше процесс просто закрывался системой).
-        val reply = try {
-            withTimeoutOrNull(PROCESS_TIMEOUT_MS) { engine.handle(text, source) }
-                ?: run {
+        val willSpeak = speak && settings.value.ttsEnabled
+        // Что офлайн-модель уже написала. Куски приходят по мере генерации, поэтому первую фразу
+        // Нова произносит через 1–2 секунды, а не после всего ответа.
+        val written = StringBuilder()
+        var interrupted = false
+        var foreignLanguage: String? = null
+        val reply = coroutineScope {
+            val queue = Channel<String>(Channel.UNLIMITED)
+            val raw = StringBuilder()
+            val speaker = if (willSpeak) launch {
+                // Пока Нова говорит, её можно перебить словом «стоп» (если микрофон не занят фоновой службой — та ловит «стоп» сама).
+                val watcher = stopWatcher?.takeIf { !wakeHoldsMic.value }?.let { w ->
+                    launch { if (w()) { interrupted = true; tts.stop(); runCatching { onStop() } } }
+                }
+                try {
+                    for (sentence in queue) {
+                        if (interrupted || !settings.value.ttsEnabled) break
+                        runCatching { tts.speak(SpeechText.forSpeech(sentence)) }
+                    }
+                } finally {
+                    watcher?.cancel()
+                }
+            } else null
+            val result = try {
+                withTimeoutOrNull(PROCESS_TIMEOUT_MS) {
+                    engine.handle(text, source) { piece ->
+                        written.append(piece)
+                        raw.append(piece)
+                        SpeechChunker.flush(raw) { sentence -> queue.trySend(sentence) }
+                        _state.value = VoiceState.Speaking(written.toString())
+                    }
+                } ?: run {
                     runCatching { onStop() }
                     AssistantReply(
                         "Не успела ответить: сеть или офлайн-модель не отвечают. Попробуйте ещё раз или скажите короче.",
                         offline = true,
                     )
                 }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            ai.nova.core.util.Logger.w(TAG, "Ошибка обработки запроса", e)
-            AssistantReply("Не получилось выполнить: ${e.message ?: "неизвестная ошибка"}. Попробуйте ещё раз.", offline = true)
-        }
-        _lastReply.value = reply
-        if (source != InputSource.TEXT) runCatching { onVoiceReply(reply) }
-        var interrupted = false
-        if (speak && settings.value.ttsEnabled && reply.text.isNotBlank()) {
-            _state.value = VoiceState.Speaking(reply.text)
-            coroutineScope {
-                // Пока Нова говорит, её можно перебить словом «стоп» (если микрофон не занят фоновой службой — та ловит «стоп» сама).
-                val watcher = stopWatcher?.takeIf { !wakeHoldsMic.value }?.let { w ->
-                    launch { if (w()) { interrupted = true; tts.stop() } }
-                }
-                if (reply.speakLanguage != null) tts.speakIn(reply.text, reply.speakLanguage) else tts.speak(SpeechText.forSpeech(reply.text))
-                watcher?.cancel()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                queue.close()
+                throw e
+            } catch (e: Exception) {
+                ai.nova.core.util.Logger.w(TAG, "Ошибка обработки запроса", e)
+                AssistantReply("Не получилось выполнить: ${e.message ?: "неизвестная ошибка"}. Попробуйте ещё раз.", offline = true)
             }
+            if (willSpeak) {
+                // Хвост, который остался в буфере, и всё, что пришло не от модели (облако, команды), говорим целиком.
+                SpeechChunker.flush(raw, last = true) { sentence -> queue.trySend(sentence) }
+                val streamed = written.toString().trim()
+                when {
+                    result.speakLanguage != null && streamed.isEmpty() -> foreignLanguage = result.speakLanguage
+                    streamed.isEmpty() -> if (result.text.isNotBlank()) queue.trySend(result.text)
+                    // Характер мог дописать фразу в конце — её тоже озвучиваем.
+                    result.text.startsWith(streamed) -> result.text.removePrefix(streamed).trim().takeIf { it.isNotEmpty() }?.let { queue.trySend(it) }
+                }
+            }
+            queue.close()
+            speaker?.join()
+            result
+        }
+        foreignLanguage?.let { language ->
+            // Перевод на другой язык — только синтезатором телефона, и целиком.
+            _state.value = VoiceState.Speaking(reply.text)
+            runCatching { tts.speakIn(reply.text, language) }
         }
         _state.value = VoiceState.Idle
+        _lastReply.value = reply
+        if (source != InputSource.TEXT) runCatching { onVoiceReply(reply) }
         if (interrupted) {
             engine.endDialog()
             return reply.copy(expectFollowUp = false, endsDialog = true)

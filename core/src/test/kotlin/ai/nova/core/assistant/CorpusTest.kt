@@ -48,7 +48,7 @@ class CorpusTest {
     private class Chat : LocalChat {
         var asked = 0
         override val available = true
-        override suspend fun reply(system: String, history: List<ChatMessage>, maxTokens: Int): String { asked++; return "Ответ модели." }
+        override suspend fun reply(system: String, history: List<ChatMessage>, maxTokens: Int, onChunk: ((String) -> Unit)?): String { asked++; return "Ответ модели." }
     }
 
     private suspend fun classify(phrase: String): String {

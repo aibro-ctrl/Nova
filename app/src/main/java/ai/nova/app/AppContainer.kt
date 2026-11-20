@@ -191,7 +191,16 @@ class AppContainer(private val context: Context) {
     /** Каталог моделей Hugging Face: свежие Qwen без обновления приложения. */
     val modelCatalog = ai.nova.app.llm.ModelCatalog()
     /** Офлайн-модель для разговора (~1 ГБ, скачивается по кнопке). */
-    val offlineLlm: ai.nova.app.llm.OfflineLlm by lazy { ai.nova.app.llm.OfflineLlm(context, appScope, modelCatalog) }
+    val offlineLlm: ai.nova.app.llm.OfflineLlm by lazy {
+        ai.nova.app.llm.OfflineLlm(context, appScope, modelCatalog) {
+            val s = settings.settings.value
+            ai.nova.core.ai.LocalChat.systemPrompt(
+                s.assistantName,
+                s.userName.takeIf { n -> n.isNotBlank() },
+                ai.nova.core.assistant.Persona.of(s.persona).personality.skillStyle,
+            )
+        }
+    }
     private val keyguard = context.getSystemService(android.app.KeyguardManager::class.java)
 
     /** Телефон заблокирован (экран блокировки показан). */

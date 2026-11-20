@@ -45,6 +45,9 @@ object LlamaNative {
     @JvmStatic external fun init()
     @JvmStatic external fun load(path: String, nCtx: Int, nThreads: Int): Long
     @JvmStatic external fun generate(handle: Long, messages: Array<String>, maxTokens: Int, temperature: Float, listener: TokenListener?): String
+
+    /** Разобрать промпт заранее (без генерации): к первому вопросу он уже лежит в памяти контекста. */
+    @JvmStatic external fun prefill(handle: Long, messages: Array<String>): Int
     @JvmStatic external fun stop(handle: Long)
     @JvmStatic external fun free(handle: Long)
 }
@@ -59,6 +62,8 @@ class OfflineLlm(
     private val context: Context,
     private val scope: CoroutineScope,
     private val catalog: ModelCatalog = ModelCatalog(),
+    /** Системный промпт, с которым модель будет разговаривать: его разбираем заранее, при прогреве. */
+    private val systemPrompt: () -> String = { "" },
 ) : LocalChat {
     sealed interface State {
         data object Missing : State
@@ -94,6 +99,8 @@ class OfflineLlm(
     private val nativeLock = Any()
     /** «Стоп» сказали во время загрузки модели или до начала ответа — не теряем его. */
     @Volatile private var cancelled = false
+    /** Человек уже спросил: разбирать промпт заранее поздно, вопрос и так ждёт. */
+    @Volatile private var answered = false
     private var unloadJob: Job? = null
 
     init {
@@ -105,7 +112,21 @@ class OfflineLlm(
             delay(WARMUP_DELAY_MS)
             if (_state.value == State.Ready && enabled) {
                 // Под тем же замком, что и ответ: иначе первый вопрос и прогрев загрузят модель дважды.
-                lock.withLock { withContext(Dispatchers.Default) { ensureLoaded() } }
+                lock.withLock {
+                    withContext(Dispatchers.Default) {
+                        val h = ensureLoaded() ?: return@withContext
+                        // Системную часть промпта разбираем сейчас: первый вопрос начнёт отвечать сразу.
+                        runCatching {
+                            val sys = if (answered) "" else systemPrompt()
+                            // Пустая реплика пользователя: шаблон Gemma склеивает характер с первым вопросом,
+                            // поэтому такой промпт — начало любого настоящего. Первый вопрос разбирает только себя.
+                            if (sys.isNotBlank()) {
+                                val n = LlamaNative.prefill(h, arrayOf("system", sys, "user", ""))
+                                Logger.w(TAG, "прогрев: характер в памяти, ${n} токенов")
+                            }
+                        }
+                    }
+                }
                 scheduleUnload()
             }
         }
@@ -342,11 +363,17 @@ class OfflineLlm(
         }
     }
 
-    override suspend fun reply(system: String, history: List<ChatMessage>, maxTokens: Int): String? {
+    override suspend fun reply(
+        system: String,
+        history: List<ChatMessage>,
+        maxTokens: Int,
+        onChunk: ((String) -> Unit)?,
+    ): String? {
         if (!available || LlamaNative.unsupportedReason != null) return null
         // Второй телефон в фоне съел память — не рискуем закрытием приложения.
         if (handle == 0L && !memoryOk()) { Logger.w(TAG, "мало памяти — отвечаю без модели"); return null }
         cancelled = false
+        answered = true
         return lock.withLock {
             withContext(Dispatchers.Default) {
                 val h = ensureLoaded() ?: return@withContext null
@@ -365,7 +392,12 @@ class OfflineLlm(
                 // Отмена (пользователь ушёл, сработал общий таймаут) должна останавливать генерацию:
                 // иначе модель держит память и очередь следующих вопросов.
                 val job = kotlinx.coroutines.currentCoroutineContext()
-                val listener = LlamaNative.TokenListener { !cancelled && job[kotlinx.coroutines.Job]?.isActive != false }
+                val listener = LlamaNative.TokenListener { piece ->
+                    val go = !cancelled && job[kotlinx.coroutines.Job]?.isActive != false
+                    // Куски уходят в озвучку сразу: она начинает говорить, пока модель пишет дальше.
+                    if (go) runCatching { onChunk?.invoke(piece) }
+                    go
+                }
                 // Модель может «задуматься» надолго: по истечении времени останавливаем её, чтобы
                 // разговор не замирал и следующая фраза не ждала бесконечно.
                 val watchdog = scope.launch {
@@ -407,7 +439,7 @@ class OfflineLlm(
     private fun ensureLoaded(): Long? {
         if (handle != 0L) return handle
         if (!memoryOk()) { Logger.w(TAG, "мало свободной памяти для офлайн-модели"); return null }
-        val threads = Runtime.getRuntime().availableProcessors().let { (it - 2).coerceIn(2, 4) }
+        val threads = Runtime.getRuntime().availableProcessors().let { (it - 2).coerceIn(2, 6) }
         val h = runCatching { LlamaNative.load(file.absolutePath, CONTEXT, threads) }.getOrDefault(0L)
         if (h == 0L) { Logger.w(TAG, "Модель не загрузилась"); return null }
         handle = h
@@ -439,7 +471,7 @@ class OfflineLlm(
         /** Сколько ждём ответ: на телефоне это секунды, но «задумавшуюся» модель пора останавливать. */
         private const val REPLY_TIMEOUT_MS = 40_000L
         /** Загружаем модель заранее, но не в первую секунду запуска: пусть сначала отрисуется экран. */
-        private const val WARMUP_DELAY_MS = 3_000L
+        private const val WARMUP_DELAY_MS = 1_500L
         /** Столько модель держим в памяти после ответа: следующий вопрос ждать не будет. */
         private const val IDLE_UNLOAD_MS = 10 * 60_000L
         /** Запас памяти сверх файла модели: контекст, граф вычислений, само приложение. */

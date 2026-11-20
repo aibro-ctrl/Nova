@@ -141,6 +141,9 @@ class AssistantEngine(
     /** Сколько не пробовать облачный AI после сбоя: иначе каждый вопрос снова ждёт таймаут сети. */
     private val AI_COOLDOWN_MS = java.time.Duration.ofMinutes(2).toMillis()
 
+    /** Куда отдавать куски ответа офлайн-модели, пока она пишет (озвучка начинает говорить сразу). */
+    @Volatile private var chunkSink: ((String) -> Unit)? = null
+
     /** Последняя ошибка AI (null — последний запрос к AI прошёл успешно). */
     @Volatile var lastAiFailure: AiFailure? = null
         private set
@@ -162,8 +165,14 @@ class AssistantEngine(
     /** Откуда пришла текущая фраза: диктовка возможна только голосом. */
     @Volatile private var currentSource: InputSource = InputSource.TEXT
 
-    suspend fun handle(input: String, source: InputSource = InputSource.TEXT): AssistantReply = mutex.withLock {
+    suspend fun handle(
+        input: String,
+        source: InputSource = InputSource.TEXT,
+        /** Куски ответа офлайн-модели по мере генерации: чтобы начать говорить, не дожидаясь всего текста. */
+        onChunk: ((String) -> Unit)? = null,
+    ): AssistantReply = mutex.withLock {
         currentSource = source
+        chunkSink = onChunk
         val cfg = settings()
         val text = ai.nova.core.nlp.Slang.normalize(stripWakeWord(input, cfg.assistantName))
         if (text.isBlank()) return@withLock AssistantReply("Слушаю!", expectFollowUp = true, awaitingAnswer = true)
@@ -187,6 +196,7 @@ class AssistantEngine(
             if (MOREABLE.containsMatchIn(RuTokenizer.normalize(text))) lastMoreable = text
             else if (!MORE.containsMatchIn(RuTokenizer.normalize(text).trimEnd('?', '!', '.'))) lastMoreable = null
         }
+        chunkSink = null
         continueDialog(reply, source, cfg)
     }
 
@@ -327,7 +337,11 @@ class AssistantEngine(
         val lc = localChat?.takeIf { it.available } ?: return null
         val history = (if (cfg.locked) emptyList() else context.messages.takeLast(6)) + ChatMessage(ChatMessage.Role.USER, text)
         val out = try {
-            lc.reply(ai.nova.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName, cfg.persona.personality.skillStyle), history)
+            lc.reply(
+                ai.nova.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName, cfg.persona.personality.skillStyle),
+                history,
+                onChunk = chunkSink,
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
