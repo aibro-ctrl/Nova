@@ -34,17 +34,17 @@ class LocalModelsTest {
 
     @Test fun recommendedStartsWithBigModelOnStrongPhone() {
         // 12 ГБ ОЗУ: телефон тянет 4B.
-        assertEquals("unsloth/Qwen3.5-4B-GGUF", LocalModels.recommended(12_000_000_000L).first())
+        assertEquals("unsloth/Qwen3-4B-Instruct-2507-GGUF", LocalModels.recommended(12_000_000_000L).first())
     }
 
-    @Test fun recommendedUsesTwoBOnEightGigPhone() {
-        assertEquals("unsloth/Qwen3.5-2B-GGUF", LocalModels.recommended(8_000_000_000L).first())
+    @Test fun recommendedUsesThreeBOnTenGigPhone() {
+        assertEquals("Qwen/Qwen2.5-3B-Instruct-GGUF", LocalModels.recommended(10_000_000_000L).first())
     }
 
     @Test fun recommendedSkipsBigModelOnWeakPhone() {
-        // 4 ГБ ОЗУ: 2,7 ГБ модель не поднять — сразу 2B.
-        assertEquals("unsloth/Qwen3.5-2B-GGUF", LocalModels.recommended(4_000_000_000L).first())
-        assertEquals(2, LocalModels.recommended(4_000_000_000L).size)
+        // 8 ГБ ОЗУ: 3B отвечает вдвое дольше — начинаем с 1.5B.
+        assertEquals("Qwen/Qwen2.5-1.5B-Instruct-GGUF", LocalModels.recommended(8_000_000_000L).first())
+        assertEquals(1, LocalModels.recommended(4_000_000_000L).size)
     }
 
     @Test fun thinkingIsStrippedFromAnswer() {
@@ -52,6 +52,18 @@ class LocalModelsTest {
         // Размышления без закрывающего тега: показываем то, что после последней метки.
         assertEquals("Ответ.", LocalModels.stripThinking("думаю</think>Ответ."))
         assertEquals("Просто ответ", LocalModels.stripThinking("Просто ответ"))
+    }
+
+    @Test fun thinkingWithoutTagsIsDropped() {
+        val english = "Okay, the user is asking about borscht. Let me think about the ingredients.\n\n" +
+            "Борщ — это суп из свёклы и капусты."
+        assertEquals("Борщ — это суп из свёклы и капусты.", LocalModels.stripThinking(english))
+        assertEquals(
+            "Вода кипит при ста градусах.",
+            LocalModels.stripThinking("Thinking Process:\n1. проверить факты\n2. ответить\n\nВода кипит при ста градусах."),
+        )
+        // Русский ответ с английским словом в начале не режем.
+        assertEquals("iOS — это система Apple.", LocalModels.stripThinking("iOS — это система Apple."))
     }
 
     @Test fun collectionToleratesBrokenJson() {

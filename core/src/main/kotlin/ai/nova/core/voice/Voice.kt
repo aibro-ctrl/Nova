@@ -77,6 +77,7 @@ object SpeechText {
         "порция", "таблетка", "таблетки", "таблеток", "тренировка", "тренировки", "тренировок",
         "задача", "задачи", "задач", "встреча", "встречи", "встреч", "заметка", "заметки", "заметок",
         "идея", "идеи", "идей", "ошибка", "ошибки", "ошибок", "покупка", "покупки", "покупок",
+        "щепотка", "щепотки", "щепоток", "долька", "дольки", "долек", "веточка", "веточки", "веточек",
     )
 
     /** Женские слова в винительном падеже: «одну чайную ложку», «одну минуту» — а не «одна». */
@@ -84,6 +85,7 @@ object SpeechText {
         "минуту", "секунду", "неделю", "штуку", "порцию", "копейку", "чашку", "ложку", "страницу",
         "калорию", "тысячу", "половину", "таблетку", "тренировку", "задачу", "встречу", "заметку",
         "идею", "ошибку", "покупку", "порцию",
+        "щепотку", "дольку", "веточку",
     )
 
     /** Предлоги и сравнительные слова, после которых число стоит в родительном падеже. */
@@ -147,15 +149,16 @@ object SpeechText {
             }
         }
         // Год: «в 2026 году» → «в две тысячи двадцать шестом году».
-        t = Regex("""(?<![\d.])(1[89]\d\d|20\d\d|21\d\d)\s+(году|года|год|годом|годах|г\.)(?![\p{L}])""").replace(t) { m ->
+        t = Regex("""(?<![\d.])(1[89]\d\d|20\d\d|21\d\d)\s+(году|года|год|годом|годах|г)(\.?)(?![\p{L}])""").replace(t) { m ->
             val year = m.groupValues[1].toLong()
             val word = m.groupValues[2]
             val case = when (word) {
-                "году", "годах", "г." -> RuNumbers.Case.PREPOSITIONAL
+                "году", "годах", "г" -> RuNumbers.Case.PREPOSITIONAL
                 "года", "годом" -> RuNumbers.Case.GENITIVE
                 else -> RuNumbers.Case.NOMINATIVE
             }
-            RuNumbers.ordinal(year, case) + " " + if (word == "г.") "году" else word
+            RuNumbers.ordinal(year, case) + " " + if (word == "г") "году" else word +
+                keepDot(t, m, m.groupValues[3])
         }
         // Остальные числа — словами, род берём у следующего слова (минута — она, килограмм — он).
         t = Regex("""(?<![\d.,:])(\d{1,3}(?:[  ]\d{3})+|\d+)(?:,(\d+))?(?![\d.,]\d|:)""").replace(t) { m ->
@@ -240,7 +243,7 @@ object SpeechText {
 
     /** Время, сокращения, телефоны, английские названия — так, как это говорят вслух. */
     fun pronounce(text: String): String {
-        var t = text
+        var t = measures(text)
         for ((a, b) in WORDS) t = t.replace(a, b)
         for ((a, b) in NAMES) t = t.replace(Regex("""(?<![\p{L}])${Regex.escape(a)}(?![\p{L}])"""), b)
         // Телефон «+7 916 123-45-67» — группами, без «минус».
@@ -285,11 +288,91 @@ object SpeechText {
 
     private val NOT_TIME = Regex("""(?iu)(?:сч[её]т|матч|игр[аеуы]|масштаб|соотношени|пропорци|тайм|партии|сет)""")
 
+    /** Ложки в рецептах: «ст. л.» и «ч. л.» — разные слова, а не «эс тэ». */
+    private val SPOONS = listOf(
+        "ст" to Triple("столовая ложка", "столовые ложки", "столовых ложек"),
+        "ч" to Triple("чайная ложка", "чайные ложки", "чайных ложек"),
+    )
+
+    /** Простые меры: «200 гр», «2 шт», «3 зуб.». Формы — как у числительного (штука/штуки/штук). */
+    private val MEASURES = listOf(
+        // Только «гр»: одиночное «г» — это год («в 2026 г.»), его разбираем отдельно.
+        "гр" to Triple("грамм", "грамма", "грамм"),
+        "шт" to Triple("штука", "штуки", "штук"),
+        "зуб" to Triple("зубчик", "зубчика", "зубчиков"),
+        "щеп" to Triple("щепотка", "щепотки", "щепоток"),
+        "пуч" to Triple("пучок", "пучка", "пучков"),
+        "стак" to Triple("стакан", "стакана", "стаканов"),
+        "бан" to Triple("банка", "банки", "банок"),
+    )
+
+    /** Дроби в рецептах: «1/2 ч. л.» синтезатор читает как «один слэш два». */
+    private val FRACTIONS = mapOf("1/2" to "половина", "1/3" to "треть", "1/4" to "четверть", "2/3" to "две трети", "3/4" to "три четверти")
+
+    /** Последнее слово дроби — по нему мера ставится в родительный падеж: «половина чайной ложки». */
+    private val FRACTION_WORDS = setOf("половина", "треть", "трети", "четверть", "четверти")
+
+    /**
+     * Мерные сокращения из рецептов: «500 гр», «2 шт», «1 ст. ложка». Без этого синтезатор читает
+     * «гр» и «шт» по буквам — «гэ-эр», «ша-тэ», — и рецепт слушать невозможно.
+     */
+    private fun measures(text: String): String {
+        var t = text
+        // «1/2 ч. л.» — «половина чайной ложки», «3/4 стакана» — «три четверти стакана».
+        t = Regex("""(?<![\d/])(\d/\d)\s?""", RegexOption.IGNORE_CASE).replace(t) { m ->
+            FRACTIONS[m.groupValues[1]]?.plus(" ") ?: m.value
+        }
+        for ((abbr, forms) in SPOONS) {
+            // С числом: «2 ст. л.», «1 ч.л.», «3 столовые ложки».
+            t = Regex("""(?iu)(\d+(?:[.,]\d+)?)\s?$abbr(\.?)\s?л(\.?)(?![\p{L}])""").replace(t) { m ->
+                "${m.groupValues[1]} " + pluralWord(m.groupValues[1], forms) +
+                    keepDot(t, m, m.groupValues[2] + m.groupValues[3])
+            }
+            // Без числа: «ст. ложка соли», «ч. л. мёда» — согласуем со словом «ложка».
+            t = Regex("""(?iu)(?<![\p{L}])$abbr\.?\s?ложк(а|и|ек|у|ой|ам|ами|ах)(?![\p{L}])""").replace(t) { m ->
+                val stem = if (abbr == "ст") "столов" else "чайн"
+                stem + when (m.groupValues[1].lowercase()) {
+                    "и" -> "ые ложки"
+                    "ек" -> "ых ложек"
+                    "у" -> "ую ложку"
+                    "ой" -> "ой ложкой"
+                    "ам" -> "ым ложкам"
+                    "ами" -> "ыми ложками"
+                    "ах" -> "ых ложках"
+                    else -> "ая ложка"
+                }
+            }
+            t = Regex("""(?iu)(?<![\p{L}])$abbr(\.?)\s?л(\.?)(?![\p{L}])""").replace(t) { m ->
+                val before = t.substring(0, m.range.first).trimEnd().lowercase().substringAfterLast(' ')
+                val stem = if (abbr == "ст") "столов" else "чайн"
+                // «1/2 ч. л.» → «половина чайной ложки»: после дроби нужен родительный падеж.
+                (if (before in FRACTION_WORDS) "${stem}ой ложки" else "${stem}ая ложка") +
+                    keepDot(t, m, m.groupValues[1] + m.groupValues[2])
+            }
+        }
+        for ((abbr, forms) in MEASURES) {
+            t = Regex("""(?iu)(\d+(?:[.,]\d+)?)\s?$abbr(\.?)(?![\p{L}])""").replace(t) { m ->
+                "${m.groupValues[1]} " + pluralWord(m.groupValues[1], forms) + keepDot(t, m, m.groupValues[2])
+            }
+        }
+        return t
+    }
+
+    /** «2» → «штуки», «5» → «штук», «1» → «штука»; с дробью — родительный падеж единственного числа. */
+    private fun pluralWord(number: String, forms: Triple<String, String, String>): String {
+        if (number.contains('.') || number.contains(',')) return forms.second
+        val n = number.toLongOrNull() ?: return forms.third
+        return ai.nova.core.assistant.RuFormat.plural(n, forms.first, forms.second, forms.third)
+    }
+
     /** Сокращение с точкой в конце предложения («… 2 ч. Потом…»): точку, съеденную заменой, возвращаем. */
     private fun keepDot(t: String, m: MatchResult): String {
         val rest = t.substring(m.range.last + 1)
         return if (Regex("""^\s+[А-ЯЁA-Z]""").containsMatchIn(rest)) "." else ""
     }
+
+    /** То же, когда точка сокращения вынесена в отдельную группу (иначе группа съест точку конца фразы). */
+    private fun keepDot(t: String, m: MatchResult, dot: String): String = if (dot.isEmpty()) "" else keepDot(t, m)
 
     /** «1 ₽» → «1 рубль», «22 ₽» → «22 рубля», «3 дн.» → «3 дня»: движок речи не склоняет символы и сокращения. */
     fun declineUnits(text: String): String {

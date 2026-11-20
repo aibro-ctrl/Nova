@@ -81,21 +81,28 @@ object LocalModels {
     }
 
     /**
-     * Готовые GGUF-репозитории Qwen 3.5: обновление модели в одно нажатие, без выбора репозитория вручную.
-     * От крупной к мелкой — берём первую, которая отвечает и влезает в память телефона.
+     * Готовые GGUF-репозитории для обновления модели в одно нажатие, от крупной к мелкой.
+     * Qwen3-Instruct-2507 не «думает» вслух и заметно точнее Qwen3.5: те выпуски на телефоне
+     * уходили в рассуждения вместо ответа.
      */
     val RECOMMENDED = listOf(
-        "unsloth/Qwen3.5-4B-GGUF",
-        "unsloth/Qwen3.5-2B-GGUF",
-        "unsloth/Qwen3.5-0.8B-GGUF",
+        "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+        "Qwen/Qwen2.5-3B-Instruct-GGUF",
+        "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
     )
 
-    /** С этого объёма памяти телефон уверенно тянет 4B (~2,7 ГБ файл + контекст). */
-    private const val BIG_RAM = 11_000_000_000L
+    /** 4B (~2,5 ГБ): столько памяти нужно, чтобы ответ не ждать десятки секунд. */
+    private const val BIG_RAM = 12_000_000_000L
 
-    /** Что пробовать на этом телефоне: на слабых сразу начинаем с 2B. */
-    fun recommended(totalRamBytes: Long): List<String> =
-        if (totalRamBytes >= BIG_RAM) RECOMMENDED else RECOMMENDED.drop(1)
+    /** 3B (~2,1 ГБ): на телефоне 8 ГБ он вдвое медленнее 1.5B — начинаем с него только с 10 ГБ. */
+    private const val MID_RAM = 10_000_000_000L
+
+    /** Что пробовать на этом телефоне: сначала самое крупное, что он вытянет. */
+    fun recommended(totalRamBytes: Long): List<String> = when {
+        totalRamBytes >= BIG_RAM -> RECOMMENDED
+        totalRamBytes >= MID_RAM -> RECOMMENDED.drop(1)
+        else -> RECOMMENDED.drop(2)
+    }
 
     /** Сколько максимум влезет в телефон: крупнее 3 ГБ на телефоне не нужно. */
     const val PHONE_LIMIT = 3_000_000_000L
@@ -110,7 +117,29 @@ object LocalModels {
         val close = out.indexOf("</think")
         if (close >= 0) out = out.substring(close).substringAfter('>')
         out = out.replace(Regex("""(?is)</?think\b[^>]*>"""), "")
-        return out.trim()
+        // Рассуждения без тегов: заголовок «Thinking Process:» и абзац под ним.
+        out = out.replace(
+            Regex("""(?is)^[ \t]*(?:thinking(?:\s+process)?|reasoning|анализ|рассуждени[ея]|размышлени[ея])[ \t]*[:：].*?(?=\n[ \t]*\n|\z)"""),
+            "",
+        )
+        return dropForeignPreamble(out).trim()
+    }
+
+    /** Строки, с которых «думающие» модели начинают рассуждения в служебной форме. */
+    private val THINKING_LINE = Regex(
+        """(?i)^(?:okay|ok|hmm|well|let me|let's|i (?:need|should|will|must)|we (?:need|are|should)|the user|user asks|firstly|first,|so,|thinking|draft|note:|the question|question:|answer:)""",
+    )
+
+    /**
+     * Перед русским ответом такие модели оставляют английские рассуждения («Okay, the user asks about borscht…»).
+     * Ответ произносится вслух, поэтому служебную преамбулу без кириллицы отрезаем.
+     */
+    private fun dropForeignPreamble(text: String): String {
+        val cyr = text.indexOfFirst { it in 'А'..'я' || it == 'Ё' || it == 'ё' }
+        if (cyr <= 0) return text
+        val head = text.substring(0, cyr).trim()
+        if (head.length < 25 || !THINKING_LINE.containsMatchIn(head)) return text
+        return text.substring(cyr)
     }
 
     /** «1,2 ГБ» — для экрана настроек. */

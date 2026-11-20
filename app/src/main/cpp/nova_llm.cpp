@@ -4,6 +4,7 @@
 #include <jni.h>
 
 #include <atomic>
+#include <cctype>
 #include <exception>
 #include <string>
 #include <vector>
@@ -88,6 +89,13 @@ void disable_thinking_if_needed(llama_model *model, std::string &prompt) {
     char arch[64] = {0};
     if (llama_model_meta_val_str(model, "general.architecture", arch, sizeof(arch)) < 0) return;
     if (std::string(arch).rfind("qwen3", 0) != 0 && std::string(arch).rfind("qwen35", 0) != 0) return;
+    // Qwen3-Instruct-2507 не «думает»: пустой блок размышлений ему только мешает.
+    char name[128] = {0};
+    if (llama_model_meta_val_str(model, "general.name", name, sizeof(name)) >= 0) {
+        std::string n(name);
+        for (auto &c : n) c = (char) tolower((unsigned char) c);
+        if (n.find("instruct") != std::string::npos || n.find("2507") != std::string::npos) return;
+    }
     static const std::string tail = "<|im_start|>assistant\n";
     if (prompt.size() < tail.size() || prompt.compare(prompt.size() - tail.size(), tail.size(), tail) != 0) return;
     prompt += "<think>\n\n</think>\n\n";

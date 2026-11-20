@@ -49,6 +49,11 @@ class NovaVoiceAudioTest {
             val money = SpeechText.forSpeech("Списание 890,50 ₽ и 12 штук")
             assertFalse("в тексте для речи остались цифры: $money", money.any(Char::isDigit))
             assertTrue("сумма не озвучена", speak(tts, money).size > 5_000)
+
+            // Рецептные сокращения раньше читались по буквам — «гэ-эр», «ша-тэ», «эс-тэ».
+            val recipe = SpeechText.forSpeech("Возьми 200 гр муки, 2 шт яйца и 1 ст. л. сахара.")
+            assertFalse("сокращения не раскрыты: $recipe", Regex("""\b(?:гр|шт|ст|ч)\b""").containsMatchIn(recipe))
+            assertTrue("рецепт не озвучен: $recipe", speak(tts, recipe).size > 5_000)
         } finally {
             tts.release()
         }
