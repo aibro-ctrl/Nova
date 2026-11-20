@@ -44,6 +44,7 @@ import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BatteryChargingFull
+import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.Cloud
@@ -124,12 +125,13 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 enum class SettingsPage(val route: String, val title: String, val subtitle: String, val icon: ImageVector, val main: Boolean = true) {
-    VOICE("settings/voice", "Голос и речь", "Кто говорит, характер голоса, разговор, сценарии", Icons.Rounded.RecordVoiceOver),
+    VOICE("settings/voice", "Голос и речь", "Кто говорит, характер голоса и громкость", Icons.Rounded.RecordVoiceOver),
     AI("settings/ai", "AI", "Необязательно: ответы на любые вопросы, пересказ, сказки", Icons.Rounded.AutoAwesome),
     ACCESS("settings/access", "Безопасность и разрешения", "Экран блокировки, вход по отпечатку, доступы", Icons.Rounded.Shield),
     ACCOUNT("settings/account", "Аккаунт", "Синхронизация между устройствами", Icons.Rounded.Cloud),
     BACKUP("settings/backup", "Резервная копия", "Сохранить записи в файл и перенести на другой телефон", Icons.Rounded.Backup),
     CAPABILITIES("settings/capabilities", "Что умеет Нова", "Команды и примеры", Icons.Rounded.Lightbulb, main = false),
+    ROUTINES("settings/routines", "Сценарии", "Свои фразы-команды, разговор и сводки", Icons.Rounded.Bolt, main = false),
     CLOCK("settings/clock", "Будильники и таймеры", "Свои или телефона", Icons.Rounded.Alarm, main = false),
     APPEARANCE("settings/appearance", "Оформление", "Тема и цвет", Icons.Rounded.Palette, main = false),
     ABOUT("settings/about", "О приложении", "Версия и обновления", Icons.Rounded.Info, main = false),
@@ -154,6 +156,7 @@ fun SettingsScreen(
         SettingsPage.BACKUP -> BackupPage(c, onBack)
         SettingsPage.ABOUT -> AboutPage(c, onBack)
         SettingsPage.CAPABILITIES -> CapabilitiesPage(c, onBack, openAi = { open(SettingsPage.AI) })
+        SettingsPage.ROUTINES -> RoutinesPage(c, onBack)
         SettingsPage.CLOCK -> ClockPage(onBack)
     }
 }
@@ -949,55 +952,3 @@ internal val VOICE_STYLES = listOf(
     VoiceStyle("Деловой", "Ровно и быстро", 0.95f, 1.2f),
 )
 
-/** Сценарии: фраза → несколько команд. Готовые шаблоны добавляются одним нажатием. */
-@Composable
-internal fun RoutinesSection(c: AppContainer) {
-    val scope = rememberCoroutineScope()
-    val routines by remember { c.store.routines.observe() }.collectAsStateWithLifecycle(emptyList())
-    SectionLabel("Сценарии")
-    Group {
-        if (routines.isEmpty()) {
-            Hint("Скажите: «когда я говорю „спокойной ночи“ — поставь будильник на 7 и включи не беспокоить». Или добавьте шаблон ниже.")
-        }
-        routines.forEachIndexed { i, r ->
-            if (i > 0) GroupDivider()
-            RowItem(
-                title = "«${r.trigger}»", subtitle = r.commands.joinToString(" · "), maxSubtitleLines = 3,
-                trailing = {
-                    IconButton(onClick = { scope.launch { c.store.routines.delete(r.id) } }) {
-                        Icon(androidx.compose.material.icons.Icons.Rounded.Close, contentDescription = "Удалить сценарий", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                },
-            )
-        }
-    }
-    val context = LocalContext.current
-    Row(Modifier.padding(horizontal = 8.dp)) {
-        TextButton(onClick = {
-            scope.launch {
-                val r = ai.nova.app.device.BirthdayImport.run(context, c)
-                val msg = when {
-                    r.permissionDenied -> "Нужен доступ к контактам, чтобы найти дни рождения"
-                    r.imported == 0 -> "Новых дней рождения в контактах не нашлось"
-                    else -> "Добавила ${ai.nova.core.assistant.RuFormat.count(r.imported, "день рождения", "дня рождения", "дней рождения")} — напомню накануне и в сам день"
-                }
-                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
-            }
-        }) { Text("Дни рождения из контактов") }
-    }
-    val missing = ROUTINE_TEMPLATES.filter { t -> routines.none { ai.nova.core.model.Routine.normalize(it.trigger) == ai.nova.core.model.Routine.normalize(t.first) } }
-    if (missing.isNotEmpty()) {
-        Row(Modifier.padding(horizontal = 8.dp).horizontalScroll(rememberScrollState())) {
-            missing.forEach { (trigger, commands) ->
-                TextButton(onClick = { scope.launch { c.store.routines.save(trigger, commands) } }) { Text("+ $trigger") }
-            }
-        }
-    }
-}
-
-private val ROUTINE_TEMPLATES = listOf(
-    "Доброе утро" to listOf("что у меня на сегодня", "какая погода"),
-    "Спокойной ночи" to listOf("поставь будильник на 7:00", "включи не беспокоить"),
-    "Я за рулём" to listOf("включи не беспокоить", "включи музыку"),
-    "Я дома" to listOf("выключи не беспокоить", "что у меня на сегодня"),
-)

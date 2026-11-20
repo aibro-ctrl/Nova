@@ -54,7 +54,7 @@ import ai.nova.app.voice.WakeWordService
 import kotlinx.coroutines.launch
 
 /**
- * «Голос и речь»: сверху — то, что меняют обычно (кто говорит, характер голоса, разговор, сценарии);
+ * «Голос и речь»: сверху — то, что меняют обычно (кто говорит и каким голосом);
  * синтезатор телефона, скорость, распознавание и офлайн-модель — в свёрнутом «Дополнительно».
  */
 @Composable
@@ -129,89 +129,6 @@ internal fun VoiceSpeechPage(c: AppContainer, onBack: () -> Unit) {
                 }
             }
         }
-        item(key = "dialog") {
-            SectionLabel("Разговор")
-            Group {
-                SwitchItem("Диалоговый режим", "После ответа продолжаю слушать без повторного имени, пока вы не скажете «хватит» или не замолчите",
-                    s.dialogModeEnabled) { v -> scope.launch { c.settings.setDialogMode(v) } }
-                GroupDivider()
-                val appContext = LocalContext.current.applicationContext
-                // Время сводок раньше было жёстким: человек может вставать и ложиться в разное время.
-                var morningAt by remember { mutableStateOf(ai.nova.app.reminders.BriefTimes.morning(appContext)) }
-                var eveningAt by remember { mutableStateOf(ai.nova.app.reminders.BriefTimes.evening(appContext)) }
-                var weeklyAt by remember { mutableStateOf(ai.nova.app.reminders.BriefTimes.weekly(appContext)) }
-                var editing by remember { mutableStateOf<Brief?>(null) }
-                SwitchItem(
-                    "Утренняя сводка",
-                    "В ${ai.nova.app.reminders.BriefTimes.label(morningAt)} — погода, задачи и напоминания на день",
-                    s.morningBrief,
-                ) { v ->
-                    scope.launch { c.settings.setMorningBrief(v); ai.nova.app.reminders.MorningBrief.schedule(appContext, v, replace = true) }
-                }
-                if (s.morningBrief) {
-                    GroupDivider(inset = 66.dp)
-                    RowItem(
-                        title = "Время утренней сводки", subtitle = ai.nova.app.reminders.BriefTimes.label(morningAt),
-                        trailing = { TextButton(onClick = { editing = Brief.MORNING }) { Text("Изменить") } },
-                    )
-                }
-                GroupDivider()
-                SwitchItem(
-                    "Вечерняя сводка",
-                    "В ${ai.nova.app.reminders.BriefTimes.label(eveningAt)} — итоги дня: настроение, задачи, траты, вода и привычки",
-                    s.eveningBrief,
-                ) { v ->
-                    scope.launch { c.settings.setEveningBrief(v); ai.nova.app.reminders.EveningBrief.schedule(appContext, v, replace = true) }
-                }
-                if (s.eveningBrief) {
-                    GroupDivider(inset = 66.dp)
-                    RowItem(
-                        title = "Время вечерней сводки", subtitle = ai.nova.app.reminders.BriefTimes.label(eveningAt),
-                        trailing = { TextButton(onClick = { editing = Brief.EVENING }) { Text("Изменить") } },
-                    )
-                }
-                GroupDivider()
-                SwitchItem(
-                    "Итоги недели",
-                    "По воскресеньям в ${ai.nova.app.reminders.BriefTimes.label(weeklyAt)} — траты, задачи, настроение и привычки за неделю",
-                    s.weeklyReview,
-                ) { v ->
-                    scope.launch { c.settings.setWeeklyReview(v); ai.nova.app.reminders.WeeklyReview.schedule(appContext, v, replace = true) }
-                }
-                if (s.weeklyReview) {
-                    GroupDivider(inset = 66.dp)
-                    RowItem(
-                        title = "Время итогов недели", subtitle = ai.nova.app.reminders.BriefTimes.label(weeklyAt),
-                        trailing = { TextButton(onClick = { editing = Brief.WEEKLY }) { Text("Изменить") } },
-                    )
-                }
-                editing?.let { which ->
-                    val initial = when (which) { Brief.MORNING -> morningAt; Brief.EVENING -> eveningAt; Brief.WEEKLY -> weeklyAt }
-                    BriefTimeDialog(initial, onDismiss = { editing = null }) { picked ->
-                        editing = null
-                        when (which) {
-                            Brief.MORNING -> {
-                                morningAt = picked; ai.nova.app.reminders.BriefTimes.setMorning(appContext, picked)
-                                ai.nova.app.reminders.MorningBrief.schedule(appContext, s.morningBrief, replace = true)
-                            }
-                            Brief.EVENING -> {
-                                eveningAt = picked; ai.nova.app.reminders.BriefTimes.setEvening(appContext, picked)
-                                ai.nova.app.reminders.EveningBrief.schedule(appContext, s.eveningBrief, replace = true)
-                            }
-                            Brief.WEEKLY -> {
-                                weeklyAt = picked; ai.nova.app.reminders.BriefTimes.setWeekly(appContext, picked)
-                                ai.nova.app.reminders.WeeklyReview.schedule(appContext, s.weeklyReview, replace = true)
-                            }
-                        }
-                    }
-                }
-                GroupDivider()
-                SwitchItem("Быстрый ввод из шторки", "Постоянное уведомление с полем: напишите «кофе 250» или «купить хлеб» — запишу, не открывая приложение", s.quickInput) { v ->
-                    scope.launch { c.settings.setQuickInput(v); ai.nova.app.quick.QuickInput.sync(appContext, v) }
-                }
-            }
-        }
-        item(key = "routines") { RoutinesSection(c) }
         item(key = "more") { MoreToggle(advanced, { advanced = !advanced }) }
 
         if (s.ttsEnabled) item(key = "rate") {
@@ -415,34 +332,5 @@ internal fun PlacesDialog(c: AppContainer, onDismiss: () -> Unit) {
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } },
-    )
-}
-
-/** Какое время сводки меняем. */
-internal enum class Brief { MORNING, EVENING, WEEKLY }
-
-/** Выбор времени сводки: системные часы-циферблат не нужны, хватает компактного ввода. */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-@Composable
-internal fun BriefTimeDialog(initial: java.time.LocalTime, onDismiss: () -> Unit, onPicked: (java.time.LocalTime) -> Unit) {
-    val state = androidx.compose.material3.rememberTimePickerState(
-        initialHour = initial.hour, initialMinute = initial.minute, is24Hour = true,
-    )
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Время сводки") },
-        text = {
-            Column {
-                androidx.compose.material3.TimeInput(state = state)
-                Text(
-                    "Сводка придёт в это время. Если уведомления выключены, ничего не приходит.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onPicked(java.time.LocalTime.of(state.hour, state.minute)); }) { Text("Сохранить") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
     )
 }
