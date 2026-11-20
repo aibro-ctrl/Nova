@@ -133,18 +133,18 @@ class VoiceController(
         _state.value = VoiceState.Idle
     }
 
-    /** Текстовая команда из поля ввода (ответ не озвучивается). */
+    /** Текстовая команда из поля ввода: ответ озвучивается так же, как на голос (если включено «Отвечать голосом»). */
     fun submitText(text: String) {
         if (text.isBlank()) return
         job?.cancel()
         tts.stop()
-        job = scope.launch { process(text, InputSource.TEXT, speak = false) }
+        job = scope.launch { process(text, InputSource.TEXT, speak = true) }
     }
 
     /** Подтверждение/отмена кнопками в интерфейсе. */
     fun confirm(yes: Boolean) {
         job?.cancel()
-        job = scope.launch { process(if (yes) "да" else "нет", InputSource.TEXT, speak = false) }
+        job = scope.launch { process(if (yes) "да" else "нет", InputSource.TEXT, speak = true) }
     }
 
     suspend fun endDialog() = engine.endDialog()
