@@ -107,6 +107,10 @@
         <intent>
             <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
         </intent>
+        <!-- «Включи песню в Звуке»: находим медиа-службу плеера и просим её включить трек по названию. -->
+        <intent>
+            <action android:name="android.media.browse.MediaBrowserService" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.INSERT" />
             <data android:mimeType="vnd.android.cursor.dir/event" />
@@ -115,9 +119,10 @@
         <!-- Музыка: «включи песню … в Яндексе» — проверяем, что приложение установлено, и открываем его. -->
         <package android:name="ru.yandex.music" />
         <package android:name="com.spotify.music" />
+        <!-- «Звук» (Zvuk, бывший Zvooq): старые имена оставлены на случай смены пакета. -->
+        <package android:name="com.zvooq.openplay" />
         <package android:name="com.zvuk.zvukapp" />
         <package android:name="com.zvuk.android" />
-        <package android:name="zvuk.com" />
         <package android:name="com.vk.music" />
         <package android:name="com.vkontakte.android" />
         <package android:name="com.google.android.apps.youtube.music" />

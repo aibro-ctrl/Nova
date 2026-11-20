@@ -732,10 +732,17 @@ class Skills(
             val wanted = query ?: lastMusicQuery?.takeIf { Duration.between(lastMusicAt, time.now()) < MUSIC_MEMORY }
             if (host.playInMusicApp(wanted.orEmpty(), app)) {
                 host.rememberMusicApp(app)
+                // «Звук» включает песню только после нажатия строки в результатах поиска: без спецвозможностей
+                // Нова этого сделать не может и честно просит нажать трек.
+                val hint = if (app.tapsFirstResult && !host.accessibilityEnabled()) {
+                    " Включите спецвозможности Нова — и я буду включать музыку сама."
+                } else {
+                    ""
+                }
                 return SkillOutcome.Say(
                     when {
-                        wanted != null -> "Включаю «${pretty(wanted)}» — ${app.title}."
-                        else -> "Включаю музыку в ${app.title}."
+                        wanted != null -> "Включаю «${pretty(wanted)}» — ${app.title}.$hint"
+                        else -> "Включаю музыку в ${app.title}.$hint"
                     },
                 )
             }

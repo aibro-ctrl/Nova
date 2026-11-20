@@ -53,6 +53,7 @@ class AndroidSkillHost(
 ) : SkillHost {
     private val locator = Locator(context)
     private val players = ai.nova.app.media.OtherPlayers(context)
+    private val mediaSearch = ai.nova.app.media.MediaSearch(context)
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     /** Какое музыкальное приложение человек выбрал для «включи музыку». */
     private val prefs by lazy { context.getSharedPreferences("nova_music", Context.MODE_PRIVATE) }
@@ -72,6 +73,8 @@ class AndroidSkillHost(
 
     override suspend fun reply(message: IncomingMessage, text: String): Boolean =
         withContext(Dispatchers.Main) { NovaNotificationListener.reply(context, message.key, text) }
+
+    override fun accessibilityEnabled(): Boolean = NovaAccessibilityService.current != null
 
     override suspend fun screenText(): String? {
         val service = NovaAccessibilityService.current
@@ -188,12 +191,17 @@ class AndroidSkillHost(
                 ensurePlaying(pkg)
                 return true
             }
-            // Стандартный способ «включи по поиску»: Яндекс Музыка и Spotify по нему реально начинают играть.
+            // Плеерная служба приложения сама находит трек по названию и включает его — так же, как часы
+            // и Android Auto. Это единственный путь, который работает у «Звука»: его страница поиска
+            // воспроизведение не запускает, и клавиша «играть» на ней уходит в никуда.
+            if (pkg != null && !app.tapsFirstResult && mediaSearch.play(pkg, query)) return true
+            // Если служба не ответила — стандартный запрос «включи по поиску»: Яндекс Музыка и Spotify
+            // по нему реально начинают играть. «Звуку» он не подходит: там сначала нужна страница поиска.
             val play = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
                 .putExtra(SearchManager.QUERY, query)
                 .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
             if (pkg != null) play.setPackage(pkg)
-            if (play.resolveActivity(context.packageManager) != null && launcher.launch(play)) {
+            if (!app.tapsFirstResult && play.resolveActivity(context.packageManager) != null && launcher.launch(play)) {
                 // Часть плееров (в том числе «Звук») понимает такой запрос только как поиск: песню
                 // они показывают, но не запускают — дожимаем клавишей «играть», если тишина.
                 ensurePlaying(pkg)
@@ -204,6 +212,11 @@ class AndroidSkillHost(
             val inApp = Intent(Intent.ACTION_VIEW, Uri.parse(web))
             if (pkg != null) inApp.setPackage(pkg)
             if (inApp.resolveActivity(context.packageManager) != null && launcher.launch(inApp)) {
+                // Страница поиска открыта; если плеер сам не начал играть — через пару секунд нажимаем
+                // первую строку с треком (спецвозможности) и дожимаем «играть».
+                if (app.tapsFirstResult) {
+                    main.postDelayed({ NovaAccessibilityService.current?.tapFirstTrack() }, TAP_RESULT_DELAY_MS)
+                }
                 ensurePlaying(pkg)
                 return true
             }
@@ -296,6 +309,9 @@ class AndroidSkillHost(
     override suspend fun saveNote(title: String, content: String): Boolean = saveNoteTo(title, content)
 
     private companion object {
+        /** Сколько ждём, пока плеер отрисует результаты поиска. */
+        const val TAP_RESULT_DELAY_MS = 2_500L
+
         const val KEY_MUSIC_APP = "last_app"
     }
 }

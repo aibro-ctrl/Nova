@@ -41,6 +41,9 @@ interface SkillHost {
     /** Ответить в тот же чат через кнопку «Ответить» уведомления. */
     suspend fun reply(message: IncomingMessage, text: String): Boolean = false
 
+    /** Включены ли спецвозможности: без них Нова не может нажать кнопку в чужом приложении. */
+    fun accessibilityEnabled(): Boolean = false
+
     /** Текст на экране (через спецвозможности). */
     suspend fun screenText(): String? = throw NeedsPermission(Permission.ACCESSIBILITY, "нет доступа к экрану")
 

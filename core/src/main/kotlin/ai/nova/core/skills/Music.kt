@@ -26,10 +26,27 @@ data class MusicTrack(
  * [packages] — имена пакетов (у части приложений бывает несколько сборок), [webUrl] — запасной путь,
  * если приложения на телефоне нет: откроем его сайт с тем же поиском.
  */
-enum class MusicApp(val title: String, val spoken: String, val packages: List<String>, val webUrl: (String) -> String) {
+enum class MusicApp(
+    val title: String,
+    val spoken: String,
+    val packages: List<String>,
+    val webUrl: (String) -> String,
+    /**
+     * Приложение не включает песню ни по клавише «играть», ни по запросу «включи по поиску»:
+     * нужно открыть страницу поиска и нажать первую строку результата.
+     */
+    val tapsFirstResult: Boolean = false,
+) {
     YANDEX("Яндекс Музыка", "яндекс музыке", listOf("ru.yandex.music"), { "https://music.yandex.ru/search?text=$it" }),
     SPOTIFY("Spotify", "спотифае", listOf("com.spotify.music"), { "https://open.spotify.com/search/$it" }),
-    ZVUK("Звук", "звуке", listOf("com.zvuk.zvukapp", "com.zvuk.android", "zvuk.com"), { "https://zvuk.com/search?query=$it" }),
+    // Настоящий пакет «Звука» — com.zvooq.openplay (бывший Zvooq): по com.zvuk.* приложение не находится,
+    // и Нова отвечала «на телефоне нет Звука».
+    ZVUK(
+        "Звук", "звуке",
+        listOf("com.zvooq.openplay", "com.zvuk.zvukapp", "com.zvuk.android"),
+        { "https://zvuk.com/search?query=$it" },
+        tapsFirstResult = true,
+    ),
     VK("VK Музыка", "вк музыке", listOf("com.vk.music", "com.vkontakte.android"), { "https://vk.com/audio?q=$it" }),
     YOUTUBE("YouTube Music", "ютуб музыке", listOf("com.google.android.apps.youtube.music"), { "https://music.youtube.com/search?q=$it" }),
     ;
