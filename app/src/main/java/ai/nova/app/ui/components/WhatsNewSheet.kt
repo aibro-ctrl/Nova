@@ -54,7 +54,11 @@ fun WhatsNewSheet(releases: List<Release>, onDismiss: () -> Unit) {
                     Column(Modifier.weight(1f)) {
                         Text("Что нового", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "${BuildConfig.VERSION_NAME.removeSuffix("-debug")} · установлено на этом телефоне",
+                            buildString {
+                                append(BuildConfig.VERSION_NAME.removeSuffix("-debug"))
+                                append(" · установлено на этом телефоне")
+                                if (releases.size > 1) append(" · ниже история прошлых обновлений")
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp),

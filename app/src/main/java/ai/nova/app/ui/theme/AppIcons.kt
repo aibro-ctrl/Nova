@@ -2,7 +2,6 @@ package ai.nova.app.ui.theme
 
 import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import ai.nova.app.settings.AccentColor
 
@@ -10,41 +9,41 @@ import ai.nova.app.settings.AccentColor
  * Иконка приложения в цвете «Нова»: у каждого цвета свой activity-alias с иконкой, активен ровно один.
  *
  * Гасить алиас, через который приложение запущено прямо сейчас, нельзя: система завершает активити,
- * чей компонент выключили, и приложение закрывается само. Поэтому такой алиас откладывается до фона.
+ * чей компонент выключили, и приложение закрывается само. Поэтому такой алиас откладывается до фона,
+ * а все остальные гасятся сразу — иначе каждый новый цвет добавлял в лоток ещё одну иконку.
  */
 object AppIcons {
 
     /** Компонент-алиас для цвета: `.launcher.IconTeal`, `.launcher.IconGreen` и так далее. */
     fun aliasOf(accent: AccentColor): String = "ai.nova.app.launcher.Icon" + accent.name.lowercase().replaceFirstChar { it.uppercase() }
 
+    /** Все ярлыки-иконки, которые бывают у приложения. */
+    private val ALL: List<String> = AccentColor.entries.map { aliasOf(it) }
+
     /**
-     * Включает иконку нужного цвета. Остальные активные алиасы не гасим сразу, а возвращаем списком:
-     * среди них может быть тот, через который приложение запущено, — его выключение закроет приложение.
-     * Погасить их нужно, когда приложение уйдёт в фон.
+     * Включает иконку нужного цвета и сразу гасит все остальные ярлыки, кроме [keep] — того,
+     * через который приложение открыто сейчас. Его нужно погасить, когда приложение уйдёт в фон:
+     * вернём его списком, а [disable] вызовем в `onStop`.
      */
-    fun apply(context: Context, accent: AccentColor): List<ComponentName> {
+    fun apply(context: Context, accent: AccentColor, keep: ComponentName? = null): List<ComponentName> {
         val pm = context.packageManager
-        val chosen = ComponentName(context, aliasOf(accent))
-        val deferred = mutableListOf<ComponentName>()
+        val chosen = aliasOf(accent)
         runCatching {
-            // Сначала включаем нужный, потом разбираемся с остальными: иконка в лотке не пропадает ни на миг.
-            if (!pm.isActive(chosen)) {
-                pm.setComponentEnabledSetting(chosen, PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP)
-            }
-            val active = AccentColor.entries.map { aliasOf(it) }.filter { pm.isActive(ComponentName(context, it)) }
-            deferred += aliasesToDefer(accent, active).map { ComponentName(context, it) }
+            // Сначала включаем нужный: иконка в лотке не пропадает ни на миг. Повторное включение безвредно.
+            pm.setComponentEnabledSetting(ComponentName(context, chosen), PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP)
         }
-        return deferred
+        val keeping = keep?.takeIf { it.packageName == context.packageName }?.className?.takeIf { it in ALL }
+        // Все прочие ярлыки гасим не спрашивая, включены ли они: состояние компонента врёт (DEFAULT),
+        // а выключение уже выключенного ярлыка ничего не делает.
+        disable(context, aliasesToDisable(accent, listOfNotNull(keeping)).map { ComponentName(context, it) })
+        return listOfNotNull(keeping).filter { it != chosen }.map { ComponentName(context, it) }
     }
 
-    /**
-     * Какие активные алиасы нужно погасить: все, кроме выбранного цвета. Гасить их в момент запуска нельзя —
-     * среди них тот, через который приложение открыто: система завершит его и приложение закроется.
-     */
-    internal fun aliasesToDefer(accent: AccentColor, active: Collection<String>): List<String> =
-        active.filter { it != aliasOf(accent) }
+    /** Какие ярлыки нужно погасить: все, кроме выбранного цвета и того, через который приложение открыто. */
+    internal fun aliasesToDisable(accent: AccentColor, keep: Collection<String> = emptyList()): List<String> =
+        ALL.filter { it != aliasOf(accent) && it !in keep }
 
-    /** Погасить ярлыки, оставленные при запуске: приложение уже в фоне, закрывать нечего. */
+    /** Погасить ярлыки: сразу — лишние, из `onStop` — тот, через который приложение было открыто. */
     fun disable(context: Context, aliases: List<ComponentName>) {
         aliases.forEach { alias ->
             runCatching {
@@ -52,15 +51,4 @@ object AppIcons {
             }
         }
     }
-
-    /**
-     * Реально ли алиас запускается: `getComponentEnabledSetting` для незатронутых компонентов возвращает
-     * DEFAULT, поэтому состояние проверяем разрешением intent'а — выключенный алиас не разрешается.
-     */
-    private fun PackageManager.isActive(component: ComponentName): Boolean = runCatching {
-        val intent = Intent(Intent.ACTION_MAIN)
-            .addCategory(Intent.CATEGORY_LAUNCHER)
-            .setComponent(component)
-        resolveActivity(intent, 0) != null
-    }.getOrDefault(false)
 }

@@ -3,12 +3,14 @@ package ai.nova.app
 import ai.nova.app.settings.AccentColor
 import ai.nova.app.ui.theme.AppIcons
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Иконка в лотке: при запуске гасится всё, кроме выбранного цвета, и никогда — выбранный.
- * Раньше гасили и активный ярлык запуска, из-за чего система закрывала приложение на старте.
+ * Иконка в лотке: ровно один ярлык — выбранный цвет. Раньше «активность» ярлыка определяли через
+ * resolveActivity, а он не находит ярлыки лотка (у них нет CATEGORY_DEFAULT), поэтому каждый новый
+ * цвет добавлял иконку, и старые никто не гасил.
  */
 class AppIconsTest {
 
@@ -21,20 +23,24 @@ class AppIconsTest {
     @Test
     fun `chosen alias is never disabled`() {
         val teal = AppIcons.aliasOf(AccentColor.TEAL)
-        assertTrue(AppIcons.aliasesToDefer(AccentColor.TEAL, listOf(teal)).isEmpty())
+        assertFalse(AppIcons.aliasesToDisable(AccentColor.TEAL).contains(teal))
     }
 
     @Test
-    fun `other active alias is deferred`() {
-        val teal = AppIcons.aliasOf(AccentColor.TEAL)
+    fun `all other aliases are disabled`() {
         val green = AppIcons.aliasOf(AccentColor.GREEN)
-        // Ситуация со свежей установки: активен бирюзовый ярлык, в настройках выбран зелёный.
-        assertEquals(listOf(teal), AppIcons.aliasesToDefer(AccentColor.GREEN, listOf(teal, green)))
+        val disabled = AppIcons.aliasesToDisable(AccentColor.GREEN)
+        assertEquals(AccentColor.entries.size - 1, disabled.size)
+        assertFalse(disabled.contains(green))
+        assertTrue(disabled.contains(AppIcons.aliasOf(AccentColor.TEAL)))
+        assertTrue(disabled.contains(AppIcons.aliasOf(AccentColor.SKY)))
     }
 
     @Test
-    fun `nothing to disable when only chosen is active`() {
-        val sky = AppIcons.aliasOf(AccentColor.SKY)
-        assertTrue(AppIcons.aliasesToDefer(AccentColor.SKY, listOf(sky)).isEmpty())
+    fun `alias we were launched from is kept for now`() {
+        val teal = AppIcons.aliasOf(AccentColor.TEAL)
+        val disabled = AppIcons.aliasesToDisable(AccentColor.GREEN, listOf(teal))
+        assertFalse("через бирюзовый ярлык открыто приложение", disabled.contains(teal))
+        assertEquals(AccentColor.entries.size - 2, disabled.size)
     }
 }

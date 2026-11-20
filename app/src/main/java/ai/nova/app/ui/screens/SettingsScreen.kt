@@ -647,7 +647,7 @@ private fun AboutPage(c: AppContainer, onBack: () -> Unit) {
             Group {
                 RowItem(
                     title = "Что нового",
-                    subtitle = "Изменения в ${ai.nova.app.ui.Changelog.latest.version}: ${ai.nova.app.ui.Changelog.latest.title}",
+                    subtitle = "История последних ${ai.nova.app.ui.Changelog.releases.size} версий · ${ai.nova.app.ui.Changelog.latest.version}: ${ai.nova.app.ui.Changelog.latest.title}",
                     icon = Icons.Rounded.AutoAwesome,
                     onClick = { whatsNew = true },
                 )

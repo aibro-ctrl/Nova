@@ -123,7 +123,7 @@ class MainActivity : ComponentActivity() {
             }
             // Иконка в лотке меняется вместе с цветом «Нова» — без перезапуска и без второй иконки.
             androidx.compose.runtime.LaunchedEffect(settings.accent) {
-                deferredIcons = (deferredIcons + ai.nova.app.ui.theme.AppIcons.apply(this@MainActivity, settings.accent)).distinct()
+                deferredIcons = ai.nova.app.ui.theme.AppIcons.apply(this@MainActivity, settings.accent, keep = launchedIcon()).distinct()
             }
             // Защита от скриншотов, записи экрана и показа в «недавних» — по настройке пользователя.
             androidx.compose.runtime.LaunchedEffect(settings.secureScreen) {
@@ -163,10 +163,29 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         // Ушли с экрана — старый ярлык иконки больше не запущен, можно гасить без риска закрыть приложение.
-        if (deferredIcons.isNotEmpty()) {
-            ai.nova.app.ui.theme.AppIcons.disable(this, deferredIcons)
-            deferredIcons = emptyList()
-        }
+        flushDeferredIcons()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Смахнули приложение из «недавних»: onStop мог не прийти, а лишний ярлык остался бы в лотке.
+        flushDeferredIcons()
+    }
+
+    /** Погасить ярлык, через который приложение было открыто: делаем это, только когда уходим с экрана. */
+    private fun flushDeferredIcons() {
+        if (deferredIcons.isEmpty()) return
+        ai.nova.app.ui.theme.AppIcons.disable(this, deferredIcons)
+        deferredIcons = emptyList()
+    }
+
+    /**
+     * Ярлык, через который открыто это окно. Его нельзя гасить на ходу: система завершит активити,
+     * и приложение закроется. Остальные ярлыки AppIcons гасит сразу.
+     */
+    private fun launchedIcon(): ComponentName? {
+        val candidates = listOfNotNull(intent?.component, componentName)
+        return candidates.firstOrNull { it.packageName == packageName && it.className.startsWith(ICON_ALIAS_PREFIX) }
     }
 
     private fun handleIntent(intent: Intent?) {
@@ -203,6 +222,9 @@ class MainActivity : ComponentActivity() {
         const val ACTION_QUICK = "ai.nova.action.QUICK"
         const val ACTION_VOICE_MEMO = "ai.nova.action.VOICE_MEMO"
         const val EXTRA_TOKEN = "ai.nova.token"
+
+        /** Ярлыки-иконки цветов: `ai.nova.app.launcher.Icon<Цвет>`. */
+        private const val ICON_ALIAS_PREFIX = "ai.nova.app.launcher.Icon"
 
         /** Случайный секрет этой установки для своих уведомлений. */
         fun intentToken(context: android.content.Context): String {
