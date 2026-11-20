@@ -144,10 +144,7 @@
         android:networkSecurityConfig="@xml/network_security_config"
         tools:targetApi="35">
 
-        <!--
-            Иконка приложения выбирается цветом «Нова»: у каждого цвета свой activity-alias с иконкой.
-            Активен ровно один — переключает AppIcons при смене цвета, поэтому в лотке одна Нова.
-        -->
+        <!-- Единственная иконка приложения в лотке: своя иконка фиксированная, без смены по цвету. -->
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
@@ -162,171 +159,15 @@
                 <action android:name="android.intent.action.APPLICATION_PREFERENCES" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <!-- Единственная точка запуска из лотка: иконка приложения одна и не меняется. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
             <meta-data
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
         </activity>
-
-        <activity-alias
-            android:name=".launcher.IconTeal"
-            android:enabled="true"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher_teal"
-            android:label="@string/app_name"
-            android:roundIcon="@mipmap/ic_launcher_teal_round"
-            android:targetActivity=".ui.MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
-        </activity-alias>
-        <activity-alias
-            android:name=".launcher.IconIndigo"
-            android:enabled="false"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher_indigo"
-            android:label="@string/app_name"
-            android:roundIcon="@mipmap/ic_launcher_indigo_round"
-            android:targetActivity=".ui.MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
-        </activity-alias>
-        <activity-alias
-            android:name=".launcher.IconGreen"
-            android:enabled="false"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher_green"
-            android:label="@string/app_name"
-            android:roundIcon="@mipmap/ic_launcher_green_round"
-            android:targetActivity=".ui.MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
-        </activity-alias>
-        <activity-alias
-            android:name=".launcher.IconSky"
-            android:enabled="false"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher_sky"
-            android:label="@string/app_name"
-            android:roundIcon="@mipmap/ic_launcher_sky_round"
-            android:targetActivity=".ui.MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
-        </activity-alias>
-        <activity-alias
-            android:name=".launcher.IconWhite"
-            android:enabled="false"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher_white"
-            android:label="@string/app_name"
-            android:roundIcon="@mipmap/ic_launcher_white_round"
-            android:targetActivity=".ui.MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
-        </activity-alias>
-        <activity-alias
-            android:name=".launcher.IconPurple"
-            android:enabled="false"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher_purple"
-            android:label="@string/app_name"
-            android:roundIcon="@mipmap/ic_launcher_purple_round"
-            android:targetActivity=".ui.MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
-        </activity-alias>
-        <activity-alias
-            android:name=".launcher.IconRed"
-            android:enabled="false"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher_red"
-            android:label="@string/app_name"
-            android:roundIcon="@mipmap/ic_launcher_red_round"
-            android:targetActivity=".ui.MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
-        </activity-alias>
-        <activity-alias
-            android:name=".launcher.IconPink"
-            android:enabled="false"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher_pink"
-            android:label="@string/app_name"
-            android:roundIcon="@mipmap/ic_launcher_pink_round"
-            android:targetActivity=".ui.MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
-        </activity-alias>
-        <activity-alias
-            android:name=".launcher.IconYellow"
-            android:enabled="false"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher_yellow"
-            android:label="@string/app_name"
-            android:roundIcon="@mipmap/ic_launcher_yellow_round"
-            android:targetActivity=".ui.MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
-        </activity-alias>
-        <activity-alias
-            android:name=".launcher.IconOrange"
-            android:enabled="false"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher_orange"
-            android:label="@string/app_name"
-            android:roundIcon="@mipmap/ic_launcher_orange_round"
-            android:targetActivity=".ui.MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
-        </activity-alias>
 
         <!-- Фото за человека: нужная камера открывается сама и снимает по отсчёту. -->
         <activity

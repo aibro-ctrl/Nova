@@ -383,7 +383,7 @@ private fun AppearancePage(c: AppContainer, onBack: () -> Unit) {
                     GroupDivider()
                     SwitchItem("Цвета обоев", "Вместо своего цвета — под обои (Android 12+)", s.dynamicColor) { v -> scope.launch { c.settings.setDynamicColor(v) } }
                 }
-                Hint("Иконка в лотке меняется вместе с цветом. Цвета фоновых волн тоже берутся из него.")
+                Hint("Цвета фоновых волн тоже берутся из него. Иконка приложения одна и не меняется.")
             }
         }
         item(key = "widget") {

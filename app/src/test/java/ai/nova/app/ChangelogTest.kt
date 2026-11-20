@@ -32,12 +32,12 @@ class ChangelogTest {
     }
 
     @Test
-    fun installedVersionHasReleaseNotes() {
-        assertEquals(
-            "для установленной версии есть запись в «Что нового»",
-            BuildConfig.VERSION_NAME.removeSuffix("-debug"),
-            Changelog.latest.version,
-        )
+    fun notesAreNotNewerThanInstalledVersion() {
+        val installed = BuildConfig.VERSION_NAME.removeSuffix("-debug").split('.').map { it.toIntOrNull() ?: 0 }
+        val notes = Changelog.latest.version.split('.').map { it.toIntOrNull() ?: 0 }
+        // Хотфикс без изменений для пользователя не обязан иметь запись — главное, чтобы записи
+        // не обгоняли установленную версию.
+        assertTrue("«Что нового» не новее установленной версии", compare(notes, installed) <= 0)
     }
 
     @Test
@@ -63,6 +63,10 @@ class ChangelogTest {
             "из истории показываем всё, что новее просмотренного",
             2,
             Changelog.since(Changelog.releases[2].version).size,
+        )
+        assertTrue(
+            "если для установленной версии записи нет, повторно ничего не показываем",
+            Changelog.since(newest.version).isEmpty(),
         )
     }
 
