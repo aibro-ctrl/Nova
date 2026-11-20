@@ -118,6 +118,18 @@ internal fun VoiceSpeechPage(c: AppContainer, onBack: () -> Unit) {
                 }
             }
         }
+        // Характер — не тембр, но человек ищет его там же, где голос: рядом с «как Нова говорит».
+        item(key = "persona") {
+            SectionLabel("Характер Нова")
+            Group {
+                ai.nova.core.assistant.Persona.entries.forEachIndexed { i, p ->
+                    if (i > 0) GroupDivider(inset = 52.dp)
+                    RadioRow(p.title, p.personality.about(), s.persona == p.wire) {
+                        scope.launch { c.settings.setPersona(p.wire) }
+                    }
+                }
+            }
+        }
         item(key = "more") { MoreToggle(advanced, { advanced = !advanced }) }
 
         if (s.ttsEnabled) item(key = "rate") {
@@ -322,4 +334,11 @@ internal fun PlacesDialog(c: AppContainer, onDismiss: () -> Unit) {
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } },
     )
+}
+
+/** Что именно меняется в ответах — строкой под названием характера. */
+internal fun ai.nova.core.assistant.Personality.about(): String = when (id) {
+    "business" -> "Коротко и по делу: одно предложение, без шуток и лишних советов"
+    "playful" -> "Живо и с юмором: ласковые обращения, но факты и действия точные"
+    else -> "Тепло и внимательно: замечает поводы и предлагает помощь по делу"
 }
