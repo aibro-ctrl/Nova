@@ -189,4 +189,13 @@ class LocalModeEngineTest {
         val who = env.engine.handle("кто ты")
         assertTrue(who.text.startsWith("Я Кира"), who.text)
     }
+
+    /** Маленькая офлайн-модель на такой вопрос отвечает «Google» — создателя называем сами. */
+    @Test fun creatorIsNamedLocally() = runTest {
+        val env = env()
+        for (phrase in listOf("кто твой создатель?", "кто тебя создал", "Нова, кто тебя разработал", "кто создал Нову", "чей ты бот")) {
+            val reply = env.engine.handle(phrase)
+            assertTrue(reply.text.contains("Саня из Новосибирска"), "$phrase → ${reply.text}")
+        }
+    }
 }

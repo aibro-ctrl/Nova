@@ -33,3 +33,11 @@
 
 # sherpa-onnx (встроенный голос): нативный код читает поля конфигурации по именам через JNI.
 -keep class com.k2fsa.sherpa.onnx.** { *; }
+
+# Офлайн-модель: нативный код ищет колбэк по имени «onToken» через JNI. Без этого правила R8
+# переименовывает метод, JNI бросает NoSuchMethodError — и release-приложение падает (SIGABRT)
+# на первом же слове ответа. Проверено по tombstone: «no non-static method …onToken(Ljava/lang/String;)Z».
+-keep interface ai.nova.app.llm.LlamaNative$TokenListener { *; }
+-keepclassmembers class * implements ai.nova.app.llm.LlamaNative$TokenListener {
+    public boolean onToken(java.lang.String);
+}

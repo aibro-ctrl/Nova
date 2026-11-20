@@ -50,6 +50,8 @@ size_t complete_utf8_prefix(const std::string &s) {
 
 // Стандартный UTF-8 (с эмодзи) → String через byte[]: NewStringUTF принимает только «модифицированный» UTF-8.
 jstring to_jstring(JNIEnv *env, const std::string &s) {
+    // Уходить в Java с непогашенным исключением нельзя: ART в этом случае прерывает процесс.
+    if (env->ExceptionCheck()) env->ExceptionClear();
     jbyteArray bytes = env->NewByteArray((jsize) s.size());
     env->SetByteArrayRegion(bytes, 0, (jsize) s.size(), reinterpret_cast<const jbyte *>(s.data()));
     jclass strCls = env->FindClass("java/lang/String");
@@ -236,6 +238,10 @@ jstring generate_impl(JNIEnv *env, jlong handle, jobjectArray jmessages, jint ma
 
     jclass cls = listener ? env->GetObjectClass(listener) : nullptr;
     jmethodID onToken = cls ? env->GetMethodID(cls, "onToken", "(Ljava/lang/String;)Z") : nullptr;
+    // Метода может не быть (например, минификатор переименовал колбэк). Тогда JNI оставляет
+    // «висящее» исключение, и следующий же вызов FindClass убивает процесс по SIGABRT —
+    // ответ важнее потоковой выдачи, поэтому просто говорим без колбэка.
+    if (!onToken && env->ExceptionCheck()) env->ExceptionClear();
 
     std::string out, pending;
     std::vector<char> piece(256);
