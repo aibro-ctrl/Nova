@@ -1,7 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Organic Tech: тёплая кремовая поверхность с мягким скруглением, без градиентов и тяжёлых теней. -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="#FFF7F5F0" />
-    <corners android:radius="24dp" />
-    <stroke android:width="0.5dp" android:color="#FFEAE7E0" />
-</shape>
+<!-- Плашка виджета: тёплая кремовая поверхность, мягкое скругление и органические пятна сверху —
+     тот же фон, что в приложении, только в масштабе виджета. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFBF6EE" />
+            <corners android:radius="28dp" />
+            <stroke android:width="0.5dp" android:color="#33C9DDD3" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/widget_blobs_pill" />
+</layer-list>

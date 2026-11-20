@@ -2,6 +2,7 @@ package ai.nova.app.ui
 
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -59,6 +60,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -97,6 +99,8 @@ class MainActivity : ComponentActivity() {
     private val openBackupRequest = MutableStateFlow(0)
     /** Ярлык «Расход / Задача / Заметка» с долгого нажатия на значок: открыть чат с готовым началом фразы. */
     private val quickRequest = MutableStateFlow(0)
+    /** Старые ярлыки иконки, которые нельзя гасить на ходу: приложение закрылось бы прямо на глазах. */
+    private var deferredIcons: List<ComponentName> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -117,14 +121,20 @@ class MainActivity : ComponentActivity() {
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
                 onDispose { }
             }
+            // Иконка в лотке меняется вместе с цветом «Нова» — без перезапуска и без второй иконки.
+            androidx.compose.runtime.LaunchedEffect(settings.accent) {
+                deferredIcons = (deferredIcons + ai.nova.app.ui.theme.AppIcons.apply(this@MainActivity, settings.accent)).distinct()
+            }
             // Защита от скриншотов, записи экрана и показа в «недавних» — по настройке пользователя.
             androidx.compose.runtime.LaunchedEffect(settings.secureScreen) {
                 if (settings.secureScreen) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
                 else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
             }
             NovaTheme(settings.themeMode, settings.dynamicColor, settings.accent) {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Surface(Modifier.fillMaxSize(), color = Color.Transparent) {
                     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                        // Фон всей программы: органические формы, подкрашенные выбранным цветом.
+                        ai.nova.app.ui.components.OrganicBackground()
                         NovaRoot(container, listenRequest, openSettingsRequest, openBackupRequest, quickRequest)
                         ai.nova.app.ui.components.VoiceMemoOverlay(container)
                         ai.nova.app.ui.components.WhatsNewAutoShow()
@@ -147,6 +157,15 @@ class MainActivity : ComponentActivity() {
             if (s.wakeWordEnabled && container.voskModels.isObtainable() && !WakeWordService.running) WakeWordService.start(this@MainActivity)
             // Проверка новой версии не чаще раза в 6 часов; установка — по кнопке на главной или автоматически.
             if (s.autoUpdate && System.currentTimeMillis() - container.updates.lastCheckedAt > 6 * 3600_000L) container.updates.check()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Ушли с экрана — старый ярлык иконки больше не запущен, можно гасить без риска закрыть приложение.
+        if (deferredIcons.isNotEmpty()) {
+            ai.nova.app.ui.theme.AppIcons.disable(this, deferredIcons)
+            deferredIcons = emptyList()
         }
     }
 
@@ -398,7 +417,8 @@ private fun NovaRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, open
     // Пока открыта клавиатура, нижнее меню прячется, а поле ввода встаёт прямо над клавиатурой.
     val imeVisible = WindowInsets.isImeVisible
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        // Фон рисуется под всем приложением — панели прозрачные, чтобы формы были видны.
+        containerColor = Color.Transparent,
         // Чат открыт на весь экран — как отдельное окно, без нижнего меню.
         bottomBar = { if (!imeVisible && nav.route?.startsWith("chat") != true) BottomBar(nav) },
     ) { padding ->
@@ -504,7 +524,7 @@ private fun Screen(
 private fun BottomBar(nav: Navigator) {
     Column {
         HorizontalDivider(thickness = 0.6.dp, color = MaterialTheme.colorScheme.outlineVariant)
-        NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
+        NavigationBar(containerColor = ai.nova.app.ui.components.organicPanel(0.90f), tonalElevation = 0.dp) {
             Tab.entries.forEach { tab ->
                 val selected = nav.tab == tab
                 NavigationBarItem(

@@ -57,13 +57,16 @@ class AppContainer(private val context: Context) {
     val secrets = KeystoreSecretStore(context)
     val settings = SettingsRepository(context, appScope)
 
-    val http = HttpClient(Android) {
-        expectSuccess = false
-        install(HttpTimeout) {
-            // Было 90 секунд: при медленной сети «думаю» висело полторы минуты, и система убивала приложение.
-            connectTimeoutMillis = 10_000
-            requestTimeoutMillis = 30_000
-            socketTimeoutMillis = 30_000
+    /** Клиент создаётся при первом запросе: его загрузка на старте съедала секунды и приводила к ANR. */
+    val http: HttpClient by lazy {
+        HttpClient(Android) {
+            expectSuccess = false
+            install(HttpTimeout) {
+                // Было 90 секунд: при медленной сети «думаю» висело полторы минуты, и система убивала приложение.
+                connectTimeoutMillis = 10_000
+                requestTimeoutMillis = 30_000
+                socketTimeoutMillis = 30_000
+            }
         }
     }
 
@@ -184,11 +187,11 @@ class AppContainer(private val context: Context) {
             }.getOrDefault(false)
         },
     )
-    val skills = ai.nova.core.skills.Skills(skillHost, http, time)
+    val skills: ai.nova.core.skills.Skills by lazy { ai.nova.core.skills.Skills(skillHost, http, time) }
     /** Каталог моделей Hugging Face: свежие Qwen без обновления приложения. */
     val modelCatalog = ai.nova.app.llm.ModelCatalog()
     /** Офлайн-модель для разговора (~1 ГБ, скачивается по кнопке). */
-    val offlineLlm = ai.nova.app.llm.OfflineLlm(context, appScope, modelCatalog)
+    val offlineLlm: ai.nova.app.llm.OfflineLlm by lazy { ai.nova.app.llm.OfflineLlm(context, appScope, modelCatalog) }
     private val keyguard = context.getSystemService(android.app.KeyguardManager::class.java)
 
     /** Телефон заблокирован (экран блокировки показан). */
@@ -317,7 +320,7 @@ class AppContainer(private val context: Context) {
                     if (st is ai.nova.app.voice.VoiceState.Listening) ai.nova.app.media.MusicDucker.request(context, "listen")
                     else ai.nova.app.media.MusicDucker.release(context, "listen")
                     // Волна в виджете «дышит», пока Нова слушает, — как орб на главном экране.
-                    ai.nova.app.widget.NovaWidget.wave(context, appScope, st is ai.nova.app.voice.VoiceState.Listening)
+                    ai.nova.app.widget.WidgetRender.wave(context, appScope, st is ai.nova.app.voice.VoiceState.Listening)
                 }
             }
             val stopWords = ai.nova.app.voice.StopWordWatcher(context, voskEngine, voskModels)

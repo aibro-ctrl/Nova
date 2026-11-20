@@ -53,8 +53,12 @@ class MusicTest {
     @Test
     fun `радио и обычные команды не превращаются в музыку`() {
         assertIs<SkillCommand.RadioPlay>(p("включи радио европа плюс"))
-        // «включи музыку» без названия — команда телефону (медиа-клавиша), а не поиск песни.
-        assertNull(p("включи музыку"))
+        // «включи музыку» без названия — не поиск песни, а включение музыки в приложении.
+        val music = assertIs<SkillCommand.MusicPlay>(p("включи музыку"))
+        assertNull(music.query)
+        assertNull(music.app)
+        assertIs<SkillCommand.MusicPlay>(p("поставь что-нибудь"))
+        assertIs<SkillCommand.MusicPlay>(p("включи музон"))
         assertNull(p("включи фонарик"))
     }
 

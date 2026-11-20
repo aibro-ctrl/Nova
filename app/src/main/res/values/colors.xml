@@ -4,4 +4,24 @@
     <color name="nova_accent">#6366F1</color>
     <color name="nova_icon_background">#0A0A0D</color>
     <color name="ic_launcher_background">#F9F2E9</color>
+    <!-- Цвет иконки приложения для «Цвета Нова»: teal — фирменный кремовый, как раньше -->
+    <color name="ic_launcher_background_teal">#F9F2E9</color>
+    <!-- Цвет иконки приложения для «Цвета Нова»: indigo -->
+    <color name="ic_launcher_background_indigo">#6366F1</color>
+    <!-- Цвет иконки приложения для «Цвета Нова»: green -->
+    <color name="ic_launcher_background_green">#16A34A</color>
+    <!-- Цвет иконки приложения для «Цвета Нова»: sky -->
+    <color name="ic_launcher_background_sky">#0284C7</color>
+    <!-- Цвет иконки приложения для «Цвета Нова»: white -->
+    <color name="ic_launcher_background_white">#52525B</color>
+    <!-- Цвет иконки приложения для «Цвета Нова»: purple -->
+    <color name="ic_launcher_background_purple">#9333EA</color>
+    <!-- Цвет иконки приложения для «Цвета Нова»: red -->
+    <color name="ic_launcher_background_red">#DC2626</color>
+    <!-- Цвет иконки приложения для «Цвета Нова»: pink -->
+    <color name="ic_launcher_background_pink">#DB2777</color>
+    <!-- Цвет иконки приложения для «Цвета Нова»: yellow -->
+    <color name="ic_launcher_background_yellow">#CA8A04</color>
+    <!-- Цвет иконки приложения для «Цвета Нова»: orange -->
+    <color name="ic_launcher_background_orange">#EA580C</color>
 </resources>

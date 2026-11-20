@@ -15,6 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -104,7 +105,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 @Composable
 fun groupColor(): Color {
     val c = MaterialTheme.colorScheme
-    return if (c.background.luminance() > 0.5f) c.surfaceContainerLowest else c.surfaceContainer
+    // Светлая тема: карточки не чисто белые, а тёплый молочный оттенок в тон фону.
+    // Прозрачность здесь не используем: на каждой строке списка она замедляет прокрутку.
+    return if (c.background.luminance() > 0.5f) organicPanel(1f) else c.surfaceContainer
 }
 
 @Composable
@@ -187,6 +190,8 @@ fun Group(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> 
     Surface(
         shape = MaterialTheme.shapes.large,
         color = groupColor(),
+        // Тонкая рамка: карточка читается на любом участке органического фона, не спорит с ним.
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
         modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp),
     ) { Column(content = content) }
 }

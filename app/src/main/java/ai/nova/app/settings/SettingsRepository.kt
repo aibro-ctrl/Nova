@@ -102,6 +102,17 @@ enum class BankPushMode(val id: String, val title: String, val hint: String) {
     }
 }
 
+/** Вид виджета «Спросить Нова»: плашка, орб или карточка — выбирается в «Оформлении». */
+/**
+ * Вид виджета Нова. Вид не настройка, а отдельный виджет на рабочем столе: у каждого свой размер ячейки,
+ * поэтому на столе он выглядит так же, как в предпросмотре в «Оформлении».
+ */
+enum class WidgetStyle(val id: String, val title: String, val hint: String) {
+    PILL("pill", "Плашка", "Орб, имя и подсказка в одну строку — 3×1"),
+    ORB("orb", "Орб", "Только фирменный круг с волной — 1×1"),
+    CARD("card", "Карточка", "Крупная карточка с орбом, подсказкой и кнопкой — 2×2");
+}
+
 /** Настройки одного AI-провайдера. API-ключ хранится отдельно, в Keystore. */
 data class ProviderSettings(val type: AIProviderType, val enabled: Boolean, val model: String, val endpoint: String) {
     val effectiveModel: String get() = model.ifBlank { type.defaultModel }

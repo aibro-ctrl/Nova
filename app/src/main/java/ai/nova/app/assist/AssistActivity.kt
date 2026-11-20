@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -186,71 +188,86 @@ private fun AssistPanel(c: AppContainer, startRequest: Int, onClose: () -> Unit,
         else -> ""
     }
 
+    // Компактное окно как у Gemini: небольшая карточка поверх экрана, а не огромная панель на весь низ.
     Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.22f))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClose),
-        contentAlignment = Alignment.BottomCenter,
+        contentAlignment = Alignment.TopCenter,
     ) {
-        AnimatedVisibility(shown, enter = slideInVertically(tween(260)) { it / 2 } + fadeIn(tween(200))) {
-            Surface(
-                shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                modifier = Modifier.fillMaxWidth()
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { },
-            ) {
-                Column(
-                    Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+        AnimatedVisibility(shown, enter = slideInVertically(tween(240)) { -it / 3 } + fadeIn(tween(180))) {
+            Box(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.TopCenter) {
+                Surface(
+                    shape = RoundedCornerShape(30.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 6.dp,
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.widthIn(max = 460.dp)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { },
                 ) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(settings.assistantName, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                        IconButton(onClick = onOpenApp) { Icon(Icons.Rounded.OpenInFull, contentDescription = "Открыть приложение") }
-                        IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, contentDescription = "Закрыть") }
-                    }
-                    Box(
-                        Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                            if (active) c.voice.stop() else listen()
-                        },
-                    ) { AssistantOrb(mode, (voice as? VoiceState.Listening)?.level ?: 0f, size = 130.dp) }
-                    if (blocked) {
-                        Text("Нова выключена на заблокированном экране. Разблокируйте телефон.", style = MaterialTheme.typography.bodyLarge,
-                            textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else if (locked) {
-                        Text("🔒 Телефон заблокирован — личные данные скрыты", style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
-                    }
-                    if (status.isNotBlank() && !blocked) {
-                        Text(status, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
-                            color = if (mode == OrbMode.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    if (heard.isNotBlank()) {
-                        Text(heard, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
-                    }
-                    val r = reply
-                    if (answered && r != null && heard.isBlank()) {
-                        Text(
-                            r.text, style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState()).padding(top = 8.dp),
-                        )
-                        if ((locked || c.appLocked()) && r.text.contains("Разблокируйте")) {
-                            PrimaryButton("Разблокировать", onUnlock, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
-                        }
-                        if (r.awaitingConfirmation) {
-                            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                PrimaryButton("Да", { c.voice.confirm(true) }, modifier = Modifier.weight(1f))
-                                SecondaryButton("Отмена", { c.voice.confirm(false) }, modifier = Modifier.weight(1f))
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Орб — кнопка «слушать/стоп», вокруг него мягкие кольца как на главной.
+                            Box(
+                                Modifier.size(60.dp)
+                                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                                        if (active) c.voice.stop() else listen()
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) { AssistantOrb(mode, (voice as? VoiceState.Listening)?.level ?: 0f, size = 60.dp) }
+                            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                Text(settings.assistantName, style = MaterialTheme.typography.titleLarge, maxLines = 1)
+                                val sub = when {
+                                    blocked -> "Недоступно на блокировке"
+                                    status.isNotBlank() -> status
+                                    answered -> "Готово"
+                                    else -> "Нажмите, чтобы говорить"
+                                }
+                                Text(
+                                    sub, style = MaterialTheme.typography.bodyMedium, maxLines = 2,
+                                    color = if (mode == OrbMode.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            IconButton(onClick = onOpenApp, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Rounded.OpenInFull, contentDescription = "Открыть приложение", modifier = Modifier.size(18.dp))
+                            }
+                            IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Rounded.Close, contentDescription = "Закрыть", modifier = Modifier.size(20.dp))
                             }
                         }
-                    }
-                    Spacer(Modifier.size(12.dp))
-                    if (blocked) PrimaryButton("Разблокировать", onUnlock, modifier = Modifier.fillMaxWidth())
-                    else Surface(
-                        onClick = { if (active) c.voice.stop() else listen() },
-                        shape = CircleShape, color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(56.dp),
-                    ) {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Icon(if (active) Icons.Rounded.Stop else Icons.Rounded.Mic, contentDescription = if (active) "Остановить" else "Говорить")
+
+                        if (heard.isNotBlank()) {
+                            Text(
+                                heard, style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+                            )
+                        }
+                        val r = reply
+                        if (answered && r != null && heard.isBlank()) {
+                            Text(
+                                r.text, style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp).verticalScroll(rememberScrollState()).padding(start = 4.dp, top = 8.dp),
+                            )
+                            if ((locked || c.appLocked()) && r.text.contains("Разблокируйте")) {
+                                PrimaryButton("Разблокировать", onUnlock, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+                            }
+                            if (r.awaitingConfirmation) {
+                                Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    PrimaryButton("Да", { c.voice.confirm(true) }, modifier = Modifier.weight(1f))
+                                    SecondaryButton("Отмена", { c.voice.confirm(false) }, modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
+                        if (locked && !blocked) {
+                            Text(
+                                "🔒 Заблокировано — личные данные скрыты",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 4.dp, top = 6.dp),
+                            )
+                        }
+                        if (blocked) {
+                            PrimaryButton("Разблокировать", onUnlock, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
                         }
                     }
                 }

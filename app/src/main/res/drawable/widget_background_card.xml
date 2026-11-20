@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Карточка виджета: кремовая поверхность с крупными органическими пятнами — как главный экран Нова. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFBF6EE" />
+            <corners android:radius="30dp" />
+            <stroke android:width="0.5dp" android:color="#33C9DDD3" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/widget_blobs_card" />
+</layer-list>

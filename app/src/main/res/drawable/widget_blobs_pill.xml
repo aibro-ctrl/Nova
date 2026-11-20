@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Органические пятна плашки: мятное пятно справа сверху и шалфейная волна слева снизу.
+     Радиальные градиенты в прозрачность — границы не читаются как наклейка. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="360dp"
+    android:height="120dp"
+    android:viewportWidth="360"
+    android:viewportHeight="120">
+
+    <path android:pathData="M0,0 h360 v120 h-360 z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="318"
+                android:centerY="6"
+                android:gradientRadius="150"
+                android:startColor="#8CDDEBE3"
+                android:endColor="#00DDEBE3" />
+        </aapt:attr>
+    </path>
+
+    <path android:pathData="M0,0 h200 v120 h-200 z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="40"
+                android:centerY="118"
+                android:gradientRadius="150"
+                android:startColor="#73B8D3C8"
+                android:endColor="#00B8D3C8" />
+        </aapt:attr>
+    </path>
+
+    <!-- Тонкая контурная дуга: поддерживает композицию, не спорит с текстом. -->
+    <path
+        android:pathData="M250,118 a96,96 0 0,1 -140,-56"
+        android:strokeColor="#4DC9DDD3"
+        android:strokeWidth="1.2"
+        android:fillColor="#00000000" />
+</vector>

@@ -70,6 +70,11 @@ interface SkillHost {
      * [query] пустой — просто открыть приложение.
      */
     suspend fun playInMusicApp(query: String, app: MusicApp): Boolean = false
+    /** Музыка Нова на паузе — продолжаем её, а не открываем приложение. */
+    fun resumeMusic(): Boolean = false
+    /** Музыкальное приложение, выбранное в прошлый раз («включи музыку» в каком приложении). */
+    fun musicApp(): MusicApp? = null
+    fun rememberMusicApp(app: MusicApp) {}
 
     /** Громкий сигнал «я здесь». */
     suspend fun ringPhone(): Boolean = false

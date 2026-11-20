@@ -28,7 +28,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -347,6 +350,7 @@ private fun ClockPage(onBack: () -> Unit) {
 
 @Composable
 private fun AppearancePage(c: AppContainer, onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val s by c.settings.settings.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     NovaScreen(title = "Оформление", onBack = onBack) {
@@ -379,8 +383,54 @@ private fun AppearancePage(c: AppContainer, onBack: () -> Unit) {
                     GroupDivider()
                     SwitchItem("Цвета обоев", "Вместо своего цвета — под обои (Android 12+)", s.dynamicColor) { v -> scope.launch { c.settings.setDynamicColor(v) } }
                 }
+                Hint("Иконка в лотке меняется вместе с цветом. Цвета фоновых волн тоже берутся из него.")
             }
         }
+        item(key = "widget") {
+            SectionLabel("Виджеты на рабочем столе")
+            WidgetPreviews()
+            Hint("Три отдельных виджета в списке рабочего стола: «Нова», «Нова · Орб» и «Нова · Карточка». " +
+                "У каждого свой размер — поэтому на столе они выглядят ровно так, как здесь.")
+        }
+    }
+}
+
+/**
+ * Все три виджета в том размере, в котором они попадут на рабочий стол: настоящие макеты, а не картинки.
+ * Размеры взяты из widget_info / widget_orb_info / widget_card_info — предпросмотр не может разойтись с делом.
+ */
+@Composable
+private fun WidgetPreviews() {
+    SectionLabel("Как это выглядит")
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+    ) {
+        WidgetPreview(ai.nova.app.settings.WidgetStyle.PILL, label = "Плашка · 3×1", height = 74.dp, square = false)
+        WidgetPreview(ai.nova.app.settings.WidgetStyle.ORB, label = "Орб · 1×1", height = 78.dp, square = true)
+        WidgetPreview(ai.nova.app.settings.WidgetStyle.CARD, label = "Карточка · 2×2", height = 172.dp, square = true)
+    }
+}
+
+@Composable
+private fun WidgetPreview(style: ai.nova.app.settings.WidgetStyle, label: String, height: androidx.compose.ui.unit.Dp, square: Boolean) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+        Box(Modifier.fillMaxWidth().height(height), contentAlignment = androidx.compose.ui.Alignment.Center) {
+            androidx.compose.ui.viewinterop.AndroidView(
+                factory = { ctx ->
+                    android.view.LayoutInflater.from(ctx)
+                        .inflate(ai.nova.app.widget.WidgetRender.layoutOf(style), null as android.view.ViewGroup?)
+                },
+                modifier = if (square) Modifier.fillMaxHeight().aspectRatio(1f) else Modifier.fillMaxWidth(),
+            )
+        }
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
     }
 }
 

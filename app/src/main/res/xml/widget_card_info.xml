@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- «Карточка»: ячейка 2×2 — крупный орб, имя, подсказка и кнопка «Спросить». -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_card_description"
+    android:initialLayout="@layout/widget_nova_card"
+    android:minWidth="132dp"
+    android:minHeight="132dp"
+    android:maxResizeWidth="320dp"
+    android:maxResizeHeight="320dp"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen" />

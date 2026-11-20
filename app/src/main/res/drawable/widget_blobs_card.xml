@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Органические пятна карточки: крупное мятное сверху справа, шалфей снизу и контурная дуга. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="360dp"
+    android:height="360dp"
+    android:viewportWidth="360"
+    android:viewportHeight="360">
+
+    <path android:pathData="M0,0 h360 v360 h-360 z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="330"
+                android:centerY="10"
+                android:gradientRadius="230"
+                android:startColor="#A6DDEBE3"
+                android:endColor="#00DDEBE3" />
+        </aapt:attr>
+    </path>
+
+    <path android:pathData="M0,120 h360 v240 h-360 z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="60"
+                android:centerY="360"
+                android:gradientRadius="260"
+                android:startColor="#8CB8D3C8"
+                android:endColor="#00B8D3C8" />
+        </aapt:attr>
+    </path>
+
+    <path
+        android:pathData="M-40,300 a200,200 0 0,1 250,-150"
+        android:strokeColor="#59C9DDD3"
+        android:strokeWidth="1.4"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M400,120 a180,180 0 0,0 -150,120"
+        android:strokeColor="#40C9DDD3"
+        android:strokeWidth="1.4"
+        android:fillColor="#00000000" />
+</vector>

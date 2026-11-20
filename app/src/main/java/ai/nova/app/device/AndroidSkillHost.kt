@@ -4,11 +4,13 @@ import android.Manifest
 import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.net.Uri
 import android.provider.CalendarContract
 import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Settings
+import android.view.KeyEvent
 import ai.nova.app.media.RadioService
 import ai.nova.app.media.RingService
 import ai.nova.app.notify.NovaNotificationListener
@@ -50,6 +52,9 @@ class AndroidSkillHost(
     private val saveNoteTo: suspend (String, String) -> Boolean = { _, _ -> false },
 ) : SkillHost {
     private val locator = Locator(context)
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    /** Какое музыкальное приложение человек выбрал для «включи музыку». */
+    private val prefs by lazy { context.getSharedPreferences("nova_music", Context.MODE_PRIVATE) }
 
     override suspend fun location(): GeoPoint? {
         if (!locator.hasCoarse() && !permissions.ensure(Manifest.permission.ACCESS_COARSE_LOCATION)) return null
@@ -174,8 +179,13 @@ class AndroidSkillHost(
         val pkg = app.packages.firstOrNull { installed(it) }
         return try {
             if (query.isBlank()) {
+                // Без названия песни: открываем приложение и просим его играть (у большинства
+                // приложений это последний трек или «моя волна»). Клавишу жмём с задержкой —
+                // сразу после запуска плеер ещё не готов принять команду.
                 val launch = pkg?.let { context.packageManager.getLaunchIntentForPackage(it) } ?: return false
-                context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                if (!launcher.launch(launch)) return false
+                pressPlay(delayMs = 1_200)
+                pressPlay(delayMs = 3_000)
                 return true
             }
             // Стандартный способ «включи по поиску»: Яндекс Музыка и Spotify по нему реально начинают играть.
@@ -183,22 +193,47 @@ class AndroidSkillHost(
                 .putExtra(SearchManager.QUERY, query)
                 .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
             if (pkg != null) play.setPackage(pkg)
-            if (play.resolveActivity(context.packageManager) != null) {
-                context.startActivity(play.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                return true
-            }
+            if (play.resolveActivity(context.packageManager) != null && launcher.launch(play)) return true
             // Не вышло — открываем поиск в самом приложении, а без него в браузере.
             val web = app.webUrl(Uri.encode(query))
             val inApp = Intent(Intent.ACTION_VIEW, Uri.parse(web))
             if (pkg != null) inApp.setPackage(pkg)
-            val target = if (inApp.resolveActivity(context.packageManager) != null) inApp else Intent(Intent.ACTION_VIEW, Uri.parse(web))
-            if (target.resolveActivity(context.packageManager) == null) return false
-            context.startActivity(target.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            true
+            if (inApp.resolveActivity(context.packageManager) != null && launcher.launch(inApp)) return true
+            val browser = Intent(Intent.ACTION_VIEW, Uri.parse(web))
+            if (browser.resolveActivity(context.packageManager) == null) return false
+            launcher.launch(browser)
         } catch (e: Exception) {
             Logger.w("Music", "Не удалось включить ${app.title}", e)
             false
         }
+    }
+
+    /**
+     * Клавиша «играть» для чужого плеера. Работает только когда приложение на экране:
+     * из фона такая команда уходит в никуда, а нашу музыку она бы поставила на паузу.
+     */
+    private fun pressPlay(delayMs: Long) {
+        main.postDelayed({
+            if (RadioService.current != null) return@postDelayed
+            val am = context.getSystemService(AudioManager::class.java) ?: return@postDelayed
+            // Что-то уже играет — второй раз не жмём: чужие плееры понимают эту клавишу как паузу.
+            if (am.isMusicActive) return@postDelayed
+            val down = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY)
+            val up = KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY)
+            runCatching {
+                am.dispatchMediaKeyEvent(down)
+                am.dispatchMediaKeyEvent(up)
+            }
+        }, delayMs)
+    }
+
+    override fun resumeMusic(): Boolean = RadioService.resume(context)
+
+    override fun musicApp(): MusicApp? = prefs.getString(KEY_MUSIC_APP, null)
+        ?.let { id -> MusicApp.entries.firstOrNull { it.name == id } }
+
+    override fun rememberMusicApp(app: MusicApp) {
+        prefs.edit().putString(KEY_MUSIC_APP, app.name).apply()
     }
 
     private fun installed(pkg: String): Boolean = runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
@@ -239,4 +274,8 @@ class AndroidSkillHost(
     override fun setCity(city: String?) = onCity(city)
 
     override suspend fun saveNote(title: String, content: String): Boolean = saveNoteTo(title, content)
+
+    private companion object {
+        const val KEY_MUSIC_APP = "last_app"
+    }
 }

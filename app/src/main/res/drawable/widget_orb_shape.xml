@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Фирменный орб: мягкий круг с тёплой подсветкой сверху — тот же, что на главном экране. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+
+    <path android:pathData="M32,2 a30,30 0 1,1 -0.01,0 z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="26"
+                android:centerY="20"
+                android:gradientRadius="46"
+                android:startColor="#FF45B3A6"
+                android:centerColor="#FF238F83"
+                android:endColor="#FF16807A" />
+        </aapt:attr>
+    </path>
+
+    <!-- Тёплый блик: орб читается как объёмная форма, а не как плоский кружок. -->
+    <path android:pathData="M32,6 a26,26 0 1,1 -0.01,0 z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="24"
+                android:centerY="16"
+                android:gradientRadius="30"
+                android:startColor="#38FFFFFF"
+                android:endColor="#00FFFFFF" />
+        </aapt:attr>
+    </path>
+</vector>

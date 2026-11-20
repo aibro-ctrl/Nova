@@ -20,6 +20,7 @@
     <string name="reminder_tomorrow">Завтра</string>
     <string name="tile_label">Спросить Нова</string>
     <string name="widget_hint">Голосом или текстом</string>
+    <string name="widget_action">Спросить</string>
     <string name="shortcut_listen_short">Говорить</string>
     <string name="shortcut_listen_long">Спросить Нова голосом</string>
     <string name="shortcut_expense_short">Расход</string>
@@ -34,7 +35,11 @@
     <string name="update_available">Доступна Нова %1$s</string>
     <string name="update_tap">Нажмите, чтобы установить</string>
     <string name="widget_label">Нова</string>
-    <string name="widget_description">Спросить Нова одним касанием</string>
+    <string name="widget_description">Плашка: орб, имя и подсказка в одну строку</string>
+    <string name="widget_orb_label">Нова · Орб</string>
+    <string name="widget_orb_description">Только фирменный круг с волной — одна ячейка</string>
+    <string name="widget_card_label">Нова · Карточка</string>
+    <string name="widget_card_description">Крупная карточка с орбом, подсказкой и кнопкой</string>
     <string name="widget_tasks_label">Задачи на сегодня</string>
     <string name="widget_tasks_description">Задачи на сегодня и просроченные</string>
     <string name="widget_shopping_label">Покупки</string>

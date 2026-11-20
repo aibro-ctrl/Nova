@@ -38,6 +38,33 @@ class BankPushTest {
         assertEquals("Доходы", push.category)
     }
 
+    @Test fun incomingTransferWithPlusIsIncome() {
+        // Раньше «перевод» в тексте делал такое поступление расходом.
+        val push = parse("Т-Банк", "Перевод от ИВАН И. +5 000 ₽\nКарта *5678") ?: error("не разобрано")
+        assertTrue(push.isIncome)
+        assertEquals(500_000, push.amountMinor)
+        assertEquals("Доходы", push.category)
+    }
+
+    @Test fun plusSignAloneIsIncome() {
+        val push = parse("СберБанк", "Поступление на карту +5000 ₽") ?: error("не разобрано")
+        assertTrue(push.isIncome)
+        assertEquals(500_000, push.amountMinor)
+    }
+
+    @Test fun minusSignIsExpense() {
+        val push = parse("СберБанк", "Списание −500 ₽ · ПЯТЁРОЧКА") ?: error("не разобрано")
+        assertFalse(push.isIncome)
+        assertEquals(50_000, push.amountMinor)
+        assertEquals("Продукты", push.category)
+    }
+
+    @Test fun plusSignIsIncomeForUnknownApp() {
+        val push = BankPushParser.parse("Банк", "Зачисление +5000 ₽ · ИВАН И.", null) ?: error("не разобрано")
+        assertTrue(push.isIncome)
+        assertEquals("Доходы", push.category)
+    }
+
     @Test fun skipsBalanceAndCodes() {
         assertNull(parse("СберБанк", "Код подтверждения 1234. Никому не сообщайте"))
         assertNull(parse("СберБанк", "Баланс 12 340 ₽"))

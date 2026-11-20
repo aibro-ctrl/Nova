@@ -86,6 +86,7 @@ import ai.nova.app.ui.components.SecondaryButton
 import ai.nova.app.ui.components.UpdateCard
 import ai.nova.app.ui.components.SetupCard
 import ai.nova.app.ui.components.groupColor
+import ai.nova.app.ui.components.organicPanel
 import ai.nova.app.ui.components.pressScale
 import ai.nova.app.ui.theme.successColor
 import ai.nova.app.voice.VoiceState
@@ -273,7 +274,11 @@ private fun HomeBottomPanel(
     onMic: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
-    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+    Surface(
+        color = organicPanel(0.82f),
+        shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         Column(Modifier.animateContentSize()) {
             HorizontalDivider(thickness = 0.6.dp, color = MaterialTheme.colorScheme.outlineVariant)
             Text(
@@ -346,7 +351,8 @@ fun ChatScreen(vm: HomeViewModel, onMic: () -> Unit, onBack: () -> Unit, keyboar
     val byDay = remember(history) { history.groupBy { it.createdAt.atZone(zone).toLocalDate() } }
     LaunchedEffect(history.size) { if (history.isNotEmpty()) listState.animateScrollToItem(history.size + byDay.size - 1) }
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).imePadding()) {
+    // Фон приложения просвечивает и в чате: чат — окно, а не отдельная плоская страница.
+    Column(Modifier.fillMaxSize().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Назад") }
             AssistantOrb(ui.mode, ui.level, size = 40.dp)

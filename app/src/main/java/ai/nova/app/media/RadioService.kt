@@ -96,6 +96,20 @@ class RadioService : Service() {
         when (intent?.action) {
             ACTION_STOP -> { stopAll(); return START_NOT_STICKY }
             ACTION_PAUSE -> { if (player?.isPlaying == true) pause() else station?.let { play(it) }; return START_NOT_STICKY }
+            // «Продолжи музыку»: тот же поток с того же места (у станции — с живого эфира).
+            ACTION_RESUME -> {
+                val s = station
+                if (s != null) {
+                    if (player == null) play(s)
+                    else {
+                        requestFocus(); holdWifi()
+                        player?.let { runCatching { it.start() } }
+                        state(PlaybackState.STATE_PLAYING)
+                        foreground(s, playing = true)
+                    }
+                }
+                return START_NOT_STICKY
+            }
             ACTION_NEXT -> { next(); return START_NOT_STICKY }
         }
         music = intent?.getBooleanExtra(EXTRA_MUSIC, false) ?: music
@@ -223,6 +237,7 @@ class RadioService : Service() {
         private const val ACTION_STOP = "ai.nova.radio.STOP"
         private const val ACTION_PAUSE = "ai.nova.radio.PAUSE"
         private const val ACTION_NEXT = "ai.nova.radio.NEXT"
+        private const val ACTION_RESUME = "ai.nova.radio.RESUME"
         private const val EXTRA_NAME = "name"
         private const val EXTRA_URL = "url"
         private const val EXTRA_MUSIC = "music"
@@ -249,6 +264,16 @@ class RadioService : Service() {
             }.isSuccess
             if (!ok) return false
             return withTimeoutOrNull(12_000) { result.await() } ?: (current?.url == station.url)
+        }
+
+        /** Продолжить музыку, которую Нова поставила на паузу. false — ставить нечего. */
+        fun resume(context: Context): Boolean {
+            if (current == null) return false
+            if (playing) return true
+            val ok = runCatching {
+                ContextCompat.startForegroundService(context, Intent(context, RadioService::class.java).setAction(ACTION_RESUME))
+            }.isSuccess
+            return ok
         }
 
         fun stop(context: Context): Boolean {

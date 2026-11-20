@@ -93,8 +93,8 @@ object BankPushParser {
         setOf(RegexOption.IGNORE_CASE),
     )
 
-    private val INCOME_WORDS = Regex("""(?iu)(?<![а-яёa-z])(зачислен|пополнен|поступлен|поступил|возврат|вернул|перевод от|получен|начислен)""")
-    private val EXPENSE_WORDS = Regex("""(?iu)(?<![а-яёa-z])(покупка|покупку|оплата|оплачен|списание|списано|снятие|снято|платёж|платеж|перевод|перевели|отправлен)""")
+    private val INCOME_WORDS = Regex("""(?iu)(?<![а-яёa-z])(зачислен|пополнен|поступлен|поступил|возврат|вернул|перевод от|получен|начислен|доход|пришл)""")
+    private val EXPENSE_WORDS = Regex("""(?iu)(?<![а-яёa-z])(покупка|покупку|оплата|оплачен|списание|списано|снятие|снято|платёж|платеж|перевод|перевели|отправлен|расход)""")
 
     // Служебные пуши: сумма есть, но траты нет. Никогда не пишем.
     private val HARD_SKIP = Regex(
@@ -122,10 +122,12 @@ object BankPushParser {
         if (HARD_SKIP.containsMatchIn(raw)) return null
         val saysIncome = INCOME_WORDS.containsMatchIn(raw)
         val saysExpense = EXPENSE_WORDS.containsMatchIn(raw)
-        if (SOFT_SKIP.containsMatchIn(raw) && !saysIncome && !saysExpense) return null
-        // У незнакомого пакета без явного «покупка/оплата/списание» не рискуем.
-        if (knownBank == null && !saysIncome && !saysExpense) return null
         val amount = AMOUNT.find(raw) ?: return null
+        // Знак перед суммой: «+5000 ₽» — поступление, «−500 ₽» — списание. Банки пишут так почти всегда.
+        val sign = signOf(raw, amount.range.first)
+        if (SOFT_SKIP.containsMatchIn(raw) && !saysIncome && !saysExpense && sign == 0) return null
+        // У незнакомого пакета без явного «покупка/оплата/списание» или знака не рискуем.
+        if (knownBank == null && !saysIncome && !saysExpense && sign == 0) return null
         val amountMinor = toMinor(amount.groupValues[1]) ?: return null
         if (amountMinor <= 0) return null
         val merchant = merchant(text.ifBlank { raw }, amount.value).orEmpty()
@@ -133,12 +135,31 @@ object BankPushParser {
         return BankPush(
             amountMinor = amountMinor,
             currency = "RUB",
-            isIncome = saysIncome && !saysExpense,
+            // «Перевод от Ивана +5000 ₽» — это доход, хотя слово «перевод» есть и в тратах:
+            // решает знак суммы, а без него — слово «зачисление/поступление/возврат».
+            isIncome = when {
+                sign > 0 -> true
+                sign < 0 -> false
+                saysIncome -> true
+                else -> false
+            },
             merchant = merchant,
             card = CARD.find(raw)?.groupValues?.get(1),
             bank = knownBank ?: "Банк",
             raw = raw,
         )
+    }
+
+    /** 1 — перед суммой «+», −1 — «−»/«-», 0 — знака нет. */
+    private fun signOf(raw: String, amountStart: Int): Int {
+        val before = raw.substring(maxOf(0, amountStart - 5), amountStart)
+        val plus = before.contains('+')
+        val minus = before.any { it == '-' || it == '−' || it == '–' }
+        return when {
+            plus && !minus -> 1
+            minus && !plus -> -1
+            else -> 0
+        }
     }
 
     /** «1 234,50» → 123450 копеек. */

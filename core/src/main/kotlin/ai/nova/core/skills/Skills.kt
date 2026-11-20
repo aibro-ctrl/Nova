@@ -65,6 +65,11 @@ class Skills(
         private set
     private var awaitGameChoice = false
     private var awaitCity: WeatherQuery? = null
+    /** «Включи музыку»: спросили, в каком приложении включить, — ждём название. */
+    private var awaitMusicApp: List<MusicApp> = emptyList()
+    /** Какую песню только что искали: «включи в Яндекс Музыке» после подсказки включает именно её. */
+    private var lastMusicQuery: String? = null
+    private var lastMusicAt: java.time.Instant = java.time.Instant.EPOCH
     private var lastNews: List<NewsService.Item> = emptyList()
     private var newsShown = 0
     private var replyTarget: IncomingMessage? = null
@@ -84,9 +89,9 @@ class Skills(
     /** Навык ждёт ответа — движок передаёт следующую фразу сюда. Ожидание не вечное: через 3 минуты молчания забываем. */
     val busy: Boolean get() {
         if (helpPlace?.let { Duration.between(it.at, time.now()) > PENDING_TTL } == true) helpPlace = null
-        val waiting = game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null
+        val waiting = game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null || awaitMusicApp.isNotEmpty()
         if (waiting && Duration.between(lastTurn, time.now()) > PENDING_TTL) reset()
-        return game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null
+        return game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null || awaitMusicApp.isNotEmpty()
     }
 
     /** Экран погас: забываем, кому отвечали, — игра и прочее остаются. */
@@ -94,6 +99,7 @@ class Skills(
 
     fun reset() {
         game = null; awaitGameChoice = false; awaitCity = null; replyTarget = null; awaitReply = false; helpPlace = null
+        awaitMusicApp = emptyList()
     }
 
     /**
@@ -271,6 +277,25 @@ class Skills(
             if (t.split(' ').size <= 4 && LocalCommandParser.isNo(t).not()) {
                 val city = text.trim().trimEnd('.', '!', '?').removePrefix("в ").removePrefix("В ").removePrefix("во ").removePrefix("Во ")
                 return weather(q.copy(place = city), cfg)
+            }
+        }
+        // Ответ на вопрос «в каком приложении» — короткая фраза, а не длинная команда.
+        if (awaitMusicApp.isNotEmpty() && SkillPhrases.norm(text).split(' ').size <= 4) {
+            val choices = awaitMusicApp
+            val t = SkillPhrases.norm(text)
+            if (LocalCommandParser.isNo(t)) {
+                awaitMusicApp = emptyList()
+                return SkillOutcome.Say("Хорошо, музыку не включаю.")
+            }
+            val app = SkillPhrases.musicApp(t) ?: choices.firstOrNull { t.contains(SkillPhrases.norm(it.title)) }
+            if (app != null) {
+                awaitMusicApp = emptyList()
+                return openMusicApp(app)
+            }
+            // Первое приложение из списка — если назвали просто «первое» / «давай яндекс».
+            if (t == "первое" || t == "первый" || t == "любое") {
+                awaitMusicApp = emptyList()
+                return openMusicApp(choices.first())
             }
         }
         return null
@@ -697,26 +722,66 @@ class Skills(
     /**
      * «Включи песню Кино — Группа крови» — ищем в открытом каталоге и играем фрагмент встроенным плеером.
      * «Включи … в Яндекс Музыке» — песню играет само приложение (у него есть лицензия на полный трек).
+     * «Включи музыку» без названия — продолжаем нашу музыку или открываем музыкальное приложение.
      */
     private suspend fun musicPlay(cmd: SkillCommand.MusicPlay): SkillOutcome {
         val app = cmd.app
-        if (app != null) {
-            val query = cmd.query.orEmpty()
-            val installed = host.hasMusicApp(app)
-            if (host.playInMusicApp(query, app)) {
-                return SkillOutcome.Say(if (query.isBlank()) "Открываю ${app.title}." else "Включаю «${pretty(query)}» — ${app.title}.")
-            }
-            return if (installed) SkillOutcome.Say("Не получилось запустить ${app.title}. Откройте приложение вручную и повторите.")
-            else SkillOutcome.Say("На телефоне нет «${app.title}». Скажите «включи песню $query» — найду её и включу сама.")
-        }
         val query = cmd.query?.takeIf { it.isNotBlank() }
-            ?: return SkillOutcome.Say("Скажите, что включить: например, «включи песню Кино — Группа крови».")
+        if (app != null) {
+            // Название песни не повторили («включи в Яндексе» после подсказки) — берём ту, что только что нашли.
+            val wanted = query ?: lastMusicQuery?.takeIf { Duration.between(lastMusicAt, time.now()) < MUSIC_MEMORY }
+            if (host.playInMusicApp(wanted.orEmpty(), app)) {
+                host.rememberMusicApp(app)
+                return SkillOutcome.Say(
+                    when {
+                        wanted != null -> "Включаю «${pretty(wanted)}» — ${app.title}."
+                        else -> "Включаю музыку в ${app.title}."
+                    },
+                )
+            }
+            return if (host.hasMusicApp(app)) SkillOutcome.Say("Не получилось открыть ${app.title}. Откройте приложение вручную и повторите.")
+            else SkillOutcome.Say("На телефоне нет «${app.title}». Скажите «включи песню ${query.orEmpty()}» — найду её и включу сама.")
+        }
+        if (query == null) return musicWithoutQuery()
         val track = runCatching { musicSearch.find(query) }.getOrElse { if (it is CancellationException) throw it; null }
             ?: return SkillOutcome.Say("Не нашла песню «${pretty(query)}». Назовите иначе — например, «включи песню Кино — Группа крови».")
+        lastMusicQuery = query
+        lastMusicAt = time.now()
         if (!host.playTrack(track)) return SkillOutcome.Say("Нашла «${track.label}», но включить не получилось — проверьте интернет.")
         val suggested = MusicApp.PREFERRED.firstOrNull { host.hasMusicApp(it) }
         val hint = if (suggested != null) " Целиком — скажите «включи в ${suggested.spoken}»." else ""
         return SkillOutcome.Say("Включаю «${track.label}» — короткий фрагмент.$hint")
+    }
+
+    /**
+     * «Включи музыку» без названия песни. Раньше Нова просто жала медиа-клавишу и отвечала «Включаю» —
+     * если музыка не была запущена, не происходило ничего. Теперь: продолжаем свою станцию,
+     * иначе открываем музыкальное приложение (то, что выбрали в прошлый раз, или единственное).
+     */
+    private suspend fun musicWithoutQuery(): SkillOutcome {
+        if (host.resumeMusic()) return SkillOutcome.Say("Продолжаю музыку.")
+        val installed = MusicApp.PREFERRED.filter { host.hasMusicApp(it) }
+        if (installed.isEmpty()) {
+            return SkillOutcome.Say("На телефоне нет музыкального приложения. Скажите «включи песню Кино — Группа крови» — сыграю её сама.")
+        }
+        val remembered = host.musicApp()?.takeIf { it in installed }
+        val chosen = remembered ?: installed.singleOrNull()
+        if (chosen == null) {
+            awaitMusicApp = installed
+            return SkillOutcome.Say(
+                "В каком приложении включить музыку: ${installed.joinToString(", ") { it.title }}?",
+                followUp = true,
+            )
+        }
+        return openMusicApp(chosen)
+    }
+
+    private suspend fun openMusicApp(app: MusicApp): SkillOutcome {
+        if (host.playInMusicApp("", app)) {
+            host.rememberMusicApp(app)
+            return SkillOutcome.Say("Включаю музыку в ${app.title}.")
+        }
+        return SkillOutcome.Say("Не получилось открыть ${app.title}. Проверьте, что приложение работает, и скажите ещё раз.")
     }
 
     /**
@@ -906,6 +971,8 @@ class Skills(
     companion object {
         private const val TAG = "Skills"
         private val PENDING_TTL: Duration = Duration.ofMinutes(3)
+        /** Сколько помним найденную песню, чтобы «включи в Яндексе» включило именно её. */
+        private val MUSIC_MEMORY: Duration = Duration.ofMinutes(15)
         /** «Вызови скорую», «мне плохо», «нужен врач» — звоним 103. */
         private val AMBULANCE = Regex("""(?:скор|неотлож|врач|доктор|фельдшер|реанимац|спасател|мне\s+плохо|плохо\s+мне|103|112|03\b)""")
         /** Что считается ответом на предложение помощи: «позвони маме», «напиши сыну», «вызови скорую», «нет». */

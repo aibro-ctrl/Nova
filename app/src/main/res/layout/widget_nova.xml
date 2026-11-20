@@ -1,25 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Виджет «Спросить Нова»: касание открывает окно ассистента поверх рабочего стола. -->
+<!-- Виджет «Плашка»: орб, имя и подсказка в одну строку. Касание открывает окно ассистента. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_background"
+    android:baselineAligned="false"
     android:gravity="center_vertical"
     android:orientation="horizontal"
-    android:paddingStart="14dp"
-    android:paddingEnd="16dp">
+    android:paddingStart="12dp"
+    android:paddingEnd="14dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp">
 
     <FrameLayout
-        android:layout_width="44dp"
-        android:layout_height="44dp"
-        android:background="@drawable/widget_orb">
+        android:id="@+id/widget_orb"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:background="@drawable/widget_orb_shape">
 
         <!-- Фирменная волна: кадры меняет приложение, пока Нова слушает — как на главном экране. -->
         <ImageView
             android:id="@+id/widget_wave"
-            android:layout_width="26dp"
-            android:layout_height="26dp"
+            android:layout_width="25dp"
+            android:layout_height="25dp"
             android:layout_gravity="center"
             android:contentDescription="@string/widget_label"
             android:src="@drawable/widget_wave_0" />
@@ -37,20 +41,23 @@
             android:layout_height="wrap_content"
             android:ellipsize="end"
             android:fontFamily="@font/manrope_semibold"
+            android:includeFontPadding="false"
             android:maxLines="1"
-            android:text="@string/tile_label"
-            android:textColor="#FF292D30"
-            android:textSize="15sp" />
+            android:text="@string/widget_label"
+            android:textColor="#FF22282A"
+            android:textSize="16sp" />
 
         <TextView
+            android:id="@+id/widget_hint"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
+            android:layout_marginTop="3dp"
             android:ellipsize="end"
             android:fontFamily="@font/manrope_medium"
+            android:includeFontPadding="false"
             android:maxLines="1"
             android:text="@string/widget_hint"
-            android:textColor="#FF85888A"
+            android:textColor="#FF6B7472"
             android:textSize="12sp" />
     </LinearLayout>
 </LinearLayout>

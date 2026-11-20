@@ -12,18 +12,29 @@ import androidx.core.app.NotificationManagerCompat
 import ai.nova.core.skills.IncomingMessage
 import ai.nova.core.util.Logger
 import java.time.Instant
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * «Прочитай сообщения» и «ответь Маше…»: Нова видит уведомления мессенджеров.
  * Сообщения хранятся только в памяти, пока уведомление висит в шторке, и никуда не отправляются.
  * Ответ уходит через кнопку «Ответить» самого уведомления — в тот же чат.
+ *
+ * Системные обратные вызовы ничего не разбирают сами: только ставят задачу в очередь и сразу возвращаются.
+ * После установки, перезагрузки или обновления банковского приложения система отдаёт десятки уведомлений
+ * подряд, и разбор на главном потоке вешал интерфейс на секунды (ANR «executing service»).
  */
 class NovaNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         connected = true
         // После переподключения старые записи могли устареть (уведомления смахнули, пока нас не было).
         synchronized(entries) { entries.clear() }
-        runCatching { activeNotifications?.forEach { add(it) } }
+        // Список действующих уведомлений — отдельный запрос к системе, он тоже бывает небыстрым.
+        submit {
+            runCatching { activeNotifications?.forEach { add(it) } }
+                .onFailure { Logger.w(TAG, "Уведомления не прочитаны", it) }
+        }
     }
 
     override fun onListenerDisconnected() {
@@ -32,10 +43,13 @@ class NovaNotificationListener : NotificationListenerService() {
         synchronized(entries) { entries.clear() }
     }
 
-    override fun onNotificationPosted(sbn: StatusBarNotification) = add(sbn, fresh = true)
+    override fun onNotificationPosted(sbn: StatusBarNotification) {
+        submit { add(sbn, fresh = true) }
+    }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
-        synchronized(entries) { entries.removeAll { it.message.key == sbn.key } }
+        val key = sbn.key
+        submit { synchronized(entries) { entries.removeAll { it.message.key == key } } }
     }
 
     private fun add(sbn: StatusBarNotification, fresh: Boolean = false) {
@@ -101,6 +115,20 @@ class NovaNotificationListener : NotificationListenerService() {
         @Volatile private var connected = false
         /** Новое сообщение пришло (для режима «за рулём»). */
         @Volatile var onNewMessage: ((IncomingMessage) -> Unit)? = null
+
+        /**
+         * Очередь разбора: один поток сохраняет порядок уведомлений, размер ограничен — при шторме
+         * уведомлений новые пропускаем, а не копим в памяти. Поток живёт только пока есть работа.
+         */
+        private val work = ThreadPoolExecutor(
+            1, 1, 20, TimeUnit.SECONDS, ArrayBlockingQueue(64),
+            { r -> Thread(r, "nova-notifications").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } },
+            ThreadPoolExecutor.DiscardPolicy(),
+        )
+
+        private fun submit(block: () -> Unit) {
+            runCatching { work.execute(block) }
+        }
 
         private val MESSENGERS = setOf(
             "org.telegram.messenger", "org.telegram.messenger.web", "org.thunderdog.challegram", "com.whatsapp", "com.whatsapp.w4b",

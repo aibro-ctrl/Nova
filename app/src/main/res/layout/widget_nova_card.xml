@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Виджет «Карточка»: крупный орб, имя, подсказка и кнопка — для тех, кто любит заметный виджет. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background_card"
+    android:orientation="vertical"
+    android:padding="18dp">
+
+    <FrameLayout
+        android:id="@+id/widget_orb"
+        android:layout_width="58dp"
+        android:layout_height="58dp"
+        android:background="@drawable/widget_orb_shape">
+
+        <ImageView
+            android:id="@+id/widget_wave"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_gravity="center"
+            android:contentDescription="@string/widget_label"
+            android:src="@drawable/widget_wave_0" />
+    </FrameLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:ellipsize="end"
+        android:fontFamily="@font/manrope_semibold"
+        android:includeFontPadding="false"
+        android:maxLines="1"
+        android:text="@string/widget_label"
+        android:textColor="#FF22282A"
+        android:textSize="22sp" />
+
+    <TextView
+        android:id="@+id/widget_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:fontFamily="@font/manrope_medium"
+        android:includeFontPadding="false"
+        android:lineSpacingExtra="2dp"
+        android:maxLines="2"
+        android:text="@string/widget_hint"
+        android:textColor="#FF6B7472"
+        android:textSize="13sp" />
+
+    <!-- RemoteViews не умеет Space, поэтому кнопку прижимаем к низу через FrameLayout с весом. -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="@drawable/widget_pill"
+            android:fontFamily="@font/manrope_semibold"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:paddingTop="11dp"
+            android:paddingBottom="11dp"
+            android:text="@string/widget_action"
+            android:textColor="#FF12453F"
+            android:textSize="14sp" />
+    </FrameLayout>
+</LinearLayout>
