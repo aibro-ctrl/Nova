@@ -30,6 +30,7 @@ class NovaVoice(
     private val voiceId: () -> String,
     private val rate: () -> Float,
     private val pitch: () -> Float,
+    private val volume: () -> Float = { 1f },
 ) {
     private val lock = Mutex()
     @Volatile private var engine: OfflineTts? = null
@@ -85,6 +86,8 @@ class NovaVoice(
                     try {
                         for (s in sentences) {
                             if (stopped) break
+                            // Знак ударения не подставляем: espeak-ng внутри модели его не понимает
+                            // (в tokens.txt нет U+0301), поэтому текст уходит в синтез как есть.
                             val out = runCatching { tts.generate(s, 0, speed) }.getOrNull() ?: continue
                             audio.send(out.samples)
                         }
@@ -93,7 +96,7 @@ class NovaVoice(
                     }
                 }
                 withContext(Dispatchers.IO) {
-                    val t = newTrack(tts.sampleRate(), p)
+                    val t = newTrack(tts.sampleRate(), p, volume())
                     track = t
                     try {
                         t.play()
@@ -134,7 +137,7 @@ class NovaVoice(
         engine = null; loadedId = null
     }
 
-    private fun newTrack(sampleRate: Int, pitch: Float): AudioTrack {
+    private fun newTrack(sampleRate: Int, pitch: Float, volume: Float): AudioTrack {
         val min = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
         val t = AudioTrack.Builder()
             .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
@@ -144,6 +147,7 @@ class NovaVoice(
             .build()
         // Высота голоса — средствами воспроизведения (у модели своей настройки высоты нет).
         if (kotlin.math.abs(pitch - 1f) > 0.01f) runCatching { t.playbackParams = PlaybackParams().setPitch(pitch).setSpeed(1f) }
+        runCatching { t.setVolume(volume.coerceIn(0f, 1f)) }
         return t
     }
 

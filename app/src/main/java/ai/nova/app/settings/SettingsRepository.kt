@@ -136,6 +136,8 @@ data class AppSettings(
     val speechRate: Float = 1.0f,
     /** Высота голоса (1.0 — как задумал синтезатор). */
     val speechPitch: Float = 1.0f,
+    /** Громкость встроенного голоса Нова (1.0 — полная; громкость телефона не меняется). */
+    val speechVolume: Float = 1.0f,
     /** Имя голоса синтезатора; пусто — голос по умолчанию для русского. */
     val voiceName: String = "",
     /** Синтезатор речи (пакет движка); пусто — системный по умолчанию. */
@@ -236,6 +238,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val quickInput = booleanPreferencesKey("quick_input")
         val bankPushes = stringPreferencesKey("bank_pushes")
         val pitch = floatPreferencesKey("speech_pitch")
+        val volume = floatPreferencesKey("speech_volume")
         val voice = stringPreferencesKey("voice_name")
         val ttsEngine = stringPreferencesKey("tts_engine")
         val ttsAutoEngine = stringPreferencesKey("tts_auto_engine")
@@ -309,6 +312,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             ttsEnabled = p[K.tts] ?: true,
             speechRate = p[K.rate] ?: 1.0f,
             speechPitch = p[K.pitch] ?: 1.0f,
+            speechVolume = p[K.volume] ?: 1.0f,
             voiceName = p[K.voice].orEmpty(),
             ttsEngine = p[K.ttsEngine].orEmpty(),
             ttsAutoEngine = p[K.ttsAutoEngine].orEmpty(),
@@ -425,6 +429,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setSecureScreen(v: Boolean) = store.edit { it[K.secureScreen] = v }
     suspend fun setSpeechPause(v: SpeechPause) = store.edit { it[K.speechPause] = v.id }
     suspend fun setSpeechPitch(v: Float) = store.edit { it[K.pitch] = v.coerceIn(0.5f, 2f) }
+    suspend fun setSpeechVolume(v: Float) = store.edit { it[K.volume] = v.coerceIn(0.1f, 1f) }
     suspend fun setVoiceName(v: String) = store.edit { it[K.voice] = v }
     /** Смена движка сбрасывает голос: имена голосов у движков разные. */
     suspend fun setTtsEngine(v: String) = store.edit { it[K.ttsEngine] = v; it[K.voice] = "" }

@@ -290,6 +290,7 @@ class AppContainer(private val context: Context) {
         voiceId = { novaVoiceModels.effective(settings.settings.value.novaVoice) },
         rate = { settings.settings.value.speechRate },
         pitch = { settings.settings.value.speechPitch },
+        volume = { settings.settings.value.speechVolume },
     )
     /** Кто озвучивает ответы: встроенный голос или проверенный синтезатор телефона. */
     init {

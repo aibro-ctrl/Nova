@@ -60,10 +60,132 @@ object SpeechText {
         val sb = StringBuilder()
         lines.forEachIndexed { i, line ->
             if (i > 0) sb.append(if (lines[i - 1].last() in ".:!?…;") " " else ". ")
-            sb.append(line)
+            sb.append(listNumber(line))
         }
-        return declineUnits(pronounce(sb.toString().replace(Regex("[«»]"), ""))).replace(Regex("""\s{2,}"""), " ").trim()
+        val spoken = sayNumbers(declineUnits(pronounce(sb.toString().replace(Regex("[«»]"), ""))))
+            .replace(Regex("""\s{2,}"""), " ").trim()
+        // Первое слово — с заглавной: после замены числа на слово («2026» → «две тысячи…») регистр теряется.
+        return spoken.replaceFirstChar { if (it.isLowerCase()) it.uppercase() else it.toString() }
     }
+
+    /** Склоняемые единицы: род нужен числительному, иначе «1 минут» вместо «одна минута». */
+    private val FEMININE_UNITS = setOf(
+        "минута", "минуты", "минут", "секунда", "секунды", "секунд", "неделя", "недели", "недель",
+        "штука", "штуки", "штук", "порция", "порции", "порций", "копейка", "копейки", "копеек",
+        "чашка", "чашки", "чашек", "ложка", "ложки", "ложек", "страница", "страницы", "страниц",
+        "калория", "калории", "калорий", "тысяча", "тысячи", "тысяч", "половина", "половины",
+        "порция", "таблетка", "таблетки", "таблеток", "тренировка", "тренировки", "тренировок",
+        "задача", "задачи", "задач", "встреча", "встречи", "встреч", "заметка", "заметки", "заметок",
+        "идея", "идеи", "идей", "ошибка", "ошибки", "ошибок", "покупка", "покупки", "покупок",
+    )
+
+    /** Женские слова в винительном падеже: «одну чайную ложку», «одну минуту» — а не «одна». */
+    private val FEMININE_ACCUSATIVE = setOf(
+        "минуту", "секунду", "неделю", "штуку", "порцию", "копейку", "чашку", "ложку", "страницу",
+        "калорию", "тысячу", "половину", "таблетку", "тренировку", "задачу", "встречу", "заметку",
+        "идею", "ошибку", "покупку", "порцию",
+    )
+
+    /** Предлоги и сравнительные слова, после которых число стоит в родительном падеже. */
+    private val GENITIVE_AFTER = setOf(
+        "около", "более", "менее", "свыше", "порядка", "больше", "меньше", "от", "до", "свыше",
+        "достигает", "достигло", "достиг", "превышает", "превысило", "превысил", "хватает",
+    )
+
+    /** Пункт списка: «1. Нарежьте лук» → «Первый. Нарежьте лук». Номера вслух не читаются как «один». */
+    private fun listNumber(line: String): String =
+        Regex("""^(\d{1,2})[.)]\s+""").replace(line) { m ->
+            val n = m.groupValues[1].toIntOrNull() ?: return@replace m.value
+            if (n !in 1..31) return@replace m.value
+            val ordinal = RuNumbers.ordinal(n.toLong(), RuNumbers.Case.NOMINATIVE)
+            val rest = line.substring(m.range.last + 1)
+            // «1. Первый» — номер уже назван словом, второй раз не читаем.
+            if (rest.lowercase().startsWith(ordinal)) "" else ordinal.replaceFirstChar { it.uppercase() } + ". "
+        }
+
+    private val MONTHS = listOf(
+        "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря",
+    )
+
+    /**
+     * Числа словами: так их верно читает любой движок, и род/падеж не приходится угадывать синтезатору.
+     * «1,5 кг» → «одна целая и пять десятых килограмма», «в 2026 году» → «в две тысячи двадцать шестом году»,
+     * «20 ноября» → «двадцатого ноября», «+7 916 123-45-67» → цифрами по одной.
+     *
+     * Формулы и коды («3:0», «1.1.1», «v2.20.2») не трогаем: числа в них — часть обозначения.
+     */
+    fun sayNumbers(text: String): String {
+        var t = text
+        // Телефон: цифры по одной — так его диктуют и так его узнают.
+        t = Regex("""(?<![\d+])\+?\d[\d ()-]{7,}\d(?![\d])""").replace(t) { m ->
+            val value = m.value.trim()
+            val digits = value.filter(Char::isDigit)
+            val looksPhone = value.startsWith("+") || value.any { it == '(' || it == '-' } ||
+                (digits.length in 10..15 && value.count { it == ' ' } >= 2)
+            if (!looksPhone) value else {
+                val plus = if (value.startsWith("+")) "плюс " else ""
+                plus + digits.map { DIGITS[it - '0'] }.joinToString(" ")
+            }
+        }
+        // Десятичная дробь с точкой: «1.5» → «1,5» (версии и даты не трогаем — там две точки).
+        t = Regex("""(?<![\d.])(\d{1,4})\.(\d{1,2})(?![\d.])""").replace(t) { m -> "${m.groupValues[1]},${m.groupValues[2]}" }
+        // Дата числом: «20.11.2026» → «двадцатое ноября две тысячи двадцать шестого года».
+        t = Regex("""(?<![\d.])(\d{1,2})\.(\d{1,2})\.(\d{4})(?![\d.])""").replace(t) { m ->
+            val day = m.groupValues[1].toIntOrNull() ?: return@replace m.value
+            val month = m.groupValues[2].toIntOrNull() ?: return@replace m.value
+            val year = m.groupValues[3].toLongOrNull() ?: return@replace m.value
+            if (day !in 1..31 || month !in 1..12) return@replace m.value
+            "${RuNumbers.ordinal(day.toLong(), RuNumbers.Case.GENITIVE)} ${MONTHS[month - 1]} " +
+                RuNumbers.ordinal(year, RuNumbers.Case.GENITIVE) + " года"
+        }
+        // День и месяц: «20 ноября» → «двадцатого ноября».
+        for ((i, month) in MONTHS.withIndex()) {
+            t = Regex("""(?<![\d.])(\d{1,2})\s+$month(?![\p{L}])""").replace(t) { m ->
+                val day = m.groupValues[1].toIntOrNull()
+                if (day == null || day !in 1..31) m.value
+                else "${RuNumbers.ordinal(day.toLong(), RuNumbers.Case.GENITIVE)} $month"
+            }
+        }
+        // Год: «в 2026 году» → «в две тысячи двадцать шестом году».
+        t = Regex("""(?<![\d.])(1[89]\d\d|20\d\d|21\d\d)\s+(году|года|год|годом|годах|г\.)(?![\p{L}])""").replace(t) { m ->
+            val year = m.groupValues[1].toLong()
+            val word = m.groupValues[2]
+            val case = when (word) {
+                "году", "годах", "г." -> RuNumbers.Case.PREPOSITIONAL
+                "года", "годом" -> RuNumbers.Case.GENITIVE
+                else -> RuNumbers.Case.NOMINATIVE
+            }
+            RuNumbers.ordinal(year, case) + " " + if (word == "г.") "году" else word
+        }
+        // Остальные числа — словами, род берём у следующего слова (минута — она, килограмм — он).
+        t = Regex("""(?<![\d.,:])(\d{1,3}(?:[  ]\d{3})+|\d+)(?:,(\d+))?(?![\d.,]\d|:)""").replace(t) { m ->
+            val raw = m.groupValues[1].replace(" ", "").replace(" ", "")
+            val n = raw.toLongOrNull() ?: return@replace m.value
+            val frac = m.groupValues[2]
+            if (frac.isNotEmpty()) return@replace RuNumbers.fraction(n, frac)
+            // «2 столовые ложки»: род задаёт существительное за прилагательным, поэтому смотрим два слова вперёд.
+            val after = t.substring(m.range.last + 1).trimStart().split(' ').take(2)
+                .map { it.lowercase().trim('.', ',', '!', '?', ':', ';') }
+            val prev = t.substring(0, m.range.first).trimEnd().substringAfterLast(' ').lowercase().trim('.', ',', '!', '?', ':', ';')
+            val gender = if (after.any { it in FEMININE_UNITS || it in FEMININE_ACCUSATIVE } || prev in FEMININE_UNITS)
+                RuNumbers.Gender.FEMININE else RuNumbers.Gender.MASCULINE
+            // «около 5 км» и «более 20 минут» требуют родительного падежа: «около пяти километров».
+            val words = when {
+                prev in GENITIVE_AFTER -> RuNumbers.cardinalGenitive(n, gender)
+                // «1 чайную ложку», «1 минуту» — винительный падеж: «одну», а не «одна».
+                n == 1L && gender == RuNumbers.Gender.FEMININE && after.firstOrNull()?.let {
+                    it.endsWith("ую") || it.endsWith("юю") || it in FEMININE_ACCUSATIVE
+                } == true -> "одну"
+                else -> RuNumbers.cardinal(n, gender)
+            }
+            // Число в начале фразы — с заглавной буквы, как и всё предложение.
+            val head = t.substring(0, m.range.first).trimEnd()
+            if (head.isEmpty() || head.last() in ".!?:…\n") words.replaceFirstChar { it.uppercase() } else words
+        }
+        return t
+    }
+
+    private val DIGITS = listOf("ноль", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять")
 
     /**
      * Режет длинный текст на куски не длиннее [max] символов по границам предложений:
@@ -141,7 +263,10 @@ object SpeechText {
         t = Regex("""(\d+)\s?км/ч""").replace(t) { "${it.groupValues[1]} ${ai.nova.core.assistant.RuFormat.plural(it.groupValues[1].takeLast(3).toLong(), "километр", "километра", "километров")} в час" }
         val units = listOf(
             "км" to Triple("километр", "километра", "километров"), "кг" to Triple("килограмм", "килограмма", "килограммов"),
-            "г\\." to Triple("грамм", "грамма", "грамм"), "мм" to Triple("миллиметр", "миллиметра", "миллиметров"), "сек\\." to Triple("секунда", "секунды", "секунд"),
+            "мл" to Triple("миллилитр", "миллилитра", "миллилитров"), "см" to Triple("сантиметр", "сантиметра", "сантиметров"),
+            "л" to Triple("литр", "литра", "литров"), "шт\\." to Triple("штука", "штуки", "штук"),
+            "чел\\." to Triple("человек", "человека", "человек"), "коп\\." to Triple("копейка", "копейки", "копеек"),
+            "сек\\." to Triple("секунда", "секунды", "секунд"),
             "гПа" to Triple("гектопаскаль", "гектопаскаля", "гектопаскалей"), "мм рт\\. ст\\." to Triple("миллиметр ртутного столба", "миллиметра ртутного столба", "миллиметров ртутного столба"),
         )
         for ((u, forms) in units.sortedByDescending { it.first.length }) {
@@ -178,9 +303,31 @@ object SpeechText {
             Regex("""(\d+)(?:,(\d+))?\s?нед\.""") to Triple("неделя", "недели", "недель"),
             Regex("""(\d+)(?:,(\d+))?\s?мес\.""") to Triple("месяц", "месяца", "месяцев"),
             Regex("""(\d+)(?:,(\d+))?\s?м/с""") to Triple("метр в секунду", "метра в секунду", "метров в секунду"),
+            Regex("""(\d+)(?:,(\d+))?\s?мм""") to Triple("миллиметр", "миллиметра", "миллиметров"),
+            Regex("""(\d+)(?:,(\d+))?\s?г\.(?!\p{L})""") to Triple("грамм", "грамма", "грамм"),
+            Regex("""(?<![\d.])(\d{1,3})(?:,(\d+))?\s?г(?![\p{L}.])""") to Triple("грамм", "грамма", "грамм"),
             Regex("""(\d+)(?:,(\d+))?\s?%""") to Triple("процент", "процента", "процентов"),
         )
         var t = text
+        // Сумма с копейками: «890,50 ₽» → «890 рублей 50 копеек». Иначе движок читает
+        // «восемьсот девяносто целых и пятьдесят сотых рубля», а в банковском пуше это обычная запись.
+        val moneyWords = mapOf(
+            "₽" to Triple("рубль", "рубля", "рублей"),
+            "\$" to Triple("доллар", "доллара", "долларов"),
+            "€" to Triple("евро", "евро", "евро"),
+        )
+        val minorWords = mapOf("₽" to Triple("копейка", "копейки", "копеек"), "\$" to Triple("цент", "цента", "центов"), "€" to Triple("цент", "цента", "центов"))
+        t = Regex("""(\d[\d  ]*),(\d{1,2})\s?([₽$€])""").replace(t) { m ->
+            val whole = m.groupValues[1]
+            val n = whole.replace(" ", "").replace(" ", "").toLongOrNull() ?: return@replace m.value
+            val k = m.groupValues[2].padEnd(2, '0').toLongOrNull() ?: return@replace m.value
+            val symbol = m.groupValues[3]
+            val (one, few, many) = moneyWords[symbol] ?: return@replace m.value
+            val major = ai.nova.core.assistant.RuFormat.plural(n, one, few, many)
+            if (k == 0L) return@replace "$whole $major"
+            val (kOne, kFew, kMany) = minorWords[symbol] ?: return@replace m.value
+            "$whole $major $k " + ai.nova.core.assistant.RuFormat.plural(k, kOne, kFew, kMany)
+        }
         // «+12°» → «плюс 12 градусов», «−3°» → «минус 3 градуса».
         t = Regex("""(?:(?<=^|[\s(…:])([+−-]))?(\d+)(?:,(\d+))?\s?°\s?[CС]?(?![\p{L}])""").replace(t) { m ->
             val n = m.groupValues[2].toLongOrNull() ?: return@replace m.value

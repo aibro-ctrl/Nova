@@ -54,8 +54,8 @@ fun NovaVoiceSection(c: AppContainer) {
             val selected = c.novaVoiceModels.effective(s.novaVoice) == v.id
             val status = when (val st = state) {
                 NovaVoiceModels.State.Ready -> if (selected) "Выбран · работает без интернета" else "Скачан"
-                NovaVoiceModels.State.Missing -> "${v.subtitle} · ~${v.bytes / 1_000_000} МБ"
-                is NovaVoiceModels.State.Downloading -> "Скачиваю… ${(st.progress * 100).toInt()}%"
+                NovaVoiceModels.State.Missing -> "${v.subtitle} · скачать ${v.bytes / 1_000_000} МБ"
+                is NovaVoiceModels.State.Downloading -> "Скачиваю… ${(st.progress * 100).toInt()}% · можно закрыть, продолжится с этого места"
                 NovaVoiceModels.State.Installing -> "Устанавливаю…"
                 is NovaVoiceModels.State.Failed -> "Не скачался: ${st.message}. Нажмите, чтобы повторить"
             }
@@ -74,7 +74,15 @@ fun NovaVoiceSection(c: AppContainer) {
                         when (state) {
                             is NovaVoiceModels.State.Downloading, NovaVoiceModels.State.Installing ->
                                 CircularProgressIndicator(Modifier.padding(end = 12.dp).size(22.dp), strokeWidth = 2.dp)
-                            NovaVoiceModels.State.Ready -> TextButton(onClick = { scope.launch { c.novaVoice.speak(sample, voice = v.id) } }) { Text("Слушать") }
+                            NovaVoiceModels.State.Ready -> Row {
+                                TextButton(onClick = { scope.launch { c.novaVoice.speak(sample, voice = v.id) } }) { Text("Слушать") }
+                                if (!selected) TextButton(onClick = {
+                                    scope.launch {
+                                        c.novaVoiceModels.delete(v.id)
+                                        c.settings.setNovaVoice(c.novaVoiceModels.effective(s.novaVoice))
+                                    }
+                                }) { Text("Удалить") }
+                            }
                             else -> TextButton(onClick = {
                                 scope.launch {
                                     c.settings.setNovaVoice(v.id)
@@ -89,7 +97,8 @@ fun NovaVoiceSection(c: AppContainer) {
     }
     Hint(
         "Голоса скачиваются один раз из релизов Нова на GitHub (оттуда же приходят обновления) и проверяются по контрольной сумме. " +
-            "Лицензии: Денис и Дмитрий — CC0 (свободно), Ирина — датасет RHVoice, Руслан — только некоммерческое использование.",
+            "Лицензии: Денис и Дмитрий — CC0, Вера, Соня и Ася — Apache-2.0 (свободно), Ирина — датасет RHVoice, Руслан — только некоммерческое использование. " +
+            "После скачивания голос работает без интернета: текст ответов никуда не отправляется.",
     )
     Text(
         "Стили звучания и скорость ниже работают и для голоса Нова.",

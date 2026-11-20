@@ -66,10 +66,13 @@ class NovaVoiceModels(context: Context) {
             val zip = File(root, "${v.id}.zip.part")
             try {
                 root.mkdirs()
-                state.value = State.Downloading(0f)
+                // Нужно место и на архив, и на распакованный голос (примерно столько же).
+                val need = (v.bytes - zip.length()).coerceAtLeast(0) + v.bytes
+                if (root.usableSpace in 1..need) error("не хватает места на телефоне: нужно ${need / 1_000_000} МБ")
+                state.value = State.Downloading(if (zip.isFile) (zip.length().toFloat() / v.bytes).coerceIn(0f, 1f) else 0f)
                 fetch(v, zip) { state.value = State.Downloading(it) }
                 state.value = State.Installing
-                if (sha256(zip) != v.sha256) error("файл повреждён — попробуйте ещё раз")
+                if (sha256(zip) != v.sha256) throw Corrupt("файл повреждён — скачаю заново")
                 target.deleteRecursively(); target.mkdirs()
                 File(target, INCOMPLETE).createNewFile()
                 unzip(zip, target)
@@ -80,7 +83,8 @@ class NovaVoiceModels(context: Context) {
                 true
             } catch (e: Exception) {
                 Logger.w(TAG, "Голос ${v.id} не скачан", e)
-                zip.delete()
+                // Скачанное не выбрасываем: при повторной попытке докачаем с того же места.
+                if (e is Corrupt) zip.delete()
                 target.deleteRecursively()
                 state.value = State.Failed(
                     when (e) {
@@ -99,21 +103,35 @@ class NovaVoiceModels(context: Context) {
         states[id]?.value = State.Missing
     }
 
+    /** Обрыв при загрузке: качать заново, а не докачивать битое. */
+    private class Corrupt(message: String) : Exception(message)
+
+    /**
+     * Качает архив голоса, продолжая с места обрыва: сервер отдаёт остаток по Range,
+     * поэтому прерванная загрузка не начинается с нуля.
+     */
     private fun fetch(v: Voice, out: File, progress: (Float) -> Unit) {
-        var conn = open(v.url)
+        var done = if (out.isFile) out.length() else 0L
+        if (done > v.bytes) { out.delete(); done = 0 }
+        if (done == v.bytes && done > 0) return
+        var conn = open(v.url, done)
         repeat(5) {
             if (conn.responseCode in 300..399) {
                 val next = conn.getHeaderField("Location") ?: error("редирект без адреса")
                 conn.disconnect()
-                conn = open(URL(URL(v.url), next).toString())
+                conn = open(URL(URL(v.url), next).toString(), done)
             }
         }
+        if (conn.responseCode == 416) { out.delete(); done = 0; conn.disconnect(); conn = open(v.url) }
         if (conn.responseCode !in 200..299) error("HTTP ${conn.responseCode}")
-        val total = conn.contentLengthLong.takeIf { it > 0 } ?: v.bytes
-        var read = 0L
-        var last = 0f
+        // Сервер проигнорировал Range — начинаем архив заново.
+        val append = done > 0 && conn.responseCode == 206
+        if (!append) done = 0
+        val total = (conn.contentLengthLong.takeIf { it > 0 } ?: (v.bytes - done)) + done
+        var read = done
+        var last = if (total > 0) (read.toFloat() / total) else 0f
         conn.inputStream.use { input ->
-            FileOutputStream(out).use { output ->
+            FileOutputStream(out, append).use { output ->
                 val buf = ByteArray(BUFFER)
                 while (true) {
                     val n = input.read(buf)
@@ -128,11 +146,12 @@ class NovaVoiceModels(context: Context) {
         conn.disconnect()
     }
 
-    private fun open(url: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
+    private fun open(url: String, from: Long = 0): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
         connectTimeout = 20_000
         readTimeout = 60_000
         instanceFollowRedirects = true
         setRequestProperty("User-Agent", "NovaAssistant")
+        if (from > 0) setRequestProperty("Range", "bytes=$from-")
         connect()
     }
 
@@ -176,9 +195,9 @@ class NovaVoiceModels(context: Context) {
             Voice("irina", "Ирина", "Женский", "7f8b6410559edad2dcfab7fa4813f0c4a09b12748edbe584397b6b5fc62a9782", 67_404_557),
             Voice("ruslan", "Руслан", "Мужской", "ac37cb0ce13b7ad0d4f11075262d51c312d9b0956f0f9014adad078deff84120", 67_425_668),
             // Женские голоса сообщества Piper (rraaww/ru_piper, Apache-2.0).
-            Voice("vera", "Вера", "Женский, мягкий", "65db3f0695b89785aea6ba27665688a1fee61d5c930f7e3ff84d3ab79bcf4b99", 67_434_356),
-            Voice("sonya", "Соня", "Женский, звонкий", "29b5443d23b4f5ed14202fd06660d6411115f7f4d6f3c130cb0cb7cd2e1f7737", 67_432_916),
-            Voice("asya", "Ася", "Женский, высокий", "ba6709df20422c797b76a4eaada6f8d2862a08824846a15c1c6d1b84a91aeae2", 67_429_932),
+            Voice("vera", "Вера", "Женский, мягкий", "0377eed609a475c7e7bdc3bb5e2385afface9f11faed13f66b808424eb271d4c", 67_434_356),
+            Voice("sonya", "Соня", "Женский, звонкий", "c2af3dd88acdc4a94132c7b7059126e6f35cd84a00efdb91334964764b90c8f1", 67_432_916),
+            Voice("asya", "Ася", "Женский, высокий", "39506a1c70135a87345bcc574ee64b270f7f4bd58fd1aeb60dfc9c04e634fca3", 67_429_932),
         )
     }
 }

@@ -214,15 +214,22 @@ internal fun VoiceSpeechPage(c: AppContainer, onBack: () -> Unit) {
         item(key = "routines") { RoutinesSection(c) }
         item(key = "more") { MoreToggle(advanced, { advanced = !advanced }) }
 
-        if (advanced && s.ttsEnabled) item(key = "rate") {
-            SectionLabel("Скорость · ${"%.1f".format(s.speechRate)}×   Высота · ${"%.1f".format(s.speechPitch)}")
+        if (s.ttsEnabled) item(key = "rate") {
+            SectionLabel("Скорость · ${"%.1f".format(s.speechRate)}×   Громкость · ${(s.speechVolume * 100).toInt()}%")
             Group {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Text("Скорость", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Скорость речи", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Slider(value = s.speechRate, onValueChange = { v -> scope.launch { c.settings.setSpeechRate(v) } }, valueRange = 0.5f..2f)
+                    Text("Громкость голоса Нова", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Slider(value = s.speechVolume, onValueChange = { v -> scope.launch { c.settings.setSpeechVolume(v) } }, valueRange = 0.1f..1f)
+                    TextButton(onClick = { scope.launch { c.speech.speak(sample) } }) { Text("Проверить голос") }
+                }
+            }
+            if (advanced) Group {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Text("Высота голоса", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Slider(value = s.speechPitch, onValueChange = { v -> scope.launch { c.settings.setSpeechPitch(v) } }, valueRange = 0.5f..2f)
-                    TextButton(onClick = { scope.launch { c.speech.speak(sample) } }) { Text("Прослушать") }
+                    Hint("Выше 1.0 голос звучит неестественно: модель обучена на обычной высоте.")
                 }
             }
         }

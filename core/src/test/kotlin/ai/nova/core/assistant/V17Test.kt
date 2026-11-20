@@ -100,7 +100,8 @@ class DeclensionTest {
         assertEquals("Записала: 1 рубль на кофе", s.declineUnits("Записала: 1 ₽ на кофе"))
         assertEquals("Итого 1 234 рубля", s.declineUnits("Итого 1 234 ₽"))
         assertEquals("850 рублей и 21 доллар", s.declineUnits("850 ₽ и 21 $"))
-        assertEquals("12,50 рубля", s.declineUnits("12,50 ₽"))
+        assertEquals("12 рублей 50 копеек", s.declineUnits("12,50 ₽"))
+        assertEquals("15 780 рублей 25 копеек", s.declineUnits("15 780,25 ₽"))
         assertEquals("через 3 дня", s.declineUnits("через 3 дн."))
     }
 
