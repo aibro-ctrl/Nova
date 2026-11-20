@@ -131,6 +131,7 @@ enum class SettingsPage(val route: String, val title: String, val subtitle: Stri
     ACCOUNT("settings/account", "Аккаунт", "Синхронизация между устройствами", Icons.Rounded.Cloud),
     BACKUP("settings/backup", "Резервная копия", "Сохранить записи в файл и перенести на другой телефон", Icons.Rounded.Backup),
     CAPABILITIES("settings/capabilities", "Что умеет Нова", "Команды и примеры", Icons.Rounded.Lightbulb, main = false),
+    PERSONA("settings/persona", "Характер Нова", "Как разговаривает и что предлагает", Icons.Rounded.Face, main = false),
     ROUTINES("settings/routines", "Сценарии", "Свои фразы-команды, разговор и сводки", Icons.Rounded.Bolt, main = false),
     CLOCK("settings/clock", "Будильники и таймеры", "Свои или телефона", Icons.Rounded.Alarm, main = false),
     APPEARANCE("settings/appearance", "Оформление", "Тема и цвет", Icons.Rounded.Palette, main = false),
@@ -156,6 +157,7 @@ fun SettingsScreen(
         SettingsPage.BACKUP -> BackupPage(c, onBack)
         SettingsPage.ABOUT -> AboutPage(c, onBack)
         SettingsPage.CAPABILITIES -> CapabilitiesPage(c, onBack, openAi = { open(SettingsPage.AI) })
+        SettingsPage.PERSONA -> PersonaPage(c, onBack)
         SettingsPage.ROUTINES -> RoutinesPage(c, onBack)
         SettingsPage.CLOCK -> ClockPage(onBack)
     }

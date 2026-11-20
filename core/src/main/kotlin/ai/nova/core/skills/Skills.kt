@@ -225,7 +225,7 @@ class Skills(
                 lastSkillAt = time.now()
                 SkillOutcome.Say(NewsService.answer(last.topic, next, from = from))
             }
-            is SkillCommand.Tale -> { lastSkillAt = time.now(); tale(Tales.Request(null, false), ai) }
+            is SkillCommand.Tale -> { lastSkillAt = time.now(); tale(Tales.Request(null, false), cfg, ai) }
             else -> null
         }
     }
@@ -438,7 +438,7 @@ class Skills(
             SkillOutcome.Say("Запомнила: ваш город — $resolved. Буду говорить погоду для него, если геолокация выключена.")
         }
         is SkillCommand.StartGame -> cmd.game?.let { startGame(it) } ?: askGame()
-        is SkillCommand.Tale -> tale(cmd.request, ai)
+        is SkillCommand.Tale -> tale(cmd.request, cfg, ai)
         is SkillCommand.Almanac -> SkillOutcome.Say(almanac(cmd))
         // Поздравление пишет облачный AI; без него — готовые шаблоны (офлайн-модель думает долго).
         is SkillCommand.Greet -> greet(cmd, ai.takeIf { cfg.useAI })
@@ -946,11 +946,12 @@ class Skills(
 
     // ------------------------------------------------------------------ Сказки
 
-    private suspend fun tale(r: Tales.Request, ai: SkillAi?): SkillOutcome {
+    private suspend fun tale(r: Tales.Request, cfg: AssistantSettings, ai: SkillAi?): SkillOutcome {
         if (r.invent || (r.about != null && Tales.find(r.about) == null)) {
             val about = r.about ?: "доброго котёнка"
             val out = ai?.invoke(
-                "Ты добрая рассказчица сказок для детей. Сочини короткую добрую сказку на русском (150–250 слов) без страшных сцен, с хорошим концом. Только текст сказки, начни с названия в кавычках.",
+                "Ты добрая рассказчица сказок для детей. Сочини короткую добрую сказку на русском (150–250 слов) без страшных сцен, с хорошим концом. " +
+                    "Только текст сказки, начни с названия в кавычках. ${cfg.persona.personality.skillStyle}",
                 "Сказка про $about.", 900,
             )
             if (!out.isNullOrBlank()) return SkillOutcome.Say(out.trim())

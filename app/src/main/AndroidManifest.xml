@@ -138,7 +138,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:label="@string/app_name"
+        android:label="${appLabel}"
         android:supportsRtl="true"
         android:theme="@style/Theme.Nova"
         android:networkSecurityConfig="@xml/network_security_config"
@@ -203,7 +203,7 @@
         <service
             android:name=".assist.NovaVoiceInteractionService"
             android:exported="true"
-            android:label="@string/app_name"
+            android:label="${appLabel}"
             android:permission="android.permission.BIND_VOICE_INTERACTION">
             <meta-data
                 android:name="android.voice_interaction"
@@ -274,7 +274,7 @@
         <service
             android:name=".notify.NovaNotificationListener"
             android:exported="true"
-            android:label="@string/app_name"
+            android:label="${appLabel}"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />

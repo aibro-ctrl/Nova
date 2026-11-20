@@ -49,6 +49,13 @@ val prepareLlamaSources by tasks.registering(Sync::class) {
 }
 tasks.matching { it.name.startsWith("configureCMake") || it.name.startsWith("buildCMake") }.configureEach { dependsOn(prepareLlamaSources) }
 
+/**
+ * Превью-сборка для проверки на телефоне рядом с установленным релизом: другой пакет и подпись debug,
+ * поэтому ставится отдельно, не задевая данные и настройки основной Новы.
+ * Включается только флагом: ./gradlew :app:assembleDebug -Pnova.preview=true
+ */
+val previewBuild = project.findProperty("nova.preview") == "true"
+
 val releaseKeystoreFile = config("NOVA_KEYSTORE_FILE")
 val hasReleaseSigning = releaseKeystoreFile.isNotEmpty() && file(releaseKeystoreFile).exists()
 
@@ -58,6 +65,9 @@ android {
 
     defaultConfig {
         applicationId = "ai.nova.app"
+        // Название на телефоне: у превью своё, чтобы не путать с основной Новой.
+        manifestPlaceholders["appLabel"] = if (previewBuild) "Нова превью" else "@string/app_name"
+        if (previewBuild) applicationIdSuffix = ".preview"
         minSdk = 24
         targetSdk = 35
         // Код версии выводится из номера (1.3.0 → 10300): новые релизы всегда ставятся поверх старых.

@@ -103,7 +103,7 @@ internal fun VoiceSpeechPage(c: AppContainer, onBack: () -> Unit) {
                     }
                 }
             }
-            SectionLabel("Характер голоса")
+            SectionLabel("Интонация голоса")
             Group {
                 VOICE_STYLES.forEachIndexed { i, st ->
                     if (i > 0) GroupDivider(inset = 52.dp)
@@ -114,17 +114,6 @@ internal fun VoiceSpeechPage(c: AppContainer, onBack: () -> Unit) {
                             if (!systemMode) c.novaVoice.speak(sample, rateOverride = st.rate, pitchOverride = st.pitch)
                             else c.tts.preview(sample, s.voiceName, st.pitch, st.rate)
                         }
-                    }
-                }
-            }
-        }
-        item(key = "persona") {
-            SectionLabel("Характер Нова")
-            Group {
-                ai.nova.core.assistant.Persona.entries.forEachIndexed { i, p ->
-                    if (i > 0) GroupDivider(inset = 52.dp)
-                    RadioRow(p.title, p.hint.replaceFirstChar { it.uppercase() }, s.persona == p.wire) {
-                        scope.launch { c.settings.setPersona(p.wire) }
                     }
                 }
             }

@@ -9,12 +9,16 @@ enum class Persona(val wire: String, val title: String, val hint: String) {
     BUSINESS("business", "Деловая", "коротко и по делу, без лишних слов"),
     PLAYFUL("playful", "Шутливая", "с лёгким юмором и весельем");
 
-    /** Строка для системной подсказки AI. */
-    val tone: String get() = when (this) {
-        CARING -> "Тон: тёплый и заботливый — поддерживай, замечай, если человек устал или расстроен."
-        BUSINESS -> "Тон: деловой — максимально коротко и по делу, без восклицаний, шуток и лишних любезностей."
-        PLAYFUL -> "Тон: весёлый и шутливый — можно лёгкую шутку или игру слов, но ответ всё равно по делу."
-    }
+    /** Поведенческий профиль: что именно уходит в системный промпт модели. */
+    val personality: Personality
+        get() = when (this) {
+            CARING -> Personalities.caring
+            BUSINESS -> Personalities.business
+            PLAYFUL -> Personalities.playful
+        }
+
+    /** Строка для системной подсказки AI — только для случаев, где полный профиль не нужен. */
+    val tone: String get() = personality.brief
 
     companion object {
         fun of(wire: String?): Persona = entries.firstOrNull { it.wire == wire } ?: CARING

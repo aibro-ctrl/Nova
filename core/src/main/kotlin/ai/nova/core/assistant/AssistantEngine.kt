@@ -148,6 +148,10 @@ class AssistantEngine(
     private var lastMoreable: String? = null
     private var lastWasChat = false
     private var repeating = false
+    /** Уже прозвучавшие предложения помощи и время последнего — чтобы не навязываться. */
+    private val shownSuggestions = LinkedHashSet<String>()
+    private var lastSuggestionAt: java.time.Instant = java.time.Instant.EPOCH
+
     /** План голосом, который ещё не в календаре: «в календарь» добавит именно его. */
     private var pendingCalendar: PlanCalendar? = null
     private var pendingCalendarAt: java.time.Instant = java.time.Instant.EPOCH
@@ -204,14 +208,50 @@ class AssistantEngine(
         return reply.copy(expectFollowUp = cfg.dialogMode || waiting)
     }
 
-    /** Характер в ответе: шутливая иногда добавляет фразу к сделанному, деловая обходится без восклицаний. */
-    private fun decorate(reply: AssistantReply, cfg: AssistantSettings): AssistantReply = when (cfg.persona) {
+    /**
+     * Характер в ответе: шутливая иногда добавляет фразу к сделанному, деловая обходится без восклицаний,
+     * заботливая — предлагает одно полезное действие по реальным данным дня (не чаще, чем раз в несколько минут).
+     * Основная работа характера — в системном промпте; здесь только то, что модель не видит (данные приложения).
+     */
+    private suspend fun decorate(reply: AssistantReply, cfg: AssistantSettings): AssistantReply = when (cfg.persona) {
         Persona.PLAYFUL -> {
             val extra = if (reply.changedData && !reply.awaitingAnswer && !reply.awaitingConfirmation && !reply.sensitive) cfg.persona.flourish(time.now().epochSecond) else null
             if (extra != null) reply.copy(text = reply.text.trimEnd() + " " + extra) else reply
         }
         Persona.BUSINESS -> if (reply.speakLanguage == null) reply.copy(text = reply.text.replace("!", ".").replace("..", ".")) else reply
-        Persona.CARING -> reply
+        Persona.CARING -> withSuggestion(reply)
+    }
+
+    /** Предложение помощи заботливой Новы — одно на ответ, с паузой и без повторов. */
+    private suspend fun withSuggestion(reply: AssistantReply): AssistantReply {
+        if (reply.sensitive || reply.awaitingAnswer || reply.awaitingConfirmation || reply.endsDialog) return reply
+        val now = time.now()
+        if (java.time.Duration.between(lastSuggestionAt, now) < SUGGESTION_COOLDOWN) return reply
+        val data = runCatching { suggestionData() }.getOrNull() ?: return reply
+        val suggestion = Suggestions.caring(data, shownSuggestions) ?: return reply
+        shownSuggestions += suggestion.key
+        while (shownSuggestions.size > 20) shownSuggestions.remove(shownSuggestions.first())
+        lastSuggestionAt = now
+        return reply.copy(text = reply.text.trimEnd() + " " + suggestion.text)
+    }
+
+    /** Что реально происходит у пользователя: задачи, ближайшее напоминание, траты. */
+    private suspend fun suggestionData(): SuggestionData {
+        val today = time.today()
+        val nowTime = time.zonedNow().toLocalTime()
+        val open = tasks.all().filter { !it.done }
+        val reminder = reminders.active().minByOrNull { it.triggerAt }
+        val minutes = reminder?.triggerAt?.let { java.time.Duration.between(time.now(), it).toMinutes() }
+        val spentToday = expensesBetween(today, today).filter { it.amountMinor > 0 }.sumOf { it.amountMinor } / 100
+        val week = expensesBetween(today.minusDays(6), today).filter { it.amountMinor > 0 }.sumOf { it.amountMinor } / 100
+        return SuggestionData(
+            tasksToday = open.count { it.dueDate == today },
+            overdue = open.count { it.isOverdue(today, nowTime) },
+            reminderInMinutes = minutes?.takeIf { it >= 0 },
+            reminderText = reminder?.text,
+            spentToday = spentToday,
+            usualDaySpend = week / 7,
+        )
     }
 
     /** «Будь деловой», «какой у тебя характер», а также приветствие и «как дела» в своём характере. */
@@ -284,7 +324,7 @@ class AssistantEngine(
         val lc = localChat?.takeIf { it.available } ?: return null
         val history = (if (cfg.locked) emptyList() else context.messages.takeLast(6)) + ChatMessage(ChatMessage.Role.USER, text)
         val out = try {
-            lc.reply(ai.nova.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName, cfg.persona.tone), history)
+            lc.reply(ai.nova.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName, cfg.persona.personality.brief), history)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1490,6 +1530,8 @@ class AssistantEngine(
         private val UNDO = Regex("""^(?:отмени|удали|убери)\s+(?:последнее|это|то что (?:я )?(?:только что )?(?:сказала|сказал|добавила|добавил))$|^(?:отмени|отмена последнего)$""")
         private val CONTINUE = Regex("""^(?:продолжай|продолжи|дальше|и что дальше|а дальше|что было дальше|рассказывай дальше|продолжай рассказ|и\?)$""")
         private const val MAX_CANDIDATES = 20
+        /** Заботливая Нова предлагает помощь не чаще, чем раз в столько времени. */
+        private val SUGGESTION_COOLDOWN: java.time.Duration = java.time.Duration.ofMinutes(4)
         /** «В календарь» — согласие на событие в календаре телефона после созданного плана. */
         private val IN_CALENDAR = Regex("""(?:(?:добавь|добавить|внеси|запиши|записать|поставь|помести|сохрани|кинь)\s+(?:это\s+|его\s+|ее\s+|её\s+|план\s+)?)?(?:в|во)\s+календарь(?![а-яе])""")
         /** Сколько времени после последнего шага готовку можно продолжить («продолжим готовить»). */
