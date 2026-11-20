@@ -82,19 +82,20 @@ object LocalModels {
 
     /**
      * Готовые GGUF-репозитории для обновления модели в одно нажатие, от крупной к мелкой.
-     * Qwen3-Instruct-2507 не «думает» вслух и заметно точнее Qwen3.5: те выпуски на телефоне
-     * уходили в рассуждения вместо ответа.
+     * Проверены на телефоне 8 ГБ: Gemma 3 1B отвечает верно и быстрее всех, Qwen3 1.7B и
+     * Qwen2.5 1.5B путаются в фактах, DeepSeek-R1-Distill уходит в рассуждения на английском,
+     * Qwen3.5 отвечал мусором. Крупные (3B, 4B) точнее, но на 8 ГБ ждать 20–40 секунд.
      */
     val RECOMMENDED = listOf(
         "unsloth/Qwen3-4B-Instruct-2507-GGUF",
         "Qwen/Qwen2.5-3B-Instruct-GGUF",
-        "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+        "unsloth/gemma-3-1b-it-GGUF",
     )
 
     /** 4B (~2,5 ГБ): столько памяти нужно, чтобы ответ не ждать десятки секунд. */
     private const val BIG_RAM = 12_000_000_000L
 
-    /** 3B (~2,1 ГБ): на телефоне 8 ГБ он вдвое медленнее 1.5B — начинаем с него только с 10 ГБ. */
+    /** 3B (~2,1 ГБ): на телефоне 8 ГБ он вдвое медленнее 1B — начинаем с него только с 10 ГБ. */
     private const val MID_RAM = 10_000_000_000L
 
     /** Что пробовать на этом телефоне: сначала самое крупное, что он вытянет. */
@@ -155,16 +156,25 @@ object LocalModels {
         return (repo + " · " + file.quant).trim(' ', '·')
     }
 
-    /** Человеческое имя модели: «unsloth/Qwen3.5-2B-GGUF» → «Qwen 3.5 2B». */
+    /** Человеческое имя модели: «unsloth/gemma-3-1b-it-GGUF» → «Gemma 3 1B». */
     fun friendlyName(repo: String): String {
-        val name = repo.substringAfterLast('/')
-            .removeSuffix(".gguf")
-            .replace(Regex("""(?i)-?gguf$"""), "")
-            .replace('-', ' ')
-            .replace('_', ' ')
-            .trim()
-        return name.replace(Regex("""(?i)qwen\s*(\d+(?:\.\d+)?)"""), "Qwen $1").trim()
+        val raw = repo.substringAfterLast('/').removeSuffix(".gguf").replace(Regex("""(?i)-gguf$"""), "")
+        return raw.split('-', '_')
+            .filter { it.isNotBlank() && !it.equals("instruct", true) && !it.equals("it", true) }
+            .joinToString(" ") { part ->
+                when {
+                    BRAND.matches(part) -> part.replaceFirstChar { it.uppercase() }
+                    SIZE.matches(part) -> part.uppercase()
+                    else -> part
+                }
+            }
     }
+
+    /** Семейства моделей, которые пишутся с заглавной: «gemma-3-1b-it» → «Gemma 3 1B». */
+    private val BRAND = Regex("""(?i)gemma|qwen|llama|deepseek|phi|glm|smol""")
+
+    /** Размер модели: «1b», «4B», «1.5b» — так и печатаем, заглавной буквой. */
+    private val SIZE = Regex("""\d+(?:[._]\d+)?b""", RegexOption.IGNORE_CASE)
 
     /** Что значит квант — простыми словами, без «Q4_K_M» в качестве единственного объяснения. */
     fun quantNote(quant: String): String = when (quant.uppercase()) {

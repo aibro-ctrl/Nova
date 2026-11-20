@@ -366,7 +366,7 @@ private fun ModelPicker(c: AppContainer, type: AIProviderType, current: String, 
 
 /**
  * Офлайн-модель: свободный разговор без интернета и ключей.
- * Главный путь — одна кнопка: Нова сама находит свежую Qwen 3.5 под этот телефон и заменяет модель.
+ * Главный путь — одна кнопка: Нова сама подбирает модель под этот телефон и заменяет старую.
  * Выбор репозитория вручную остался для тех, кому нужен особый файл.
  */
 @Composable
@@ -392,7 +392,7 @@ private fun OfflineModelSection(c: AppContainer) {
                 GroupDivider()
                 RowItem(
                     title = "Обновить модель",
-                    subtitle = "Сейчас ${c.offlineLlm.modelLabel}. Нажмите — найду свежую Qwen 3.5, скачаю и заменю. Выбирать ничего не нужно",
+                    subtitle = "Сейчас ${c.offlineLlm.modelLabel}. Нажмите — подберу модель под этот телефон, скачаю и заменю. Выбирать ничего не нужно",
                     icon = Icons.Rounded.SystemUpdate,
                     onClick = { scope.launch { c.offlineLlm.update() } },
                     trailing = { TextButton(onClick = { scope.launch { c.offlineLlm.update() } }) { Text("Обновить") } },
@@ -411,14 +411,14 @@ private fun OfflineModelSection(c: AppContainer) {
             ai.nova.app.llm.OfflineLlm.State.Missing, is ai.nova.app.llm.OfflineLlm.State.Failed -> RowItem(
                 title = "Скачать офлайн-модель",
                 subtitle = (st as? ai.nova.app.llm.OfflineLlm.State.Failed)?.let { "Не получилось: ${it.message}" }
-                    ?: ("Qwen 3.5, около 1,3 ГБ. Свободный разговор без интернета и без ключей" +
+                    ?: ("Подберу модель под этот телефон — от 0,8 до 2,5 ГБ, смотря сколько памяти в телефоне. Свободный разговор без интернета и без ключей" +
                         if (metered) ". Сейчас мобильный интернет — лучше по Wi‑Fi" else ""),
                 icon = Icons.Rounded.AutoAwesome,
                 trailing = { TextButton(onClick = { scope.launch { c.offlineLlm.update() } }) { Text(if (st is ai.nova.app.llm.OfflineLlm.State.Failed) "Ещё раз" else "Скачать") } },
             )
             ai.nova.app.llm.OfflineLlm.State.Resolving -> RowItem(
-                title = "Ищу модель новее…",
-                subtitle = "Проверяю каталог Qwen 3.5 — пара секунд",
+                title = "Подбираю модель…",
+                subtitle = "Проверяю каталог моделей — пара секунд",
                 icon = Icons.Rounded.SystemUpdate,
                 trailing = { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) },
             )
@@ -493,9 +493,9 @@ private data class ModelOption(val kind: String, val repo: String, val note: Str
 }
 
 private val MODEL_OPTIONS = listOf(
-    ModelOption("Лёгкая", "unsloth/Qwen3.5-0.8B-GGUF", "самая быстрая, для коротких вопросов и бытовых советов"),
-    ModelOption("Сбалансированная", "unsloth/Qwen3.5-2B-GGUF", "лучший баланс: быстро, но уже умеет рассуждать и помнит диалог"),
-    ModelOption("Умная", "unsloth/Qwen3.5-4B-GGUF", "заметно умнее в сложных вопросах"),
+    ModelOption("Лёгкая", "unsloth/gemma-3-1b-it-GGUF", "самая быстрая и точная на бытовых вопросах"),
+    ModelOption("Сбалансированная", "Qwen/Qwen2.5-3B-Instruct-GGUF", "заметно умнее, но и отвечает вдвое дольше"),
+    ModelOption("Умная", "unsloth/Qwen3-4B-Instruct-2507-GGUF", "лучше всех разбирается в сложном, нужен телефон от 12 ГБ"),
 )
 
 /**
@@ -648,7 +648,7 @@ private fun OfflineModelPicker(c: AppContainer, onDismiss: () -> Unit) {
                 }
             }
             item(key = "pick-hint") {
-                Hint("Все три — разговорные Qwen 3.5: понимают вопрос, помнят диалог, работают без интернета. Картинки и код они не делают — на телефоне это лишнее. Крупнее модель — умнее ответы, но и памяти нужно больше.")
+                Hint("Все три — разговорные модели для телефона: понимают вопрос, помнят диалог, работают без интернета. Картинки и код они не делают — на телефоне это лишнее. Крупнее модель — умнее ответы, но и ждать дольше: на телефоне 8 ГБ 4B думает по 30–40 секунд.")
             }
 
             item(key = "advanced") {

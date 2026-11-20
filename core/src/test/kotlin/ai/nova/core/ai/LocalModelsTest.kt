@@ -42,8 +42,8 @@ class LocalModelsTest {
     }
 
     @Test fun recommendedSkipsBigModelOnWeakPhone() {
-        // 8 ГБ ОЗУ: 3B отвечает вдвое дольше — начинаем с 1.5B.
-        assertEquals("Qwen/Qwen2.5-1.5B-Instruct-GGUF", LocalModels.recommended(8_000_000_000L).first())
+        // 8 ГБ ОЗУ: 3B отвечает вдвое дольше, а Gemma 3 1B точнее прочих мелких — начинаем с неё.
+        assertEquals("unsloth/gemma-3-1b-it-GGUF", LocalModels.recommended(8_000_000_000L).first())
         assertEquals(1, LocalModels.recommended(4_000_000_000L).size)
     }
 
@@ -113,9 +113,10 @@ class LocalModelsTest {
     }
 
     @Test fun friendlyNameHidesRepoDetails() {
-        assertEquals("Qwen 3.5 2B", LocalModels.friendlyName("unsloth/Qwen3.5-2B-GGUF"))
-        assertEquals("Qwen 3.5 4B", LocalModels.friendlyName("unsloth/Qwen3.5-4B-GGUF"))
-        assertEquals("Qwen 2.5 3B Instruct", LocalModels.friendlyName("Qwen/Qwen2.5-3B-Instruct-GGUF"))
+        assertEquals("Qwen3.5 2B", LocalModels.friendlyName("unsloth/Qwen3.5-2B-GGUF"))
+        assertEquals("Gemma 3 1B", LocalModels.friendlyName("unsloth/gemma-3-1b-it-GGUF"))
+        assertEquals("Qwen2.5 3B", LocalModels.friendlyName("Qwen/Qwen2.5-3B-Instruct-GGUF"))
+        assertEquals("Qwen3 4B 2507", LocalModels.friendlyName("unsloth/Qwen3-4B-Instruct-2507-GGUF"))
     }
 
     @Test fun quantNoteExplainsQuant() {
