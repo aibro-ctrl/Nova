@@ -52,6 +52,7 @@ class AndroidSkillHost(
     private val saveNoteTo: suspend (String, String) -> Boolean = { _, _ -> false },
 ) : SkillHost {
     private val locator = Locator(context)
+    private val players = ai.nova.app.media.OtherPlayers(context)
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     /** Какое музыкальное приложение человек выбрал для «включи музыку». */
     private val prefs by lazy { context.getSharedPreferences("nova_music", Context.MODE_PRIVATE) }
@@ -184,8 +185,7 @@ class AndroidSkillHost(
                 // сразу после запуска плеер ещё не готов принять команду.
                 val launch = pkg?.let { context.packageManager.getLaunchIntentForPackage(it) } ?: return false
                 if (!launcher.launch(launch)) return false
-                pressPlay(delayMs = 1_200)
-                pressPlay(delayMs = 3_000)
+                ensurePlaying(pkg)
                 return true
             }
             // Стандартный способ «включи по поиску»: Яндекс Музыка и Spotify по нему реально начинают играть.
@@ -193,12 +193,20 @@ class AndroidSkillHost(
                 .putExtra(SearchManager.QUERY, query)
                 .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
             if (pkg != null) play.setPackage(pkg)
-            if (play.resolveActivity(context.packageManager) != null && launcher.launch(play)) return true
+            if (play.resolveActivity(context.packageManager) != null && launcher.launch(play)) {
+                // Часть плееров (в том числе «Звук») понимает такой запрос только как поиск: песню
+                // они показывают, но не запускают — дожимаем клавишей «играть», если тишина.
+                ensurePlaying(pkg)
+                return true
+            }
             // Не вышло — открываем поиск в самом приложении, а без него в браузере.
             val web = app.webUrl(Uri.encode(query))
             val inApp = Intent(Intent.ACTION_VIEW, Uri.parse(web))
             if (pkg != null) inApp.setPackage(pkg)
-            if (inApp.resolveActivity(context.packageManager) != null && launcher.launch(inApp)) return true
+            if (inApp.resolveActivity(context.packageManager) != null && launcher.launch(inApp)) {
+                ensurePlaying(pkg)
+                return true
+            }
             val browser = Intent(Intent.ACTION_VIEW, Uri.parse(web))
             if (browser.resolveActivity(context.packageManager) == null) return false
             launcher.launch(browser)
@@ -209,12 +217,24 @@ class AndroidSkillHost(
     }
 
     /**
+     * Плеер открылся, но молчит — жмём «играть» несколько раз с паузой: приложение после запуска
+     * ещё не готово принять команду, а клавиша, нажатая раньше времени, уходит в никуда.
+     */
+    private fun ensurePlaying(packageName: String?) {
+        pressPlay(delayMs = 1_200, packageName = packageName)
+        pressPlay(delayMs = 3_000, packageName = packageName)
+        pressPlay(delayMs = 6_000, packageName = packageName)
+    }
+
+    /**
      * Клавиша «играть» для чужого плеера. Работает только когда приложение на экране:
      * из фона такая команда уходит в никуда, а нашу музыку она бы поставила на паузу.
      */
-    private fun pressPlay(delayMs: Long) {
+    private fun pressPlay(delayMs: Long, packageName: String? = null) {
         main.postDelayed({
             if (RadioService.current != null) return@postDelayed
+            // Сначала просим играть саму сессию плеера: клавишу не все приложения слышат.
+            if (players.control(ai.nova.core.assistant.MediaAction.PLAY, packageName)) return@postDelayed
             val am = context.getSystemService(AudioManager::class.java) ?: return@postDelayed
             // Что-то уже играет — второй раз не жмём: чужие плееры понимают эту клавишу как паузу.
             if (am.isMusicActive) return@postDelayed

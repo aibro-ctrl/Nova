@@ -63,6 +63,8 @@ class AndroidDeviceController(
     private val driving: ai.nova.app.health.DrivingMode? = null,
 ) : DeviceController {
 
+    private val players = ai.nova.app.media.OtherPlayers(context)
+
     override suspend fun perform(command: DeviceCommand): DeviceResult = withContext(Dispatchers.Main) {
         try {
             run(command)
@@ -156,6 +158,16 @@ class AndroidDeviceController(
                 DeviceResult("Заряд $level%${if (charging) ", телефон заряжается" else ""}.")
             }
             is DeviceCommand.Media -> {
+                // Свой плеер (радио, превью) и чужие приложения слушаются по-разному: сначала просим
+                // живую медиа-сессию, а клавишей дожимаем только если её нет.
+                if (players.control(c.action)) return DeviceResult(
+                    when (c.action) {
+                        MediaAction.PLAY -> "Включаю."
+                        MediaAction.PAUSE -> "Пауза."
+                        MediaAction.NEXT -> "Следующий трек."
+                        MediaAction.PREVIOUS -> "Предыдущий трек."
+                    },
+                )
                 val code = when (c.action) {
                     MediaAction.PLAY -> KeyEvent.KEYCODE_MEDIA_PLAY
                     MediaAction.PAUSE -> KeyEvent.KEYCODE_MEDIA_PAUSE
