@@ -479,11 +479,12 @@ private fun NovaCloudSection(c: AppContainer) {
             "Облако ${s.assistantName}",
             when {
                 !signedIn -> "Войдите в аккаунт («Настройки → Аккаунт») — и ${s.assistantName} ответит на любые вопросы без своего ключа"
+                s.novaCloud && !s.useAI -> "Включено, но «Облачный AI» ниже выключен — сейчас отвечает модель на телефоне"
                 s.novaCloud -> "Включено: любые вопросы и сложные фразы через сервер ${s.assistantName}. Есть дневной лимит"
                 else -> "Выключено"
             },
             s.novaCloud && signedIn, enabled = signedIn, icon = Icons.Rounded.AutoAwesome,
-        ) { v -> scope.launch { c.settings.setNovaCloud(v) } }
+        ) { v -> scope.launch { c.settings.setNovaCloud(v); if (v && !s.useAI) c.settings.setUseAI(true) } }
     }
 }
 

@@ -259,8 +259,10 @@ class AppContainer(private val context: Context) {
     }
 
     fun assistantSettings(): AssistantSettings = settings.settings.value.let {
+        // «Облачный AI» — главный выключатель: пока он выключен, вопросы решаются на телефоне,
+        // даже если облако Нова доступно. Иначе каждая фраза сначала ждала сеть.
         AssistantSettings(
-            it.assistantName, it.useAI || cloudActive(), it.dialogModeEnabled, locked = isLocked() || appLocked(),
+            it.assistantName, it.useAI, it.dialogModeEnabled, locked = isLocked() || appLocked(),
             userName = it.userName.takeIf { n -> n.isNotBlank() }, city = it.city.takeIf { c -> c.isNotBlank() },
             lockPolicy = lockPolicy(),
             persona = ai.nova.core.assistant.Persona.of(it.persona),

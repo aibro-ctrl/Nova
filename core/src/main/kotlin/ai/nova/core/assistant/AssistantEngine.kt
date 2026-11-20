@@ -138,6 +138,9 @@ class AssistantEngine(
     val context = ConversationContext(time)
     private val mutex = Mutex()
 
+    /** Сколько не пробовать облачный AI после сбоя: иначе каждый вопрос снова ждёт таймаут сети. */
+    private val AI_COOLDOWN_MS = java.time.Duration.ofMinutes(2).toMillis()
+
     /** Последняя ошибка AI (null — последний запрос к AI прошёл успешно). */
     @Volatile var lastAiFailure: AiFailure? = null
         private set
@@ -324,7 +327,7 @@ class AssistantEngine(
         val lc = localChat?.takeIf { it.available } ?: return null
         val history = (if (cfg.locked) emptyList() else context.messages.takeLast(6)) + ChatMessage(ChatMessage.Role.USER, text)
         val out = try {
-            lc.reply(ai.nova.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName, cfg.persona.personality.brief), history)
+            lc.reply(ai.nova.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName, cfg.persona.personality.skillStyle), history)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1178,7 +1181,14 @@ class AssistantEngine(
         smallTalk(text, cfg)?.let { return it }
         // 5. Облачный AI → при недоступности офлайн-парсер.
         var aiError: AIException? = null
-        if (cfg.useAI) {
+        // Облако только что не ответило (сеть, лимит, сервер лежит): не ждём тот же таймаут ещё раз —
+        // отвечаем на телефоне сразу. Через несколько минут снова пробуем облако.
+        val cloudCooldown = lastAiFailure?.let { java.time.Duration.between(it.at, time.now()).toMillis() < AI_COOLDOWN_MS } == true
+        if (cfg.useAI && cloudCooldown) {
+            Logger.w(TAG, "Облачный AI недавно не ответил — отвечаю на устройстве")
+            aiError = AIException.Network(null)
+        }
+        if (cfg.useAI && !cloudCooldown) {
             val provider = try { aiProvider() } catch (e: AIException) { aiError = e; null }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { Logger.w(TAG, "AI-провайдер не создан: ${e::class.simpleName}"); aiError = AIException.Network(e); null }

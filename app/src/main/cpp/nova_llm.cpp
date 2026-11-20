@@ -22,6 +22,11 @@ struct Session {
     llama_context *ctx = nullptr;
     const llama_vocab *vocab = nullptr;
     std::atomic<bool> stop{false};
+    /**
+     * Токены, которые уже разобраны и лежат в памяти контекста. Следующий вопрос начинается с того же
+     * системного промпта — перечитывать его заново значит терять 3–5 секунд на каждый ответ.
+     */
+    std::vector<llama_token> cached;
 };
 
 void log_callback(ggml_log_level level, const char *text, void *) {
@@ -229,12 +234,25 @@ jstring generate_impl(JNIEnv *env, jlong handle, jobjectArray jmessages, jint ma
         return env->NewStringUTF("");
     }
 
-    llama_memory_clear(llama_get_memory(s->ctx), true);
-    for (int32_t i = 0; i < n_prompt; i += 512) {
+    // Переиспользуем общую часть с прошлым запросом (системный промпт и начало разговора):
+    // разбираем только новый хвост, остальное уже лежит в памяти контекста.
+    llama_memory_t mem = llama_get_memory(s->ctx);
+    int32_t common = 0;
+    while (common < (int32_t) s->cached.size() && common < n_prompt && s->cached[common] == tokens[common]) common++;
+    // Тот же вопрос с той же историей целиком: последний токен разбираем заново, иначе брать логиты неоткуда.
+    if (common == n_prompt) common = n_prompt - 1;
+    if (common > 0) {
+        llama_memory_seq_rm(mem, 0, common, -1);
+    } else {
+        llama_memory_clear(mem, true);
+    }
+    LOGI("prompt: %d токенов, из них новых %d", n_prompt, n_prompt - common);
+    for (int32_t i = common; i < n_prompt; i += 512) {
         const int32_t chunk = std::min<int32_t>(512, n_prompt - i);
         llama_batch batch = llama_batch_get_one(tokens.data() + i, chunk);
-        if (llama_decode(s->ctx, batch) != 0) { LOGW("decode prompt failed"); return env->NewStringUTF(""); }
+        if (llama_decode(s->ctx, batch) != 0) { LOGW("decode prompt failed"); s->cached.clear(); return env->NewStringUTF(""); }
     }
+    s->cached.assign(tokens.begin(), tokens.end());
 
     SamplerGuard sampler;
     sampler.smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
@@ -280,6 +298,7 @@ jstring generate_impl(JNIEnv *env, jlong handle, jobjectArray jmessages, jint ma
         }
         llama_batch next = llama_batch_get_one(&tok, 1);
         if (llama_decode(s->ctx, next) != 0) break;
+        s->cached.push_back(tok);
     }
     if (cls) env->DeleteLocalRef(cls);
     if (!pending.empty() && complete_utf8_prefix(pending) == pending.size()) out += pending;

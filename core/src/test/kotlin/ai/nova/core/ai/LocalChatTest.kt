@@ -30,6 +30,30 @@ class LocalChatTest {
         assertEquals(1, chat.asked.size)
     }
 
+    /** Сбой облака: второй вопрос не ждёт тот же таймаут, а сразу идёт в модель на телефоне. */
+    class CountingAi(private val fail: Boolean) : AIProvider {
+        override val type = AIProviderType.OPENAI
+        override val model = "x"
+        var calls = 0
+        override suspend fun complete(request: AIRequest): AIResponse {
+            calls++
+            if (fail) throw AIException.Network(null)
+            return AIResponse("""{"reply":"Из облака","actions":[]}""", model = "x", stopReason = null)
+        }
+    }
+
+    @Test fun failedCloudIsSkippedForAWhile() = runTest {
+        val chat = FakeChat()
+        val env = TestEnv(localChat = chat).apply { settings = AssistantSettings(useAI = true) }
+        val ai = CountingAi(fail = true)
+        env.ai = ai
+        val first = env.engine.handle("почему небо голубое")
+        assertEquals("Из-за рассеяния света в атмосфере.", first.text)
+        val second = env.engine.handle("а почему закат красный")
+        assertEquals("Из-за рассеяния света в атмосфере.", second.text)
+        assertEquals(1, ai.calls)
+    }
+
     @Test fun looksLikeChat() {
         listOf("почему небо голубое", "как приготовить плов", "посоветуй фильм на вечер", "что лучше чай или кофе", "расскажи анекдот про программиста", "можно ли есть грибы сырыми", "ты любишь музыку")
             .forEach { assertTrue(LocalChat.looksLikeChat(it), it) }

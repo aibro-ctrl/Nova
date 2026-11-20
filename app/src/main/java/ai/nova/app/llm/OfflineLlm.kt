@@ -100,6 +100,14 @@ class OfflineLlm(
         // Проверка процессора и загрузка библиотеки (~десятки мс) — не на главном потоке при запуске.
         scope.launch(Dispatchers.Default) {
             LlamaNative.unsupportedReason?.let { _state.value = State.Unsupported(it) }
+            // Модель читается с флеша ~1,5 с. Пусть это происходит, пока человек ещё набирает вопрос,
+            // а не после нажатия: иначе первый ответ кажется вдвое дольше.
+            delay(WARMUP_DELAY_MS)
+            if (_state.value == State.Ready && enabled) {
+                // Под тем же замком, что и ответ: иначе первый вопрос и прогрев загрузят модель дважды.
+                lock.withLock { withContext(Dispatchers.Default) { ensureLoaded() } }
+                scheduleUnload()
+            }
         }
     }
 
@@ -408,7 +416,7 @@ class OfflineLlm(
 
     private fun scheduleUnload() {
         unloadJob?.cancel()
-        unloadJob = scope.launch { delay(5 * 60_000L); unload() }
+        unloadJob = scope.launch { delay(IDLE_UNLOAD_MS); unload() }
     }
 
     private suspend fun unload() = lock.withLock {
@@ -430,6 +438,10 @@ class OfflineLlm(
         private const val CONTEXT = 2048
         /** Сколько ждём ответ: на телефоне это секунды, но «задумавшуюся» модель пора останавливать. */
         private const val REPLY_TIMEOUT_MS = 40_000L
+        /** Загружаем модель заранее, но не в первую секунду запуска: пусть сначала отрисуется экран. */
+        private const val WARMUP_DELAY_MS = 3_000L
+        /** Столько модель держим в памяти после ответа: следующий вопрос ждать не будет. */
+        private const val IDLE_UNLOAD_MS = 10 * 60_000L
         /** Запас памяти сверх файла модели: контекст, граф вычислений, само приложение. */
         private const val MEMORY_RESERVE = 900_000_000L
         /** Русский текст — примерно 2–3 символа на токен: так промпт и ответ помещаются в контекст. */
