@@ -65,6 +65,8 @@ class AndroidDeviceController(
     private val mapsApp: () -> ai.nova.core.assistant.MapsApp? = { null },
     /** «Мой город» из настроек: маршрут ищется в нём, а не в случайном городе. */
     private val city: () -> String? = { null },
+    /** Сохранённые места («я дома», «это моя работа»): маршрут до них строится по координатам. */
+    private val places: () -> List<ai.nova.core.skills.SavedPlace> = { emptyList() },
 ) : DeviceController {
 
     private val players = ai.nova.app.media.OtherPlayers(context)
@@ -230,22 +232,33 @@ class AndroidDeviceController(
             is DeviceCommand.Navigate -> {
                 // Карты: выбранные голосом («в 2ГИС») важнее настроек, а настройки — важнее системного выбора.
                 val chosen = c.app ?: mapsApp()
-                // «Мой город» из настроек: без него карты ищут «вокзал» в последнем открытом городе.
-                val query = ai.nova.core.nlp.RuQuery.withCity(c.destination, city())
+                // Сохранённые места («запомни, я дома») важнее названия, а «Мой город» из настроек —
+                // важнее последнего города, в котором открывали карты.
+                val target = ai.nova.core.assistant.RoutePlanner.target(c.destination, city(), places())
+                if (target == null) {
+                    return DeviceResult(
+                        "Не знаю, где ваш ${c.destination}. Скажите «запомни, я ${if (c.destination == "работа") "на работе" else "дома"}», " +
+                            "когда будете там — запомню место и буду строить туда маршрут.",
+                        ok = false,
+                    )
+                }
+                val saved = target.place
+                val query = target.query
                 val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(query)))
-                val target = chosen?.takeIf { installed(it.pkg) }
+                val installedApp = chosen?.takeIf { installed(it.pkg) }
                 val intent = when {
-                    target != null -> geo.setPackage(target.pkg)
+                    installedApp != null -> geo.setPackage(installedApp.pkg)
                     chosen != null -> Intent(Intent.ACTION_VIEW, Uri.parse(chosen.web + Uri.encode(query)))
                     resolves(geo) -> geo
                     else -> Intent(Intent.ACTION_VIEW, Uri.parse("https://yandex.ru/maps/?text=" + Uri.encode(query)))
                 }
                 val where = when {
-                    target != null -> " в ${target.title}"
+                    installedApp != null -> " в ${installedApp.title}"
                     chosen != null -> " в ${chosen.title} (в браузере)"
                     else -> ""
                 }
-                open(intent, "Строю маршрут$where: $query.", "Маршрут")
+                val what = if (saved != null) " к месту «${saved.name}»" else ": $query"
+                open(intent, "Строю маршрут$where$what.", "Маршрут")
             }
             is DeviceCommand.OpenSettings -> {
                 val q = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q

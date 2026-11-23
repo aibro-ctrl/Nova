@@ -175,7 +175,9 @@ class AppContainer(private val context: Context) {
         // Карты из настроек: «в 2ГИС», «в Google» — иначе открываем те, что назначены системой для geo:.
         mapsApp = { ai.nova.core.assistant.MapsApp.fromId(settings.settings.value.mapsApp) },
         // «Мой город»: маршрут ищется в нём; пусто — как раньше, по последнему городу карт.
-        city = { settings.settings.value.city.takeIf { it.isNotBlank() } })
+        city = { settings.settings.value.city.takeIf { it.isNotBlank() } },
+        // «Я дома», «это моя работа»: маршрут до сохранённого места строится по координатам.
+        places = { geo.places() })
     /** Связь с «Финансовым помощником»: траты уходят туда, ответы о деньгах — оттуда. */
     val finance = ai.nova.app.device.FinanceBridge(context, appScope)
     /** Траты, которые заодно уходят в помощник. Сама Нова пишет их так же, как раньше. */

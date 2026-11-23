@@ -179,11 +179,22 @@ object SkillPhrases {
         val body = SAVE_TO_NOTE.replace(raw, "").trim().trim('.', ',', '!', '?', ':', '«', '»')
         if (body.length < 3) return null
         if (RECORD_VERB.containsMatchIn(body)) return null
+        // «Найди ближайшую аптеку», «поищи кафе рядом» — это карта, а не статья: пусть решает телефон.
+        if (nearbyPlace(body)) return null
         if (NOT_FIND.containsMatchIn(body)) return null
         val query = body.replace(WHERE_PREFIX, "").replace(ARTICLE_PREFIX, "").replace(ARTICLE_TAIL, "")
             .trim().trim('.', ',', '!', '?', ':', '«', '»')
         if (query.length < 2) return null
         return SkillCommand.FindArticle(query, save, RECIPE_WORD.containsMatchIn(body))
+    }
+
+    /** Запрос про место рядом: «ближайшая аптека», «кафе рядом», «музей». */
+    private fun nearbyPlace(body: String): Boolean {
+        val words = RuTokenizer.normalize(body).split(' ').filter { it.isNotBlank() }
+        if (words.isEmpty() || words.size > 4) return false
+        if (words.any { w -> w.any { it.isDigit() } }) return false
+        val kinds = words.filterNot { ai.nova.core.nlp.RuQuery.isPlaceModifier(it) }
+        return kinds.isNotEmpty() && kinds.all { ai.nova.core.nlp.RuQuery.isPlaceWord(it) }
     }
 
     // ------------------------------------------------------------------ Календарь и факты

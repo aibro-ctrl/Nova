@@ -447,6 +447,8 @@ class SkillsTest {
         assertTrue(start.expectFollowUp && start.text.contains("от 1 до 100"), start.text)
         val turn = e.engine.handle("пятьдесят", ai.nova.core.assistant.InputSource.VOICE)
         assertTrue(turn.text.matches(Regex("""(?:Больше|Меньше), чем 50\.|Угадали!.*""")), turn.text)
+        // Загаданное число может оказаться ровно 50 — тогда игра уже закончена и «сдаюсь» проверять нечего.
+        if (turn.text.startsWith("Угадали")) return@runTest
         val end = e.engine.handle("сдаюсь", ai.nova.core.assistant.InputSource.VOICE)
         assertTrue(end.text.startsWith("Это было число"), end.text)
         // После игры обычные команды снова работают.
