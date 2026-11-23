@@ -98,7 +98,7 @@ fun AiPage(c: AppContainer, onBack: () -> Unit, openProvider: (AIProviderType) -
             SectionLabel("Облачный AI")
             Group(Modifier.padding(top = 4.dp)) {
                 SwitchItem(
-                    "Облачный AI", if (s.useAI) "Свободный разговор и сложные фразы. Нужен интернет и API-ключ" else "Выключен: всё работает локально, без интернета",
+                    "Облачный AI", if (s.useAI) "Подключается, когда модель на телефоне не справилась. Нужен интернет и API-ключ" else "Выключен: отвечает модель на телефоне, команды выполняются на устройстве",
                     s.useAI, icon = Icons.Rounded.AutoAwesome,
                 ) { v -> scope.launch { c.settings.setUseAI(v) } }
             }
@@ -392,7 +392,7 @@ private fun OfflineModelSection(c: AppContainer) {
             ai.nova.app.llm.OfflineLlm.State.Ready -> {
                 SwitchItem(
                     "Отвечать на любые вопросы",
-                    "${c.offlineLlm.modelLabel} на телефоне: «почему небо голубое», «посоветуй фильм». Если подключён облачный AI — отвечает он",
+                    "${c.offlineLlm.modelLabel} на телефоне: «почему небо голубое», «посоветуй фильм». Отвечает первой; облачный AI — только если не справилась",
                     enabled, icon = Icons.Rounded.AutoAwesome,
                 ) { v -> enabled = v; c.offlineLlm.enabled = v }
                 GroupDivider()
@@ -467,7 +467,10 @@ private fun OfflineModelSection(c: AppContainer) {
             )
         }
     }
-    Hint("Модель работает прямо на телефоне: вопросы никуда не отправляются. По уму она проще облачных AI — для бытовых вопросов и советов.")
+    Hint(
+        "Модель работает прямо на телефоне: вопросы никуда не отправляются. Спрашиваем её первой, а облачный AI — только если он включён " +
+            "и модель не справилась.",
+    )
     if (picking) OfflineModelPicker(c, onDismiss = { picking = false })
 }
 

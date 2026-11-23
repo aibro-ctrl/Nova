@@ -42,16 +42,28 @@ class LocalChatTest {
         }
     }
 
+    /**
+     * Сбой облака запоминается: следующий вопрос не ждёт тот же таймаут.
+     * Проверяем без модели на телефоне — иначе вопрос вообще не доходит до облака.
+     */
     @Test fun failedCloudIsSkippedForAWhile() = runTest {
+        val env = TestEnv().apply { settings = AssistantSettings(useAI = true) }
+        val ai = CountingAi(fail = true)
+        env.ai = ai
+        env.engine.handle("почему небо голубое")
+        env.engine.handle("а почему закат красный")
+        assertEquals(1, ai.calls, "второй раз облако не дёргаем — оно только что не ответило")
+    }
+
+    /** Модель на телефоне ответила — облако не тратится. */
+    @Test fun phoneModelAnswersBeforeCloud() = runTest {
         val chat = FakeChat()
         val env = TestEnv(localChat = chat).apply { settings = AssistantSettings(useAI = true) }
-        val ai = CountingAi(fail = true)
+        val ai = CountingAi(fail = false)
         env.ai = ai
         val first = env.engine.handle("почему небо голубое")
         assertEquals("Из-за рассеяния света в атмосфере.", first.text)
-        val second = env.engine.handle("а почему закат красный")
-        assertEquals("Из-за рассеяния света в атмосфере.", second.text)
-        assertEquals(1, ai.calls)
+        assertEquals(0, ai.calls)
     }
 
     @Test fun looksLikeChat() {

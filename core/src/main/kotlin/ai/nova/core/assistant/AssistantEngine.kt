@@ -355,9 +355,26 @@ class AssistantEngine(
         localParser.parse(t, time.now(), time.zone()) != null || skills?.recognizes(t, settings().assistantName) == true
     }.getOrDefault(false)
 
-    /** Облачный AI для навыков (пересказ экрана, сказки); null — AI не подключён или недоступен. */
+    /**
+     * AI для навыков (пересказ экрана, сказки, разбор блюда).
+     *
+     * Встроенная модель на телефоне в приоритете: она отвечает без интернета, без ключей и ничего
+     * не отправляет наружу. Облако подключается только если оно включено и доступно, а встроенная
+     * модель не смогла ответить.
+     */
     private val skillAi: ai.nova.core.skills.SkillAi = { system, user, maxTokens ->
-        val cloud = if (!settings().useAI) null else try {
+        val local = localModel()?.let { lc ->
+            try {
+                lc.reply(system, listOf(ChatMessage(ChatMessage.Role.USER, user.take(3000))), maxTokens.coerceAtMost(600))
+                    ?.trim()?.takeIf { it.isNotEmpty() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Logger.w(TAG, "Встроенная модель не ответила навыку", e)
+                null
+            }
+        }
+        local ?: if (!settings().useAI) null else try {
             aiProvider()?.complete(AIRequest(system = system, messages = listOf(ChatMessage(ChatMessage.Role.USER, user)), jsonMode = false, maxTokens = maxTokens))
                 ?.text?.trim()?.also { lastAiFailure = null }
         } catch (e: CancellationException) {
@@ -366,11 +383,11 @@ class AssistantEngine(
             lastAiFailure = AiFailure(e.message ?: e::class.simpleName.orEmpty(), time.now())
             null
         }
-        // Нет облачного AI — отвечает офлайн-модель (если скачана).
-        cloud ?: localChat?.takeIf { it.available }?.let { lc ->
-            runCatching { lc.reply(system, listOf(ChatMessage(ChatMessage.Role.USER, user.take(3000))), maxTokens.coerceAtMost(600)) }.getOrNull()
-        }
     }
+
+    /** Встроенная модель, если она скачана и сейчас может отвечать (в фоне Android её душит). */
+    private fun localModel(): ai.nova.core.ai.LocalChat? =
+        localChat?.takeIf { it.available && it.canAnswerNow }
 
     /**
      * Команда, которую не поняли правила: офлайн-модель переписывает фразу в короткую команду
@@ -1344,7 +1361,23 @@ class AssistantEngine(
         // Иначе модель уводила её в чужие намерения: «маршрут музей» становилось задачей «Осмотреть музей»,
         // «найди маршрут домой» — статьёй из интернета. Команда телефону предсказуемее и быстрее локально.
         deviceFirst(text, cfg)?.let { return it }
-        // 5. Облачный AI → при недоступности офлайн-парсер.
+        // «Мой размер обуви 38» — факт о себе, а не расход на 38 ₽: спрашиваем раньше моделей.
+        offerFact(text)?.let { return it }
+        // 4.95. Встроенная модель на телефоне — до облака: без интернета, без ключей, ничего не уходит наружу.
+        // Правила впереди: если фразу понял разбор команд, модель не спрашиваем — она медленнее и может ошибиться.
+        // Вопрос и живая реплика — ответ как собеседник; остальное — попытка понять фразу как команду.
+        var devicePlanned = false
+        localModel()?.let {
+            val known = runCatching { localParser.parse(text, time.now(), time.zone()) }.getOrNull()
+            if (known == null) {
+                val chat = ai.nova.core.ai.LocalChat.looksLikeChat(text) ||
+                    ai.nova.core.ai.LocalChat.isStrongChat(text) ||
+                    ai.nova.core.ai.LocalChat.isSmallTalk(text)
+                val answer = if (chat) localAnswer(text, cfg) else onDeviceCommand(text, cfg).also { devicePlanned = true }
+                answer?.let { reply -> return reply }
+            }
+        }
+        // 5. Облачный AI — только если он включён и доступен; иначе офлайн-парсер.
         var aiError: AIException? = null
         // Облако только что не ответило (сеть, лимит, сервер лежит): не ждём тот же таймаут ещё раз —
         // отвечаем на телефоне сразу. Через несколько минут снова пробуем облако.
@@ -1387,14 +1420,13 @@ class AssistantEngine(
         }
         // «Посоветуй, чем заняться в выходные» — просьба, а не задача на выходные.
         if (ai.nova.core.ai.LocalChat.isStrongChat(text)) localAnswer(text, cfg)?.let { return it }
-        // «Мой размер обуви 38» — факт о себе, а не расход на 38 ₽: спрашиваем раньше разбора команд.
-        offerFact(text)?.let { return it }
         val parsed = localParser.parse(text, time.now(), time.zone())
         // Вопрос или просьба, которую не понял разбор команд, — отвечает офлайн-модель, а не «сохранить заметкой?».
         if (parsed == null && ai.nova.core.ai.LocalChat.looksLikeChat(text)) localAnswer(text, cfg)?.let { return it }
         // Фразу не поняли правила: офлайн-модель переписывает её в короткую команду, а выполняет
         // её тот же разбор — действия не выдумываются и опасное по-прежнему требует подтверждения.
-        if (parsed == null) onDeviceCommand(text, cfg)?.let { return it }
+        // Если модель уже пробовала до облака, второй раз её не спрашиваем.
+        if (parsed == null && !devicePlanned) onDeviceCommand(text, cfg)?.let { return it }
         val local = parsed ?: localFallback(text, cfg)
         if (local != null) {
             val reply = execute(local, usedAI = false, offline = cfg.useAI, name = cfg.assistantName)
