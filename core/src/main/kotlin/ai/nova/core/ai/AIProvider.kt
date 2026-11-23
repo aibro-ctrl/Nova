@@ -55,6 +55,11 @@ sealed class AIException(message: String, cause: Throwable? = null) : Exception(
     class InsecureEndpoint : AIException("Незашифрованный адрес (http://) разрешён только для серверов в локальной сети. Используйте https://.")
 }
 
+/**
+ * Каталог провайдеров. [suggestedModels] — подсказка до первого запроса к провайдеру: список, который
+ * реально доступен ключу, приходит из `GET /models` и показывается вместе с этим. Идентификаторы
+ * сверены с публичным каталогом моделей (ноябрь 2026); старые id оставлены, чтобы не ломать настройки.
+ */
 enum class AIProviderType(
     val id: String,
     val title: String,
@@ -65,36 +70,56 @@ enum class AIProviderType(
     val endpointEditable: Boolean,
 ) {
     OPENAI(
-        "openai", "OpenAI", "https://api.openai.com/v1", "gpt-5-mini",
-        listOf("gpt-5-mini", "gpt-5", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "o4-mini", "o3"), "text-embedding-3-small", false,
+        // По умолчанию — быстрая и недорогая модель поколения 6: голосовому ассистенту нужна скорость.
+        "openai", "OpenAI", "https://api.openai.com/v1", "gpt-6-luna",
+        listOf(
+            "gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-6-astra",
+            "gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini", "gpt-5-mini", "gpt-4.1-mini",
+        ), "text-embedding-3-small", false,
     ),
     GEMINI(
-        "gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash",
-        listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite"), "gemini-embedding-001", false,
+        "gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-4-hydrogen",
+        listOf(
+            "gemini-4-hydrogen", "gemini-4-carbon", "gemini-4-argon", "gemini-4-neon", "gemini-3.8-flash",
+            "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-pro",
+        ), "gemini-embedding-001", false,
     ),
     ANTHROPIC(
-        "anthropic", "Anthropic Claude", "https://api.anthropic.com", "claude-opus-5",
-        listOf("claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5", "claude-opus-4-1", "claude-sonnet-4-5"), null, true,
+        "anthropic", "Anthropic Claude", "https://api.anthropic.com", "claude-sonnet-5-5",
+        listOf(
+            "claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5",
+            "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5",
+        ), null, true,
     ),
     OPENROUTER(
-        "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "openai/gpt-5-mini",
-        listOf("openai/gpt-5-mini", "openai/gpt-5", "anthropic/claude-sonnet-5", "anthropic/claude-opus-5", "google/gemini-2.5-flash", "google/gemini-2.5-pro", "deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct", "mistralai/mistral-small"), null, false,
+        "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "openai/gpt-6-luna",
+        listOf(
+            "openai/gpt-6.2-sol", "openai/gpt-6.2-astra", "openai/gpt-6.1-sol", "openai/gpt-6-luna",
+            "anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-haiku-5.5",
+            "google/gemini-4-hydrogen", "google/gemini-3.8-flash", "x-ai/grok-4.7",
+            "deepseek/deepseek-v4.1-flash", "meta-llama/llama-3.3-70b-instruct", "mistralai/mistral-small-2603",
+        ), null, false,
     ),
     DEEPSEEK(
+        // deepseek-chat и deepseek-reasoner — «плавающие» имена: сам сервис переводит их на новую модель.
         "deepseek", "DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat",
-        listOf("deepseek-chat", "deepseek-reasoner"), null, false,
+        listOf("deepseek-chat", "deepseek-reasoner", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash"), null, false,
     ),
     MISTRAL(
+        // «-latest» — тоже плавающие имена: всегда указывают на самую свежую модель этого класса.
         "mistral", "Mistral AI", "https://api.mistral.ai/v1", "mistral-small-latest",
-        listOf("mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "open-mistral-nemo", "ministral-8b-latest"), null, false,
+        listOf(
+            "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest",
+            "mistral-large-4-0", "mistral-small-2603", "ministral-8b-latest",
+        ), null, false,
     ),
     GROQ(
         "groq", "Groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile",
-        listOf("llama-3.3-70b-versatile", "openai/gpt-oss-120b", "llama-3.1-8b-instant"), null, false,
+        listOf("llama-3.3-70b-versatile", "openai/gpt-oss-120b", "llama-3.1-8b-instant", "meta-llama/llama-4-maverick"), null, false,
     ),
     XAI(
-        "xai", "xAI Grok", "https://api.x.ai/v1", "grok-4",
-        listOf("grok-4", "grok-3", "grok-3-mini"), null, false,
+        "xai", "xAI Grok", "https://api.x.ai/v1", "grok-4.7",
+        listOf("grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3", "grok-4"), null, false,
     ),
     CUSTOM(
         "custom", "Свой сервер (Ollama, LM Studio, vLLM)", "http://192.168.1.10:11434/v1", "",

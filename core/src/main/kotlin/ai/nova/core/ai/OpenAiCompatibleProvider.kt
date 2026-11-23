@@ -53,11 +53,15 @@ class OpenAiCompatibleProvider(
         const val MIN_TOKENS = 1024
     }
 
-    /** Рассуждающие модели OpenAI отвечают заметно быстрее с низким усилием — для голосового ассистента это важно. */
+    /**
+     * Рассуждающие модели OpenAI (gpt-5 и новее, o-серия) отвечают заметно быстрее с низким усилием —
+     * для голосового ассистента это важно. Они же требуют max_completion_tokens вместо max_tokens.
+     */
     private fun supportsReasoningEffort(): Boolean {
         val m = config.model.lowercase().substringAfterLast('/')
-        return config.type in setOf(AIProviderType.OPENAI, AIProviderType.OPENROUTER) &&
-            (m.startsWith("gpt-5") || m.startsWith("o1") || m.startsWith("o3") || m.startsWith("o4"))
+        if (m.startsWith("gpt-oss")) return false // открытые gpt-oss принимают обычные параметры
+        val reasoning = Regex("""^(?:gpt-(?:5|6)(?:\.\d+)?(?:-|$)|o[1-9](?:-|$))""").containsMatchIn(m)
+        return config.type in setOf(AIProviderType.OPENAI, AIProviderType.OPENROUTER) && reasoning
     }
 
     private suspend fun send(request: AIRequest, useJsonFormat: Boolean, extras: Boolean): AIResponse {

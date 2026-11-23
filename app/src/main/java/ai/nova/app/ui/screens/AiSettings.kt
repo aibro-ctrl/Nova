@@ -73,14 +73,14 @@ import kotlinx.coroutines.launch
 
 /** Короткое пояснение к провайдеру — чтобы было понятно, что выбрать. */
 private fun AIProviderType.about(): String = when (this) {
-    AIProviderType.OPENAI -> "GPT-5, GPT-4.1, o-серия · platform.openai.com"
-    AIProviderType.GEMINI -> "Gemini 2.5 Flash/Pro · есть бесплатный лимит · aistudio.google.com"
+    AIProviderType.OPENAI -> "GPT нового поколения и o-серия · platform.openai.com"
+    AIProviderType.GEMINI -> "Gemini Pro и Flash · есть бесплатный лимит · aistudio.google.com"
     AIProviderType.ANTHROPIC -> "Claude Opus, Sonnet, Haiku · console.anthropic.com"
     AIProviderType.OPENROUTER -> "Сотни моделей разных компаний по одному ключу · openrouter.ai"
     AIProviderType.DEEPSEEK -> "DeepSeek Chat и Reasoner · недорого · platform.deepseek.com"
     AIProviderType.MISTRAL -> "Mistral Small/Medium/Large · console.mistral.ai"
     AIProviderType.GROQ -> "Llama и другие открытые модели, очень быстро · console.groq.com"
-    AIProviderType.XAI -> "Grok · console.x.ai"
+    AIProviderType.XAI -> "Grok, актуальное поколение · console.x.ai"
     AIProviderType.CUSTOM -> "Ollama, LM Studio, vLLM на вашем компьютере — без облака"
     AIProviderType.NOVA_CLOUD -> "Сервер Нова: работает после входа в аккаунт, без своего ключа"
 }
@@ -313,8 +313,10 @@ private fun ModelPicker(c: AppContainer, type: AIProviderType, current: String, 
     }
     LaunchedEffect(type) { if (canLoad && loaded == null) load() }
 
-    val known = type.suggestedModels.map { ModelInfo(it) }
-    val all = ((loaded ?: emptyList()) + known).distinctBy { it.id }
+    // Модель по умолчанию — первой, дальше каталог от новых к старым, потом список с сервера:
+    // иначе свежие модели теряются в алфавитном списке из сотни id.
+    val known = (listOf(type.defaultModel) + type.suggestedModels).distinct().map { ModelInfo(it) }
+    val all = (known + (loaded ?: emptyList())).distinctBy { it.id }
     val shown = if (query.isBlank()) all else all.filter { it.id.contains(query, true) || it.name.contains(query, true) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
@@ -351,7 +353,10 @@ private fun ModelPicker(c: AppContainer, type: AIProviderType, current: String, 
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(m.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (m.name != m.id) Text(m.id, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            when {
+                                m.name != m.id -> Text(m.id, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                m.id == type.defaultModel -> Text("по умолчанию", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            }
                         }
                         if (m.id == current) Icon(Icons.Rounded.Check, contentDescription = "Выбрана", tint = MaterialTheme.colorScheme.primary)
                     }

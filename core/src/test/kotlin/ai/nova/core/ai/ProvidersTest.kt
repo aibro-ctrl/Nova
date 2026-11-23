@@ -55,6 +55,38 @@ class ProvidersTest {
         assertFalse(bodies[1].contains("\"max_tokens\""), bodies[1])
     }
 
+    /** Каталог провайдеров: у каждого есть модель по умолчанию, она же в подсказках, без повторов и мусора. */
+    @Test fun providerCatalogueIsConsistent() {
+        AIProviderType.entries
+            .filter { it != AIProviderType.CUSTOM && it != AIProviderType.NOVA_CLOUD }
+            .forEach { type ->
+                assertTrue(type.defaultModel.isNotBlank(), "${type.title}: не задана модель по умолчанию")
+                assertTrue(type.defaultModel in type.suggestedModels, "${type.title}: модели по умолчанию нет в подсказках")
+                assertEquals(type.suggestedModels.size, type.suggestedModels.distinct().size, "${type.title}: подсказки повторяются")
+                type.suggestedModels.forEach { id ->
+                    assertTrue(isChatModel(id), "${type.title}: «$id» — не модель для диалога")
+                    assertTrue(id.length >= 3 && !id.contains(' '), "${type.title}: «$id» выглядит подозрительно")
+                }
+            }
+    }
+
+    /** Новые поколения (gpt-6, gpt-5.6) — тоже рассуждающие: им нужен max_completion_tokens, а gpt-oss — нет. */
+    @Test fun reasoningParametersFollowTheModelFamily() = runTest {
+        val bodies = ArrayList<String>()
+        val http = HttpClient(MockEngine { r ->
+            bodies += (r.body as TextContent).text
+            respond("""{"choices":[{"message":{"content":"ok"}}]}""", HttpStatusCode.OK, json)
+        })
+        listOf("gpt-6-luna", "gpt-6.2-sol", "gpt-5.6-sol", "o4-mini", "gpt-oss-120b", "gemini-4-hydrogen").forEach { model ->
+            OpenAiCompatibleProvider(http, AIConfig(AIProviderType.OPENAI, null, model, "sk-test-123456789"))
+                .complete(AIRequest("s", listOf(ChatMessage(ChatMessage.Role.USER, "привет"))))
+        }
+        val reasoning = bodies.map { it.contains("\"reasoning_effort\"") }
+        assertEquals(listOf(true, true, true, true, false, false), reasoning, bodies.toString())
+        assertTrue(bodies[0].contains("\"max_completion_tokens\""), bodies[0])
+        assertTrue(bodies[4].contains("\"max_tokens\""), bodies[4])
+    }
+
     @Test fun geminiUsesOpenAiCompatibleEndpoint() = runTest {
         var url = ""
         val http = HttpClient(MockEngine { r -> url = r.url.toString(); respond("""{"choices":[{"message":{"content":"x"}}]}""", HttpStatusCode.OK, json) })
@@ -105,6 +137,15 @@ class ProvidersTest {
         assertTrue(AnthropicProvider.supportsEffort("claude-sonnet-4-6"))
         assertFalse(AnthropicProvider.supportsEffort("claude-haiku-4-5"))
         assertFalse(AnthropicProvider.supportsEffort("claude-sonnet-4-5"))
+    }
+
+    /** Серверный fallback — для Opus и Fable 5+, включая 5.5 и 5.2, но не для Sonnet и старых версий. */
+    @Test fun anthropicServerFallbackFollowsGenerations() {
+        assertTrue(AnthropicProvider.supportsServerFallback("claude-opus-5"))
+        assertTrue(AnthropicProvider.supportsServerFallback("claude-opus-5-5"))
+        assertTrue(AnthropicProvider.supportsServerFallback("claude-fable-5-2"))
+        assertFalse(AnthropicProvider.supportsServerFallback("claude-opus-4-8"))
+        assertFalse(AnthropicProvider.supportsServerFallback("claude-sonnet-5-5"))
     }
 
     @Test fun anthropicRefusal() = runTest {

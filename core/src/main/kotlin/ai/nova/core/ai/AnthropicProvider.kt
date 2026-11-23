@@ -109,8 +109,11 @@ class AnthropicProvider(
             return major >= 5 || (major == 4 && minor >= 6)
         }
 
-        /** Серверный fallback при отказе классификаторов — для Opus 5 и Fable 5.1. */
-        fun supportsServerFallback(model: String): Boolean =
-            model == "claude-opus-5" || model == "claude-fable-5-1"
+        /** Серверный fallback при отказе классификаторов — для Opus и Fable начиная с 5-го поколения. */
+        fun supportsServerFallback(model: String): Boolean {
+            val m = modelRegex.find(model) ?: return false
+            val family = m.groupValues[1]
+            return (family == "opus" || family == "fable") && m.groupValues[2].toInt() >= 5
+        }
     }
 }
