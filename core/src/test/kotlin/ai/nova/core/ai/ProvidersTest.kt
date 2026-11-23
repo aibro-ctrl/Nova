@@ -37,6 +37,24 @@ class ProvidersTest {
         assertTrue(body.contains("\"role\":\"system\""))
     }
 
+    @Test fun sendsTokenLimitWithTheNameTheModelFamilyExpects() = runTest {
+        val bodies = ArrayList<String>()
+        val http = HttpClient(MockEngine { r ->
+            bodies += (r.body as TextContent).text
+            respond("""{"choices":[{"message":{"content":"ok"}}]}""", HttpStatusCode.OK, json)
+        })
+        // Обычная модель — max_tokens; рассуждающая (gpt-5, o-серия) — max_completion_tokens.
+        OpenAiCompatibleProvider(http, AIConfig(AIProviderType.OPENAI, null, "gpt-4.1", "sk-test-123456789"))
+            .complete(AIRequest("s", listOf(ChatMessage(ChatMessage.Role.USER, "привет")), maxTokens = 300))
+        OpenAiCompatibleProvider(http, AIConfig(AIProviderType.OPENAI, null, "gpt-5-mini", "sk-test-123456789"))
+            .complete(AIRequest("s", listOf(ChatMessage(ChatMessage.Role.USER, "привет")), maxTokens = 300))
+
+        assertTrue(bodies[0].contains("\"max_tokens\":1024"), bodies[0])
+        assertFalse(bodies[0].contains("max_completion_tokens"), bodies[0])
+        assertTrue(bodies[1].contains("\"max_completion_tokens\":1024"), bodies[1])
+        assertFalse(bodies[1].contains("\"max_tokens\""), bodies[1])
+    }
+
     @Test fun geminiUsesOpenAiCompatibleEndpoint() = runTest {
         var url = ""
         val http = HttpClient(MockEngine { r -> url = r.url.toString(); respond("""{"choices":[{"message":{"content":"x"}}]}""", HttpStatusCode.OK, json) })

@@ -811,6 +811,7 @@ class ActionExecutor(
                 val (csv, count, what) = when (action.kind) {
                     "tasks" -> tasks.all().let { Triple(ai.nova.core.export.CsvExport.tasks(it, zone), it.size, "задач") }
                     "debts" -> debts.all().let { l -> Triple(ai.nova.core.export.CsvExport.debts(l.map { it.person to it.amount }), l.size, "долгов") }
+                    "notes" -> notes.all().let { l -> Triple(ai.nova.core.export.CsvExport.notes(l, zone), l.size, "заметок и идей") }
                     else -> (if (action.from != null && action.to != null) expenses.between(action.from, action.to) else expenses.all())
                         .let { Triple(ai.nova.core.export.CsvExport.expenses(it), it.size, "расходов") }
                 }

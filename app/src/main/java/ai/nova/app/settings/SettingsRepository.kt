@@ -191,6 +191,8 @@ data class AppSettings(
     val mapsApp: String = "",
     /** По воскресеньям в 19:00 — итоги недели (по умолчанию выключено). */
     val weeklyReview: Boolean = false,
+    /** Шаги и сон брать с телефона (Health Connect или счётчик шагов) — только по согласию и только локально. */
+    val healthSync: Boolean = false,
     /** Характер Нова: caring / business / playful. */
     val persona: String = "caring",
     /** Постоянное уведомление с полем быстрого ввода («кофе 250»). */
@@ -244,6 +246,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val briefBlocks = stringPreferencesKey("brief_blocks")
         val videoPlatform = stringPreferencesKey("video_platform")
         val bargeIn = booleanPreferencesKey("barge_in")
+        val healthSync = booleanPreferencesKey("health_sync")
         val mapsApp = stringPreferencesKey("maps_app")
         val weeklyReview = booleanPreferencesKey("weekly_review")
         val persona = stringPreferencesKey("persona")
@@ -345,6 +348,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             briefBlocks = ai.nova.core.health.BriefBlocks.parse(p[K.briefBlocks]),
             videoPlatform = p[K.videoPlatform].orEmpty(),
             bargeIn = p[K.bargeIn] ?: true,
+            healthSync = p[K.healthSync] ?: false,
             mapsApp = p[K.mapsApp].orEmpty(),
             weeklyReview = p[K.weeklyReview] ?: false,
             persona = p[K.persona] ?: "caring",
@@ -441,6 +445,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setBriefBlocks(v: Set<String>) = store.edit { it[K.briefBlocks] = ai.nova.core.health.BriefBlocks.store(v) }
     suspend fun setVideoPlatform(id: String) = store.edit { it[K.videoPlatform] = id }
     suspend fun setBargeIn(v: Boolean) = store.edit { it[K.bargeIn] = v }
+    suspend fun setHealthSync(v: Boolean) = store.edit { it[K.healthSync] = v }
     suspend fun setMapsApp(id: String) = store.edit { it[K.mapsApp] = id }
     suspend fun setWeeklyReview(v: Boolean) = store.edit { it[K.weeklyReview] = v }
     suspend fun setPersona(v: String) = store.edit { it[K.persona] = v }

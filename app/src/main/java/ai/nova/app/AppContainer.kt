@@ -40,6 +40,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -254,7 +255,7 @@ class AppContainer(private val context: Context) {
         onNotUnderstood = { ai.nova.app.diagnostics.Diagnostics.rememberUnknown(context, it) },
         onExecuted = { actions, reply -> journal.log(actions, reply) },
         localChat = offlineLlm,
-        habits = ai.nova.core.health.Habits(store.habits, time),
+        habits = health,
         daySpend = ::daySpend,
         onPersona = { p -> appScope.launch { settings.setPersona(p.wire) } },
         expensesBetween = { a, b -> store.expenses.between(a, b) },
@@ -265,6 +266,40 @@ class AppContainer(private val context: Context) {
     /** Ядро агента: реестр навыков, инструменты и постоянный контекст задач. */
     val agentCore: ai.nova.core.agent.AgentCore by lazy { ai.nova.core.agent.AgentCore(store.agent, time) }
 
+    /** Напоминания, которые сработали и ждут «Готово»: для «Моего дня». */
+    val pending: ai.nova.app.reminders.PendingStore by lazy { ai.nova.app.reminders.PendingStore(context.applicationContext) }
+
+    /** Шаги с телефона (системный счётчик): только по согласию, только локально. */
+    val stepSync: ai.nova.app.health.StepSync by lazy { ai.nova.app.health.StepSync(context.applicationContext, store.habits, time) }
+
+    init {
+        // Шаги обновляем на старте: настройки к этому моменту прочитаны.
+        appScope.launch {
+            settings.loaded.first { it }
+            refreshHealth()
+        }
+        // И каждый раз, когда приложение снова выходит на экран: счётчик читаем только пока оно живо.
+        runCatching {
+            androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(
+                androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    if (event == androidx.lifecycle.Lifecycle.Event.ON_START) appScope.launch { refreshHealth() }
+                },
+            )
+        }
+    }
+
+    /** Обновить шаги, если человек разрешил. Молча: не вышло — значит, не вышло. */
+    suspend fun refreshHealth() {
+        if (!settings.current().healthSync) return
+        runCatching { stepSync.sync() }
+    }
+
+    /** Здоровье и привычки: «Мой день» знает, сколько напоминаний сегодня пропущено. */
+    val health: ai.nova.core.health.Habits by lazy { ai.nova.core.health.Habits(store.habits, time) { missedToday() } }
+
+    /** Сколько сегодняшних напоминаний сработало, но так и осталось без «Готово». */
+    private suspend fun missedToday(): Int = pending.countToday(time.today(), time.zone())
+
     /** «Потрачено: …» за день (без доходов) — для итогов дня и вечерней сводки. */
     private suspend fun daySpend(day: java.time.LocalDate): String? =
         store.expenses.between(day, day).filter { it.category != ai.nova.core.nlp.ExpenseCategories.INCOME }.takeIf { it.isNotEmpty() }
@@ -272,11 +307,12 @@ class AppContainer(private val context: Context) {
 
     /** Текст вечерней сводки: те же «итоги дня», что и по голосовой команде. */
     suspend fun eveningSummary(): String {
+        refreshHealth()
         val zone = time.zone()
         val today = time.today()
         val blocks = settings.current().briefBlocks
         val done = store.tasks.all().count { it.completedAt?.atZone(zone)?.toLocalDate() == today }
-        val summary = ai.nova.core.health.Habits(store.habits, time).daySummaryText(done, daySpend(today), blocks)
+        val summary = health.daySummaryText(done, daySpend(today), blocks)
         if (!ai.nova.core.health.BriefBlocks.on(blocks, ai.nova.core.health.BriefBlocks.IDEAS)) return summary
         val ideas = store.notes.all().count {
             it.kind == ai.nova.core.model.NoteKind.IDEA && it.createdAt.atZone(zone).toLocalDate() == today

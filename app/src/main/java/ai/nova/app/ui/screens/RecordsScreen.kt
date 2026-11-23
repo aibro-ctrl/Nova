@@ -20,6 +20,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -139,6 +141,26 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
                                 },
                             )
                         }
+                    }
+                }
+                if (list.isNotEmpty()) item(key = "export") {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Хранятся в зашифрованной базе на телефоне.",
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = {
+                            val csv = ai.nova.core.export.CsvExport.notes(list, c.time.zone())
+                            scope.launch {
+                                c.device.perform(
+                                    ai.nova.core.assistant.DeviceCommand.ShareFile(
+                                        ai.nova.core.export.CsvExport.fileName(if (segment == 0) "notes" else "ideas", null, null),
+                                        "text/csv", csv,
+                                    ),
+                                )
+                            }
+                        }) { Text("Выгрузить в файл") }
                     }
                 }
             }

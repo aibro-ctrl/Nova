@@ -42,6 +42,7 @@ class ReminderReceiver : BroadcastReceiver() {
                         // «Готово» останавливает и настойчивые повторы, и критичный будильник.
                         c.nags.clear(id)
                         c.nags.clearCritical(id)
+                        c.pending.clear(id)
                         context.stopService(Intent(context, ai.nova.app.media.RingService::class.java))
                         AlarmActivity.finishIfShowing(id)
                         c.store.reminders.get(id)?.let { r ->
@@ -54,6 +55,7 @@ class ReminderReceiver : BroadcastReceiver() {
                     ACTION_SNOOZE, ACTION_SNOOZE_HOUR -> {
                         Notifications.cancel(context, notificationId(id))
                         // Отложили — сигнал замолкает, но уровень важности остаётся до «Готово».
+                        c.pending.clear(id)
                         context.stopService(Intent(context, ai.nova.app.media.RingService::class.java))
                         AlarmActivity.finishIfShowing(id)
                         val minutes = if (intent.action == ACTION_SNOOZE_HOUR) 60L else SNOOZE_MINUTES
@@ -66,6 +68,7 @@ class ReminderReceiver : BroadcastReceiver() {
                         Notifications.cancel(context, notificationId(id))
                         c.nags.clear(id)
                         c.nags.clearCritical(id)
+                        c.pending.clear(id)
                         context.stopService(Intent(context, ai.nova.app.media.RingService::class.java))
                         AlarmActivity.finishIfShowing(id)
                         c.store.reminders.get(id)?.let { r ->
@@ -160,6 +163,8 @@ class ReminderReceiver : BroadcastReceiver() {
                 if (repeatsBefore != null && repeatsBefore > 0) text += "\nНапоминаю снова ($repeatsBefore из ${NagStore.MAX_REPEATS})"
                 val critical = c.nags.isCritical(id)
                 show(context, id, text, recurring = reminder.recurrence != null, critical = critical)
+                // Пока не нажали «Готово» или «Отложить», напоминание считается неподтверждённым — «Мой день» его посчитает.
+                c.pending.mark(id, now)
                 val fired = c.store.reminders.markFired(id, now)
                 fired?.let { if (it.active) c.reminderScheduler.schedule(it) }
                 // Настойчивое: пока не нажали «Готово», ещё раз через 10 минут (не больше MAX_REPEATS раз).

@@ -45,6 +45,14 @@ class OpenAiCompatibleProvider(
         }
     }
 
+    companion object {
+        /**
+         * Навыки просят короткие ответы (300–600 токенов), но у рассуждающих моделей этот бюджет включает и
+         * само рассуждение, поэтому меньше 1024 не отправляем — иначе ответ обрывается на полуслове.
+         */
+        const val MIN_TOKENS = 1024
+    }
+
     /** Рассуждающие модели OpenAI отвечают заметно быстрее с низким усилием — для голосового ассистента это важно. */
     private fun supportsReasoningEffort(): Boolean {
         val m = config.model.lowercase().substringAfterLast('/')
@@ -65,7 +73,16 @@ class OpenAiCompatibleProvider(
                 }
             })
             if (useJsonFormat) put("response_format", buildJsonObject { put("type", "json_object") })
-            if (extras && supportsReasoningEffort()) put("reasoning_effort", "low")
+            if (extras) {
+                val limit = request.maxTokens.coerceAtLeast(MIN_TOKENS)
+                if (supportsReasoningEffort()) {
+                    put("reasoning_effort", "low")
+                    // Рассуждающие модели OpenAI принимают только max_completion_tokens, обычный max_tokens они отвергают.
+                    put("max_completion_tokens", limit)
+                } else {
+                    put("max_tokens", limit)
+                }
+            }
         }
         val response = http.post("${config.endpoint}/chat/completions") {
             contentType(ContentType.Application.Json)

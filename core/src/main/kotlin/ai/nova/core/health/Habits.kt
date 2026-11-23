@@ -37,6 +37,18 @@ class HabitStore(private val db: NovaDatabase, private val dispatcher: Coroutine
 
     suspend fun delete(id: String) = withContext(dispatcher) { q.deleteById(id); Unit }
 
+    /**
+     * Значение дня от источника (например, счётчик шагов телефона): прежние записи этого вида с [from]
+     * заменяются, чтобы ручной ввод и датчик не суммировались. Ноль не записываем — пустой день не мусорит.
+     */
+    suspend fun putDay(kind: String, name: String, amount: Double, from: Instant, at: Instant): HabitEntry? = withContext(dispatcher) {
+        q.selectKindSince(kind, from.toEpochMilli()).executeAsList().forEach { q.deleteById(it.id) }
+        if (amount <= 0.0) return@withContext null
+        val e = HabitEntry(Ids.newId(), kind, name, amount, at)
+        q.insert(HabitRow(e.id, e.kind, e.name, e.amount, e.at.toEpochMilli()))
+        e
+    }
+
     /** Восстановление записи из резервной копии (тот же id заменяется). */
     suspend fun restore(e: HabitEntry) = withContext(dispatcher) { q.restore(HabitRow(e.id, e.kind, e.name, e.amount, e.at.toEpochMilli())); Unit }
 
@@ -198,7 +210,12 @@ object HabitPhrases {
 }
 
 /** Навык «Привычки и здоровье». */
-class Habits(private val store: HabitStore, private val time: TimeSource) {
+class Habits(
+    private val store: HabitStore,
+    private val time: TimeSource,
+    /** Сколько напоминаний сработало и осталось без «Готово» — попадает в «Мой день». В тестах и на десктопе ноль. */
+    private val missedReminders: suspend () -> Int = { 0 },
+) {
     /** Давление, вес, сон, счётчики — в том же журнале. */
     val vitals: Vitals by lazy { Vitals(store, time) }
 
@@ -448,37 +465,57 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
             val score = moodScore(m.groupValues[1]) ?: return null
             return Reply(saveMood(score, ""), changed = true)
         }
-        if (Regex("""^(?:итоги\s+дня|подведи\s+итоги(?:\s+дня)?|как\s+я\s+провел[аи]?\s+день|что\s+(?:я\s+)?сегодня\s+сделал[аи]?)$""").containsMatchIn(t)) {
-            return Reply(daySummary(tasksDone(), spend(), BriefBlocks.ALL))
+        if (Regex("""^(?:итоги\s+дня|мой\s+день|как\s+(?:мой\s+)?день|сводка\s+дня|подведи\s+итоги(?:\s+дня)?|как\s+я\s+провел[аи]?\s+день|что\s+(?:я\s+)?сегодня\s+сделал[аи]?)$""").containsMatchIn(t)) {
+            return Reply(daySummary(tasksDone(), spend(), BriefBlocks.ALL, missedReminders()))
         }
         return null
     }
 
-    /** «Итоги дня» для вечерней сводки — тот же текст, что и по голосовой команде. */
+    /** «Итоги дня» / «Мой день» для вечерней сводки — тот же текст, что и по голосовой команде. */
     /** [blocks] — выбранные блоки сводки; выключенные не попадают в текст (пустая строка, если выключено всё). */
-    suspend fun daySummaryText(tasksDone: Int, spend: String?, blocks: Set<String> = BriefBlocks.ALL): String =
-        daySummary(tasksDone, spend, blocks)
+    suspend fun daySummaryText(
+        tasksDone: Int,
+        spend: String?,
+        blocks: Set<String> = BriefBlocks.ALL,
+        missed: Int? = null,
+    ): String = daySummary(tasksDone, spend, blocks, missed ?: missedReminders())
 
-    private suspend fun daySummary(tasksDone: Int, spend: String?, blocks: Set<String>): String {
+    private suspend fun daySummary(tasksDone: Int, spend: String?, blocks: Set<String>, missed: Int = 0): String {
         val health = BriefBlocks.on(blocks, BriefBlocks.HEALTH)
         val from = time.today().atStartOfDay(time.zone()).toInstant()
         val today = store.since(from)
         val mood = today.lastOrNull { it.kind == MOOD }
         val water = today.filter { it.kind == WATER }.sumOf { it.amount }
         val habits = today.filter { it.kind == HABIT }.map { it.name }.distinct()
+        val steps = today.filter { it.kind == Vitals.STEPS }.sumOf { it.amount }.toInt()
+        val sleep = today.filter { it.kind == Vitals.SLEEP }.lastOrNull()?.amount
+        val weight = today.filter { it.kind == Vitals.WEIGHT }.lastOrNull()?.amount
+        val pressure = today.filter { it.kind == Vitals.BP }.lastOrNull()?.name?.substringBefore(',')
         val parts = buildList {
             if (health) {
                 add(mood?.let { "Настроение: ${it.amount.toInt()} из 5${if (it.name.isNotBlank()) " (${it.name})" else ""}." } ?: "Настроение сегодня не записано — скажите «как прошёл день».")
                 if (water > 0) add("Воды: ${glassesText(water)}.")
                 if (habits.isNotEmpty()) add("Привычки: ${habits.joinToString(", ")}.")
+                if (steps > 0) add("Шаги: ${RuFormat.count(steps, "шаг", "шага", "шагов")}.")
+                sleep?.let { add("Сон: ${hoursText(it)}.") }
+                weight?.let { add("Вес: ${fmt(it)} кг.") }
+                pressure?.let { add("Давление: ${it.trim().replace("/", " на ")}.") }
             }
             if (BriefBlocks.on(blocks, BriefBlocks.TASKS)) {
                 add(if (tasksDone > 0) "Закрыто задач: $tasksDone." else "Закрытых задач сегодня нет.")
             }
+            if (missed > 0) add("Не подтверждено напоминаний: $missed.")
             if (BriefBlocks.on(blocks, BriefBlocks.SPEND)) spend?.let { add(it) }
         }
         if (parts.isEmpty()) return ""
         return "Итоги дня. " + parts.joinToString(" ")
+    }
+
+    /** «7 часов», «7 с половиной часов» — как в отчёте о сне. */
+    private fun hoursText(h: Double): String {
+        val whole = h.toInt()
+        return if (h - whole >= 0.25) "$whole с половиной ${RuFormat.plural(whole, "час", "часа", "часов")}"
+        else RuFormat.count(whole, "час", "часа", "часов")
     }
 
     private suspend fun moodWeek(): String {

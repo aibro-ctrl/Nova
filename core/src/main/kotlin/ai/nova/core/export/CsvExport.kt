@@ -1,6 +1,8 @@
 package ai.nova.core.export
 
 import ai.nova.core.model.Expense
+import ai.nova.core.model.Note
+import ai.nova.core.model.NoteKind
 import ai.nova.core.model.TaskItem
 import java.time.LocalDate
 import java.time.ZoneId
@@ -36,6 +38,22 @@ object CsvExport {
                 row(
                     t.title, t.details, t.dueDate?.toString().orEmpty(), t.dueTime?.toString().orEmpty(), if (t.done) "да" else "нет",
                     t.completedAt?.atZone(zone)?.toLocalDate()?.toString().orEmpty(), t.createdAt.atZone(zone).toLocalDate().toString(),
+                ),
+            )
+        }
+    }
+
+    /** Заметки и идеи: выгрузка для себя — их можно открыть в Excel, Drive или перенести куда угодно. */
+    fun notes(list: List<Note>, zone: ZoneId): String = BOM + buildString {
+        appendLine(row("Дата", "Тип", "Название", "Текст", "Теги"))
+        list.sortedBy { it.createdAt }.forEach { n ->
+            appendLine(
+                row(
+                    n.createdAt.atZone(zone).toLocalDate().toString(),
+                    if (n.kind == NoteKind.IDEA) "идея" else "заметка",
+                    n.title,
+                    n.content,
+                    n.tags.joinToString(", "),
                 ),
             )
         }

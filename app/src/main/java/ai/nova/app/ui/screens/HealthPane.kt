@@ -1,5 +1,8 @@
 package ai.nova.app.ui.screens
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,13 +13,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -24,31 +31,93 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import ai.nova.app.AppContainer
+import ai.nova.app.health.StepSync
 import ai.nova.app.ui.components.groupColor
+import ai.nova.core.assistant.RuFormat
 import ai.nova.core.health.HabitEntry
 import ai.nova.core.health.Vitals
+import kotlinx.coroutines.launch
 import java.time.Instant
 
-/** Здоровье за 30 дней: давление (верхнее и нижнее), вес, сон — простые графики и последние значения. */
+/** Здоровье: шаги с телефона (по согласию), сводка за сегодня и графики за 30 дней. */
 @Composable
 fun HealthPane(c: AppContainer, name: String) {
+    val settings by c.settings.settings.collectAsState()
+    val scope = rememberCoroutineScope()
+    val steps = remember { c.stepSync }
+    var reload by remember { mutableStateOf(0) }
     var bp by remember { mutableStateOf<List<HabitEntry>>(emptyList()) }
     var weight by remember { mutableStateOf<List<HabitEntry>>(emptyList()) }
     var sleep by remember { mutableStateOf<List<HabitEntry>>(emptyList()) }
-    LaunchedEffect(Unit) {
+    var stepsToday by remember { mutableStateOf(0) }
+    var sleepLastNight by remember { mutableStateOf<Double?>(null) }
+    LaunchedEffect(reload) {
+        // Свежие шаги подтягиваем при открытии экрана — но только если человек разрешил.
+        c.refreshHealth()
         val from = Instant.now().minusSeconds(30L * 24 * 3600)
         bp = c.store.habits.since(from, Vitals.BP)
         weight = c.store.habits.since(from, Vitals.WEIGHT)
         sleep = c.store.habits.since(from, Vitals.SLEEP)
+        val dayStart = c.time.today().atStartOfDay(c.time.zone()).toInstant()
+        stepsToday = c.store.habits.since(dayStart, Vitals.STEPS).sumOf { it.amount }.toInt()
+        sleepLastNight = c.store.habits.since(dayStart, Vitals.SLEEP).lastOrNull()?.amount
+    }
+    val activityPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        scope.launch { c.settings.setHealthSync(granted); if (granted) c.refreshHealth() }
+        reload++
+    }
+    fun enable() {
+        if (!steps.available()) return
+        if (steps.needsPermission()) activityPermission.launch(StepSync.PERMISSION)
+        else {
+            scope.launch { c.settings.setHealthSync(true); c.refreshHealth() }
+            reload++
+        }
     }
     Column(Modifier.padding(top = 4.dp)) {
+        Surface(shape = MaterialTheme.shapes.large, color = groupColor(), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Шаги с телефона", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            when {
+                                !steps.available() -> "На этом телефоне нет счётчика шагов. Шаги можно сказать голосом: «сегодня прошёл 8000 шагов»."
+                                steps.needsPermission() -> "Нужно разрешение «Физическая активность». Считает сам телефон: без сети, в облако не уходит."
+                                else -> "Считает сам телефон: без сети, в облако не уходит. Шаги — с первого запуска Новы за день."
+                            },
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(
+                        checked = settings.healthSync,
+                        enabled = steps.available(),
+                        onCheckedChange = { on ->
+                            if (on) enable() else { scope.launch { c.settings.setHealthSync(false) }; reload++ }
+                        },
+                    )
+                }
+                if (settings.healthSync) {
+                    val parts = buildList {
+                        if (stepsToday > 0) add(RuFormat.count(stepsToday, "шаг", "шага", "шагов"))
+                        sleepLastNight?.let { add("сон ${fmt(it)} ч") }
+                    }
+                    Text(
+                        if (parts.isEmpty()) "Пока нет данных за сегодня." else "Сегодня: ${parts.joinToString(" · ")}.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            }
+        }
         if (bp.isEmpty() && weight.isEmpty() && sleep.isEmpty()) {
             Text(
-                "Здесь появятся графики. Скажите: «$name, давление 120 на 80», «вес 68», «спала 7 часов».",
+                "Графики появятся после первых замеров. Скажите: «$name, давление 120 на 80», «вес 68», «спала 7 часов».",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
             )
-            return
+            return@Column
         }
         if (bp.isNotEmpty()) {
             val dia = bp.map { e -> Regex("""^\d+/(\d+)""").find(e.name)?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0 }
@@ -60,7 +129,7 @@ fun HealthPane(c: AppContainer, name: String) {
         if (weight.isNotEmpty()) ChartCard("Вес", "${fmt(weight.last().amount)} кг", listOf(weight.map { it.at to it.amount }))
         if (sleep.isNotEmpty()) ChartCard("Сон", "${fmt(sleep.last().amount)} ч · в среднем ${fmt(Math.round(sleep.map { it.amount }.average() * 10) / 10.0)} ч", listOf(sleep.map { it.at to it.amount }))
         Text(
-            "За последние 30 дней. Спросите голосом: «какое у меня давление за неделю», «мой вес за месяц».",
+            "За последние 30 дней. Спросите голосом: «какое у меня давление за неделю», «мой вес за месяц», «мой день».",
             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
         )
