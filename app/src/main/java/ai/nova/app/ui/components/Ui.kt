@@ -145,7 +145,8 @@ fun NovaScreen(
     state: LazyListState = rememberLazyListState(),
     content: LazyListScope.() -> Unit,
 ) {
-    Box(Modifier.fillMaxSize()) {
+    // Клавиатура не перекрывает поля ввода: список поднимается над ней и прокручивается.
+    Box(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(
             state = state,
             modifier = Modifier.fillMaxSize(),

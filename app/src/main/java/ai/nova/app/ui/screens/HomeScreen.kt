@@ -67,6 +67,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -95,6 +96,7 @@ import ai.nova.core.model.MessageRole
 import ai.nova.core.nlp.Money
 import java.time.LocalTime
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 
 /** Примеры команд: нажатие выполняет команду. Порядок меняется при каждом запуске — так человек узнаёт новое. */
 private val allSuggestions = listOf(
@@ -349,7 +351,13 @@ fun ChatScreen(vm: HomeViewModel, onMic: () -> Unit, onBack: () -> Unit, keyboar
     // Разговоры по дням: над каждым днём — «Сегодня», «Вчера» или дата.
     val zone = remember { java.time.ZoneId.systemDefault() }
     val byDay = remember(history) { history.groupBy { it.createdAt.atZone(zone).toLocalDate() } }
-    LaunchedEffect(history.size) { if (history.isNotEmpty()) listState.animateScrollToItem(history.size + byDay.size - 1) }
+    // Последний ответ всегда внизу: список вырос, поднялась клавиатура, начали печатать —
+    // прокручиваем к концу. Пересчитываем по реальному числу элементов: заголовки дней,
+    // строки «Сохранено · Задача» и кнопки подтверждения — это тоже элементы списка.
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.layoutInfo.totalItemsCount to listState.layoutInfo.viewportSize.height }
+            .collectLatest { (count, _) -> if (count > 0) listState.scrollToItem(count - 1) }
+    }
 
     // Фон приложения просвечивает и в чате: чат — окно, а не отдельная плоская страница.
     Column(Modifier.fillMaxSize().imePadding()) {

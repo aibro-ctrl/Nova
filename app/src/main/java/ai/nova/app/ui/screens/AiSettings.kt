@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -320,7 +321,7 @@ private fun ModelPicker(c: AppContainer, type: AIProviderType, current: String, 
     val shown = if (query.isBlank()) all else all.filter { it.id.contains(query, true) || it.name.contains(query, true) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 640.dp)) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 640.dp).imePadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Модель ${type.title}", style = MaterialTheme.typography.titleLarge)
@@ -570,12 +571,12 @@ private fun OfflineModelPicker(c: AppContainer, onDismiss: () -> Unit) {
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
-        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 660.dp)) {
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 660.dp).imePadding()) {
             item(key = "head") {
                 Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 12.dp)) {
                     Text("Модель на телефоне", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "Отвечает без интернета и без ключей. Выберите одну — Нова скачает её сама",
+                        "Отвечает на вопросы без интернета и ключей, а если правила не поняли команду — переписывает фразу в команду. Выберите одну — Нова скачает её сама",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp),
                     )

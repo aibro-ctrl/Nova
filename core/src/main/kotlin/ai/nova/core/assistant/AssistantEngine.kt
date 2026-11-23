@@ -372,6 +372,32 @@ class AssistantEngine(
         }
     }
 
+    /**
+     * Команда, которую не поняли правила: офлайн-модель переписывает фразу в короткую команду
+     * («надо не забыть позвонить маме» → «напомни позвонить маме»), а выполняет её обычный разбор.
+     * Так модель участвует в понимании команд, но ничего не выполняет в обход проверок:
+     * непонятный или пустой ответ просто отбрасывается.
+     */
+    private suspend fun onDeviceCommand(text: String, cfg: AssistantSettings): AssistantReply? {
+        val lc = localChat?.takeIf { it.available } ?: return null
+        // В фоне модель считает минуту: там честнее сразу сказать «не поняла», чем ждать.
+        if (!lc.canAnswerNow) return null
+        val rewritten = try {
+            lc.plan(ai.nova.core.ai.CommandPlanner.systemPrompt(), text)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Logger.w(TAG, "Офлайн-разбор не ответил", e)
+            null
+        }
+        val command = ai.nova.core.ai.CommandPlanner.command(rewritten) ?: return null
+        if (RuTokenizer.normalize(command) == RuTokenizer.normalize(text)) return null
+        val plan = localParser.parse(command, time.now(), time.zone()) ?: return null
+        Logger.i(TAG, "Офлайн-модель поняла фразу как «$command»")
+        return execute(guardDeviceActions(plan, text), usedAI = false, offline = cfg.useAI, name = cfg.assistantName)
+            .copy(provider = "Офлайн-модель")
+    }
+
     /** Свободный вопрос без облачного AI — офлайн-модель. */
     private suspend fun localAnswer(text: String, cfg: AssistantSettings): AssistantReply? {
         val lc = localChat?.takeIf { it.available } ?: return null
@@ -1331,6 +1357,9 @@ class AssistantEngine(
         val parsed = localParser.parse(text, time.now(), time.zone())
         // Вопрос или просьба, которую не понял разбор команд, — отвечает офлайн-модель, а не «сохранить заметкой?».
         if (parsed == null && ai.nova.core.ai.LocalChat.looksLikeChat(text)) localAnswer(text, cfg)?.let { return it }
+        // Фразу не поняли правила: офлайн-модель переписывает её в короткую команду, а выполняет
+        // её тот же разбор — действия не выдумываются и опасное по-прежнему требует подтверждения.
+        if (parsed == null) onDeviceCommand(text, cfg)?.let { return it }
         val local = parsed ?: localFallback(text, cfg)
         if (local != null) {
             val reply = execute(local, usedAI = false, offline = cfg.useAI, name = cfg.assistantName)
