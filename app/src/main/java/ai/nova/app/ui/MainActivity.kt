@@ -132,6 +132,7 @@ class MainActivity : ComponentActivity() {
                         ai.nova.app.ui.components.OrganicBackground()
                         NovaRoot(container, listenRequest, openSettingsRequest, openBackupRequest, quickRequest, openChatRequest)
                         ai.nova.app.ui.components.VoiceMemoOverlay(container)
+                        ai.nova.app.ui.onboarding.FirstRunOnboarding(container)
                         ai.nova.app.ui.components.WhatsNewAutoShow()
                     }
                 }
@@ -316,8 +317,11 @@ private fun NovaRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, open
     rememberSystemSpeechDialog(c)
     PermissionRequests(c)
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    // На первом запуске уведомления спрашивает знакомство — с объяснением, зачем они нужны.
+    // Здесь доспрашиваем только тех, кто знакомство уже прошёл, а разрешение так и не дал.
+    val onboarded = remember { ai.nova.app.ui.onboarding.FirstRun.seen(context) }
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= 33 &&
+        if (onboarded && Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }

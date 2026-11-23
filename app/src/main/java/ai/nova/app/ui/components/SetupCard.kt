@@ -202,7 +202,9 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
                             when {
                                 auto || busy -> "Настраиваю — после каждого экрана просто вернитесь назад"
                                 required.isEmpty() -> "Главное готово. Остальное — по желанию"
-                                else -> "Нужно ещё ${ai.nova.core.assistant.RuFormat.count(required.size, "шаг", "шага", "шагов")}"
+                                else -> "Открою системные экраны по очереди: " + required.take(3)
+                                    .joinToString(", ") { it.title.lowercase() } +
+                                    if (required.size > 3) " и ещё ${required.size - 3}" else ""
                             },
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -212,7 +214,8 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
                     }
                 }
                 PrimaryButton(
-                    if (busy) "Включаю через Shizuku…" else if (auto) "Продолжить настройку" else "Настроить всё",
+                    // Не «Настроить всё», а понятно: какие именно шаги и что произойдёт.
+                    if (busy) "Включаю через Shizuku…" else if (auto) "Продолжить по шагам" else "Пройти по шагам",
                     { if (auto) { attemptedCsv = ""; refresh++ } else startAuto() },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
                     enabled = !busy,

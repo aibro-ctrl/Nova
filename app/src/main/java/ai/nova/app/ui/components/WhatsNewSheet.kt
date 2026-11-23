@@ -26,12 +26,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import ai.nova.app.BuildConfig
 import ai.nova.app.ui.Release
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /**
  * «Что нового»: список изменений по версиям. Открывается сам после обновления приложения
@@ -71,7 +73,10 @@ fun WhatsNewSheet(releases: List<Release>, onDismiss: () -> Unit) {
             }
             releases.forEach { release ->
                 item(key = "title-" + release.version) { ReleaseHeader(release) }
-                items(release.changes, key = { release.version + "|" + it }) { change -> ChangeRow(change) }
+                release.sections.forEach { section ->
+                    item(key = release.version + "|h|" + section.title) { SectionHeader(section.title) }
+                    items(section.items, key = { release.version + "|" + it }) { change -> ChangeRow(change) }
+                }
             }
             item(key = "ok") {
                 PrimaryButton("Понятно", onDismiss, modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 28.dp))
@@ -99,6 +104,17 @@ private fun ReleaseHeader(release: Release) {
             modifier = Modifier.padding(top = 8.dp),
         )
     }
+}
+
+/** Заголовок раздела внутри версии: «Маршруты», «Здоровье» — чтобы список читался по темам. */
+@Composable
+private fun SectionHeader(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 2.dp),
+    )
 }
 
 /** Один пункт изменений: маркер и текст без ограничения строк. */
@@ -133,7 +149,9 @@ fun WhatsNewAutoShow() {
     val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
     val notes = androidx.compose.runtime.remember { ai.nova.app.ui.WhatsNew(context) }
     val releases = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<Release>?>(null) }
-    androidx.compose.runtime.LaunchedEffect(Unit) { releases.value = notes.unseen() }
+    // Сначала знакомство, потом новости: две подсказки разом — это уже навязчиво.
+    val onboarded by ai.nova.app.ui.onboarding.FirstRun.done.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(onboarded) { if (onboarded) releases.value = notes.unseen() }
     val shown = releases.value
     if (shown != null && shown.isNotEmpty()) {
         WhatsNewSheet(shown) {

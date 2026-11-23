@@ -40,6 +40,33 @@ class ChangelogTest {
         assertTrue("«Что нового» не новее установленной версии", compare(notes, installed) <= 0)
     }
 
+    /** Новости читают люди: по разделам, без имён параметров и прочей техники. */
+    @Test
+    fun everyReleaseIsGroupedByTopic() {
+        Changelog.releases.forEach { release ->
+            assertTrue("у ${release.version} есть разделы", release.sections.isNotEmpty())
+            release.sections.forEach { section ->
+                assertTrue("у ${release.version} у раздела есть название", section.title.isNotBlank())
+                assertTrue("раздел «${section.title}» не пустой", section.items.isNotEmpty())
+            }
+            val titles = release.sections.map { it.title }
+            assertEquals("разделы ${release.version} не повторяются", titles.size, titles.distinct().size)
+        }
+    }
+
+    /** В «Что нового» не должно быть технических подробностей: их место в коде, а не в окне обновления. */
+    @Test
+    fun changesAvoidTechnicalDetails() {
+        val jargon = listOf("GET ", "POST ", "/models", "max_tokens", "max_completion_tokens", "API", "SHA", "gguf", "JSON", "SDK", "токен")
+        Changelog.releases.forEach { release ->
+            release.changes.forEach { change ->
+                jargon.forEach { word ->
+                    assertTrue("в пункте «$change» лишняя техника: $word", !change.contains(word, ignoreCase = true))
+                }
+            }
+        }
+    }
+
     @Test
     fun everyReleaseIsReadable() {
         Changelog.releases.forEach { release ->
