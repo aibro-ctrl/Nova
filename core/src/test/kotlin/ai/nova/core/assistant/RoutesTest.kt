@@ -32,6 +32,55 @@ class RoutesTest {
         assertEquals("Лувр", destination("проложи маршрут до Лувра"))
     }
 
+    /** Так строил маршрут пользователь — и получал напоминание «Маршрут домой гис» или задачу «Осмотреть музей». */
+    @Test fun userPhrasesFromTheChat() {
+        assertEquals("дом", destination("маршрут домой в 2гис"))
+        assertEquals(MapsApp.TWOGIS, navigate("маршрут домой в 2гис")?.app)
+        assertEquals("дом", destination("маршрут домой в 2gis"))
+        assertEquals("музей", destination("маршрут музей"))
+        assertEquals("музей", destination("в 2гис маршрут до музея"))
+        assertEquals(MapsApp.TWOGIS, navigate("в 2гис маршрут до музея")?.app)
+        assertEquals("музей", destination("маршрут до музея в 2gis"))
+        assertEquals("аптека", destination("маршрут яндекс карты до аптеки"))
+        assertEquals(MapsApp.YANDEX, navigate("маршрут яндекс карты до аптеки")?.app)
+        assertEquals("аэропорт", destination("маршрут аэропорт"))
+        assertEquals("кино", destination("поехали кино"))
+    }
+
+    /** «Маршрут в 2гис» без места — это не напоминание и не трата, а вопрос «куда ехать?». */
+    @Test fun routeWithAppButWithoutPlaceAsksWhere() {
+        val plan = parse("маршрут 2гис")
+        assertEquals(emptyList(), plan?.actions)
+        assertEquals(true, plan?.reply?.contains("Куда построить маршрут"), plan?.reply)
+    }
+
+    @Test fun timeIsNotAPlace() {
+        assertNull(destination("маршрут на сегодня"))
+        // И это не задача «Маршрут» — лучше переспросить.
+        val plan = parse("маршрут на сегодня")
+        assertEquals(emptyList(), plan?.actions)
+        assertEquals(true, plan?.reply?.contains("Куда построить маршрут"), plan?.reply)
+    }
+
+    /** Живые фразы из чата на телефоне: с «найди», с опечатками и с распознанным «построй-ка». */
+    @Test fun findRouteAndTypos() {
+        // «найди маршрут домой» искалось в интернете и отвечало статьёй про трамваи Казани.
+        assertEquals("дом", destination("найди маршрут домой"))
+        assertEquals("дом", destination("найди маршрут дом"))
+        assertEquals("краеведческий музей", destination("найди маршрут краеведческий музей"))
+        assertEquals("музей", destination("найди маршрут до музея"))
+        assertEquals("аптека", destination("найди дорогу до аптеки"))
+        // «постройки маршрут до дом», «построй маршут до дом» — «не совсем поняла команду».
+        assertEquals("дом", destination("постройки маршрут до дом"))
+        assertEquals("дом", destination("построй маршут до дом"))
+        assertEquals("дом", destination("построй-ка маршрут до дома"))
+        assertEquals("аэропорт", destination("построй маршрут аэропорт"))
+        // «найди маршрут» без места — уточняем, а не ищем в интернете.
+        val plan = parse("найди маршрут")
+        assertEquals(emptyList(), plan?.actions)
+        assertEquals(true, plan?.reply?.contains("Куда построить маршрут"), plan?.reply)
+    }
+
     @Test fun placeWithoutCommand() {
         // Именно эти фразы раньше заканчивались «не поняла».
         assertEquals("музей", destination("музей"))

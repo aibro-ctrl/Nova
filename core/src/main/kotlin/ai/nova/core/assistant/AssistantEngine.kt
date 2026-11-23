@@ -1174,6 +1174,34 @@ class AssistantEngine(
 
     private suspend fun runSkills(text: String, cfg: AssistantSettings): AssistantReply? = skillReply(skills?.handle(text, cfg, skillAi), cfg)
 
+    /**
+     * Маршрут и «куда ехать?» — до навыков, облака и поиска в интернете.
+     *
+     * Срабатывает, только если правила разобрали фразу целиком как команду телефону с картой.
+     * Возвращает null для всего остального — дальше решают навыки и AI.
+     */
+    private suspend fun navigateFirst(text: String, cfg: AssistantSettings): AssistantReply? {
+        DevicePhrases.routeQuestion(text)?.let { return AssistantReply(it) }
+        val plan = runCatching { localParser.parse(text, time.now(), time.zone()) }.getOrNull() ?: return null
+        if (plan.actions.isEmpty()) return null
+        val devices = plan.actions.filterIsInstance<AssistantAction.Device>()
+        if (devices.size != plan.actions.size || devices.any { it.command !is DeviceCommand.Navigate }) return null
+        return execute(plan, usedAI = false, offline = cfg.useAI, name = cfg.assistantName)
+    }
+
+    /**
+     * Команда телефону («поставь таймер на 5 минут», «позвони маме»), которую поняли правила.
+     *
+     * Такие фразы выполняются на устройстве, не дожидаясь облака: результат предсказуем и не зависит от сети.
+     * Всё, что правилами не разобрано, по-прежнему уходит облачному AI — у него шире контекст для вопросов.
+     */
+    private suspend fun deviceFirst(text: String, cfg: AssistantSettings): AssistantReply? {
+        val plan = runCatching { localParser.parse(text, time.now(), time.zone()) }.getOrNull() ?: return null
+        if (plan.slot != null) return null
+        if (plan.actions.isEmpty() || plan.actions.any { it !is AssistantAction.Device }) return null
+        return execute(plan, usedAI = false, offline = cfg.useAI, name = cfg.assistantName)
+    }
+
     private suspend fun skillReply(out: ai.nova.core.skills.SkillOutcome?, cfg: AssistantSettings): AssistantReply? =
         when (out) {
             is ai.nova.core.skills.SkillOutcome.Say -> AssistantReply(
@@ -1275,8 +1303,11 @@ class AssistantEngine(
         if ((context.dialogMode || context.appendMode) && LocalCommandParser.isDialogEnd(text)) {
             return AssistantReply("Хорошо! Если что — зовите.", endsDialog = true)
         }
-        // 4. Сценарии, перевод, списки, дни рождения, секретные заметки — точные команды, выполняются на устройстве.
+        // 4.0. Сценарии — раньше маршрута: «поехали» может быть названием сценария пользователя.
         runRoutine(text, cfg)?.let { return it }
+        // 4.1. Маршрут — раньше навыков и облака: иначе «найди маршрут домой» уходило в интернет-поиск,
+        // а «маршрут музей» — в задачу «Осмотреть музей». Карту строим на устройстве и сразу.
+        navigateFirst(text, cfg)?.let { return it }
         if (currentSource != InputSource.TEXT && SpecialCommands.isDictationStart(text)) {
             return AssistantReply("Диктуйте — я записываю. Можно делать паузы. Когда закончите, скажите «готово».", dictation = true, expectFollowUp = false)
         }
@@ -1309,6 +1340,10 @@ class AssistantEngine(
         smallTalk(text, cfg)?.let { return it }
         // «Начни разговор» — сразу отвечаем и продолжаем слушать, не дожидаясь модели.
         dialogOpener(text, cfg)?.let { return it }
+        // 4.9. Команда телефону, понятая правилами, выполняется на устройстве — до облака.
+        // Иначе модель уводила её в чужие намерения: «маршрут музей» становилось задачей «Осмотреть музей»,
+        // «найди маршрут домой» — статьёй из интернета. Команда телефону предсказуемее и быстрее локально.
+        deviceFirst(text, cfg)?.let { return it }
         // 5. Облачный AI → при недоступности офлайн-парсер.
         var aiError: AIException? = null
         // Облако только что не ответило (сеть, лимит, сервер лежит): не ждём тот же таймаут ещё раз —
