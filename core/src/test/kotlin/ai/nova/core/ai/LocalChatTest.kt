@@ -61,3 +61,26 @@ class LocalChatTest {
             .forEach { assertFalse(LocalChat.looksLikeChat(it), it) }
     }
 }
+
+/** Род в системном промпте: маленькая модель должна говорить о себе и о собеседнике в правильном роде. */
+class PromptGenderTest {
+    @Test fun assistantGenderFollowsName() {
+        val nova = LocalChat.systemPrompt("Нова", "Саня")
+        assertTrue(nova.contains("от женского лица"), nova)
+        assertTrue(nova.contains("не создана"), nova)
+
+        val jarvis = LocalChat.systemPrompt("Джарвис", "Саня")
+        assertTrue(jarvis.contains("от мужского лица"), jarvis)
+        assertTrue(jarvis.contains("не создан Google"), jarvis)
+    }
+
+    @Test fun userGenderFollowsName() {
+        assertTrue(LocalChat.systemPrompt("Нова", "Мария").contains("Это женщина"), "женское имя должно давать женский род")
+        assertTrue(LocalChat.systemPrompt("Нова", "Максим").contains("Это мужчина"), "мужское имя должно давать мужской род")
+        // Неоднозначное имя — никаких догадок.
+        assertFalse(LocalChat.systemPrompt("Нова", "Саша").contains("Это женщина"))
+        assertFalse(LocalChat.systemPrompt("Нова", "Саша").contains("Это мужчина"))
+        // Без имени — только ассистент.
+        assertFalse(LocalChat.systemPrompt("Нова", null).contains("Собеседника зовут"))
+    }
+}

@@ -1,17 +1,12 @@
 package ai.nova.app.reminders
 
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
-import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import ai.nova.app.NovaApp
-import ai.nova.app.R
-import ai.nova.app.ui.MainActivity
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
@@ -20,8 +15,9 @@ import java.time.ZonedDateTime
 import java.util.concurrent.TimeUnit
 
 /**
- * Утренняя сводка: в 8:30 одно уведомление — задачи на сегодня, просроченные и напоминания дня.
- * Ничего не нужно открывать и спрашивать; если на сегодня пусто — уведомления нет.
+ * Утренняя сводка: в 8:30 задачи на сегодня, просроченные и напоминания дня.
+ * Отдаётся через [SummaryDelivery]: приветствие по имени, полный текст в истории общения,
+ * озвучка целиком и уведомление, по нажатию открывающее чат. Если на сегодня пусто — сводки нет.
  */
 object MorningBrief {
     private const val WORK = "nova-morning-brief"
@@ -49,12 +45,18 @@ object MorningBrief {
         c.awaitReady()
         val zone = ZoneId.systemDefault()
         val today = LocalDate.now(zone)
-        val tasks = c.store.tasks.all().filter { !it.done }
+        val blocks = c.settings.current().briefBlocks
+        val tasks = if (ai.nova.core.health.BriefBlocks.on(blocks, ai.nova.core.health.BriefBlocks.TASKS)) {
+            c.store.tasks.all().filter { !it.done }
+        } else emptyList()
         val dueToday = tasks.filter { it.dueDate == today }
         val overdue = tasks.filter { it.dueDate?.isBefore(today) == true }
-        val reminders = c.store.reminders.active().filter { it.triggerAt.atZone(zone).toLocalDate() == today }
-            .sortedBy { it.triggerAt }
-        val weather = runCatching { c.skills.weatherLine(c.assistantSettings()) }.getOrNull()
+        val reminders = if (ai.nova.core.health.BriefBlocks.on(blocks, ai.nova.core.health.BriefBlocks.REMINDERS)) {
+            c.store.reminders.active().filter { it.triggerAt.atZone(zone).toLocalDate() == today }.sortedBy { it.triggerAt }
+        } else emptyList()
+        val weather = if (ai.nova.core.health.BriefBlocks.on(blocks, ai.nova.core.health.BriefBlocks.WEATHER)) {
+            runCatching { c.skills.weatherLine(c.assistantSettings()) }.getOrNull()
+        } else null
         if (dueToday.isEmpty() && overdue.isEmpty() && reminders.isEmpty()) return weather
         return buildList {
             weather?.let { add(it) }
@@ -72,25 +74,8 @@ object MorningBrief {
             val c = (applicationContext as NovaApp).container
             if (!c.settings.current().morningBrief) return Result.success()
             val text = text(applicationContext) ?: return Result.success()
-            val open = PendingIntent.getActivity(
-                applicationContext, NOTIFICATION_ID, Intent(applicationContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-            val n = NotificationCompat.Builder(applicationContext, Notifications.CHANNEL_REMINDERS)
-                .setSmallIcon(R.drawable.ic_stat_nova)
-                .setContentTitle("Доброе утро! План на сегодня")
-                .setContentText(text.lineSequence().first())
-                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-                // На экране блокировки — без подробностей.
-                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-                .setPublicVersion(
-                    NotificationCompat.Builder(applicationContext, Notifications.CHANNEL_REMINDERS)
-                        .setSmallIcon(R.drawable.ic_stat_nova).setContentTitle("План на сегодня готов").build(),
-                )
-                .setContentIntent(open)
-                .setAutoCancel(true)
-                .build()
-            Notifications.notifySafely(applicationContext, NOTIFICATION_ID, n)
+            // Сводка целиком: приветствие по имени, история общения и озвучка — не только первая строка в пуше.
+            SummaryDelivery.deliver(applicationContext, c, NOTIFICATION_ID, title = "План на сегодня", text = text)
             return Result.success()
         }
     }

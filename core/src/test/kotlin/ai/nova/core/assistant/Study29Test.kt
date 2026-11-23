@@ -64,6 +64,13 @@ class Study29Test {
         assertTrue(y.contains("краску") && !y.contains("плитку"), y)
         assertTrue(e.engine.handle("что я говорила про отпуск").text.startsWith("Не нашла"))
         assertEquals(ChatSearch.Ask(null, LocalDate.of(2026, 9, 24), LocalDate.of(2026, 9, 24)), ChatSearch.parse("о чём мы говорили вчера", LocalDate.of(2026, 9, 25)))
+        // Фраза из правок: период стоит перед темой, а не в конце.
+        assertEquals(
+            ChatSearch.Ask("ремонта", LocalDate.of(2026, 9, 24), LocalDate.of(2026, 9, 24)),
+            ChatSearch.parse("о чём я говорил вчера насчёт ремонта", LocalDate.of(2026, 9, 25)),
+        )
+        assertEquals(ChatSearch.Ask("ремонта", null, null), ChatSearch.parse("о чём я говорил насчёт ремонта", LocalDate.of(2026, 9, 25)))
+        assertTrue(e.engine.handle("о чём я говорила насчёт ремонта").text.contains("краску"))
     }
 
     @Test fun csv() {

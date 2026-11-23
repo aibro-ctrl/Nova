@@ -226,7 +226,16 @@ class AndroidTtsProvider(
     override fun stop() { runCatching { tts.stop() } }
 
     /** Голос для списка в настройках. */
-    data class VoiceOption(val name: String, val title: String, val subtitle: String)
+    /**
+     * [gender] известен не всегда: у синтезатора Гугла русские голоса называются вроде «ru-ru-x-dfc-network»,
+     * и род там не указан. Тогда [Gender.NEUTRAL] — обещать «мужской голос» без основания нельзя.
+     */
+    data class VoiceOption(
+        val name: String,
+        val title: String,
+        val subtitle: String,
+        val gender: ai.nova.core.nlp.Gender = ai.nova.core.nlp.Gender.NEUTRAL,
+    )
 
     /**
      * Русские голоса текущего синтезатора: сначала установленные, потом те, что скачаются при выборе.
@@ -255,12 +264,13 @@ class AndroidTtsProvider(
             }
             val gender = v.name.lowercase().let { n ->
                 when {
-                    "female" in n -> " · женский"
-                    "male" in n -> " · мужской"
-                    else -> ""
+                    "female" in n -> ai.nova.core.nlp.Gender.FEMININE
+                    "male" in n -> ai.nova.core.nlp.Gender.MASCULINE
+                    else -> ai.nova.core.nlp.Gender.NEUTRAL
                 }
             }
-            VoiceOption(v.name, "Голос ${i + 1}", "$where · $quality$gender")
+            val genderNote = if (gender == ai.nova.core.nlp.Gender.NEUTRAL) "" else " · ${gender.label}"
+            VoiceOption(v.name, "Голос ${i + 1}", "$where · $quality$genderNote", gender)
         }
     }
 

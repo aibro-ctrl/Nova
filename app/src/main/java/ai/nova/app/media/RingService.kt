@@ -133,9 +133,9 @@ class RingService : Service() {
     companion object {
         private const val TAG = "Ring"
         private const val ACTION_STOP = "ai.nova.ring.STOP"
-        private const val EXTRA_TITLE = "title"
-        private const val EXTRA_TEXT = "text"
-        private const val EXTRA_LOUD = "loud"
+        const val EXTRA_TITLE = "title"
+        const val EXTRA_TEXT = "text"
+        const val EXTRA_LOUD = "loud"
 
         fun start(context: Context, title: String, text: String, loud: Boolean): Boolean = runCatching {
             ContextCompat.startForegroundService(

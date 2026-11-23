@@ -1,5 +1,7 @@
 package ai.nova.core.assistant
 
+import ai.nova.core.nlp.Gender
+import ai.nova.core.nlp.RuGender
 import ai.nova.core.nlp.RuTokenizer
 import ai.nova.core.ai.AIException
 import ai.nova.core.ai.AIProvider
@@ -119,6 +121,8 @@ class AssistantEngine(
     private val agent: ai.nova.core.agent.AgentCore? = null,
     /** Сохранённые рецепты и идущая готовка: «продолжим готовить» после перезапуска. */
     private val cooking: ai.nova.core.data.CookingStore? = null,
+    /** Выполненные действия — для журнала «что Нова сделала» (предсказуемость и контроль). */
+    private val onExecuted: (List<AssistantAction>, AssistantReply) -> Unit = { _, _ -> },
 ) {
     private val review = ai.nova.core.review.Review(
         notes, tasks, reminders,
@@ -226,7 +230,21 @@ class AssistantEngine(
      * заботливая — предлагает одно полезное действие по реальным данным дня (не чаще, чем раз в несколько минут).
      * Основная работа характера — в системном промпте; здесь только то, что модель не видит (данные приложения).
      */
-    private suspend fun decorate(reply: AssistantReply, cfg: AssistantSettings): AssistantReply = when (cfg.persona) {
+    private suspend fun decorate(reply: AssistantReply, cfg: AssistantSettings): AssistantReply =
+        agree(decoratePersona(reply, cfg), cfg)
+
+    /**
+     * Род ассистента: ответы написаны в женском роде, и для мужского имени («Джарвис», «Максим»)
+     * «Записала» превращается в «Записал». Перевод и чужие цитаты не трогаем.
+     */
+    private fun agree(reply: AssistantReply, cfg: AssistantSettings): AssistantReply {
+        if (reply.speakLanguage != null || reply.text.isEmpty()) return reply
+        val gender = Gender.ofAssistant(cfg.assistantName)
+        if (!gender.isMasculine) return reply
+        return reply.copy(text = RuGender.masculine(reply.text))
+    }
+
+    private suspend fun decoratePersona(reply: AssistantReply, cfg: AssistantSettings): AssistantReply = when (cfg.persona) {
         Persona.PLAYFUL -> {
             val extra = if (reply.changedData && !reply.awaitingAnswer && !reply.awaitingConfirmation && !reply.sensitive) cfg.persona.flourish(time.now().epochSecond) else null
             if (extra != null) reply.copy(text = reply.text.trimEnd() + " " + extra) else reply
@@ -279,6 +297,28 @@ class AssistantEngine(
             )
         }
         return null
+    }
+
+    /**
+     * «Начни разговор», «давай поговорим», «поболтаем» — приглашение к беседе.
+     * Отвечаем мгновенно и переходим в диалог: раньше фраза уходила к модели, и на телефоне
+     * человек ждал десятки секунд вместо ответа.
+     */
+    private fun dialogOpener(text: String, cfg: AssistantSettings): AssistantReply? {
+        if (!ai.nova.core.ai.LocalChat.isDialogOpener(text)) return null
+        context.dialogMode = true
+        val hour = time.zonedNow().hour
+        val text = when (cfg.persona) {
+            Persona.BUSINESS -> "Слушаю. О чём поговорим?"
+            Persona.PLAYFUL -> "Обожаю поболтать! О чём поговорим?"
+            Persona.CARING -> when (hour) {
+                in 5..11 -> "Доброе утро! Давайте поговорим — как вы?"
+                in 12..17 -> "Добрый день! Давайте поговорим — как вы?"
+                in 18..22 -> "Добрый вечер! Давайте поговорим — как прошёл день?"
+                else -> "Давайте поговорим. Не поздно для вас?"
+            }
+        }
+        return AssistantReply(text, expectFollowUp = true, awaitingAnswer = true)
     }
 
     private suspend fun smallTalk(text: String, cfg: AssistantSettings): AssistantReply? {
@@ -335,6 +375,12 @@ class AssistantEngine(
     /** Свободный вопрос без облачного AI — офлайн-модель. */
     private suspend fun localAnswer(text: String, cfg: AssistantSettings): AssistantReply? {
         val lc = localChat?.takeIf { it.available } ?: return null
+        // Экран выключен и приложение не на виду — Android душит процесс, ответ модели идёт дольше минуты.
+        // Честно говорим об этом вместо сорока секунд тишины.
+        if (!lc.canAnswerNow) return AssistantReply(
+            "Модель на телефоне без экрана отвечает слишком медленно. Включите экран или спросите в приложении — отвечу сразу.",
+            offline = cfg.useAI,
+        )
         val history = (if (cfg.locked) emptyList() else context.messages.takeLast(6)) + ChatMessage(ChatMessage.Role.USER, text)
         val out = try {
             lc.reply(
@@ -349,6 +395,42 @@ class AssistantEngine(
             null
         }?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         return AssistantReply(out, offline = cfg.useAI, provider = "Офлайн-модель")
+    }
+
+    /**
+     * Это реплика разговора, а не команда: вопрос, просьба к собеседнику, ответ в диалоге.
+     * Нужно, чтобы «не поняла команду» от модели не съедало обычный разговор.
+     */
+    private fun isChatTurn(text: String, cfg: AssistantSettings): Boolean {
+        if (ai.nova.core.ai.LocalChat.looksLikeChat(text)) return true
+        if (context.dialogMode || lastWasChat) return true
+        // Короткая реплика без команды: «всё хорошо», «спасибо», «скучно».
+        return ai.nova.core.ai.LocalChat.isSmallTalk(text) && localParser.parse(text, time.now(), time.zone()) == null
+    }
+
+    /** Модель вместо ответа сказала, что не поняла фразу. */
+    private fun looksLikeRefusal(reply: String): Boolean {
+        if (reply.isBlank()) return true
+        val r = RuTokenizer.normalize(reply).trim()
+        return Regex(
+            """^(?:не\s+понял\w*|не\s+понимаю|не\s+могу\s+(?:понять|ответить|выполнить)|не\s+удалось|извините[,\s]+не\s+понял\w*|я\s+не\s+понял\w*)""",
+        ).containsMatchIn(r)
+    }
+
+    /** Ответ модели как собеседника — без инструкции про JSON и действия. */
+    private suspend fun chatReply(provider: AIProvider, text: String, cfg: AssistantSettings): AssistantReply? {
+        val system = ai.nova.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName, cfg.persona.personality.skillStyle)
+        val history = (if (cfg.locked) emptyList() else context.messages.takeLast(6)) + ChatMessage(ChatMessage.Role.USER, text)
+        val answer = try {
+            provider.complete(AIRequest(system = system, messages = history, maxTokens = 300)).text.trim()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Logger.w(TAG, "Разговорный ответ не получился", e)
+            return null
+        }
+        if (answer.isEmpty() || looksLikeRefusal(answer)) return localAnswer(text, cfg)
+        return AssistantReply(answer, usedAI = true)
     }
 
     /**
@@ -1085,6 +1167,12 @@ class AssistantEngine(
         if (cfg.locked && cfg.lockPolicy?.any == false) {
             return AssistantReply("Разблокируйте телефон — без разблокировки я не отвечаю. Это можно разрешить в настройках Нова.")
         }
+        // 0. Ждём ответ «YouTube, VK Видео или Rutube?» — выбор запоминается, поиск идёт сразу.
+        if (executor.awaitingVideo()) {
+            executor.answerVideo(text)?.let { result ->
+                return AssistantReply(result.outcomes.joinToString("\n") { it.text }, outcomes = result.outcomes)
+            }
+        }
         // 0. Идёт игра или навык ждёт ответа («В каком городе?») — фраза для него, если это не новая команда.
         var skillsTried = false
         if (skills?.busy == true) {
@@ -1193,6 +1281,8 @@ class AssistantEngine(
         }
         // Приветствие, «как дела», «спасибо» — в своём характере.
         smallTalk(text, cfg)?.let { return it }
+        // «Начни разговор» — сразу отвечаем и продолжаем слушать, не дожидаясь модели.
+        dialogOpener(text, cfg)?.let { return it }
         // 5. Облачный AI → при недоступности офлайн-парсер.
         var aiError: AIException? = null
         // Облако только что не ответило (сеть, лимит, сервер лежит): не ждём тот же таймаут ещё раз —
@@ -1211,6 +1301,13 @@ class AssistantEngine(
                     val plan = guardDeviceActions(planWithAI(provider, text, cfg), text)
                     lastAiFailure = null
                     val used = (provider as? ChainAIProvider)?.lastUsed ?: provider
+                    // Разговор, а не команда: модель ответила «не поняла команду» (или ничего не ответила).
+                    // Спрашиваем её же как собеседника, без инструкции про JSON — на этом «Начни разговор» не ломался.
+                    if (plan.actions.isEmpty() && plan.slot == null && isChatTurn(text, cfg) && looksLikeRefusal(plan.reply)) {
+                        chatReply(provider, text, cfg)?.let { answer ->
+                            return answer.copy(usedAI = true, provider = "${used.type.title} · ${used.model}")
+                        }
+                    }
                     return execute(plan, usedAI = true, offline = false, name = cfg.assistantName)
                         .copy(provider = "${used.type.title} · ${used.model}")
                 } catch (e: CancellationException) {
@@ -1264,12 +1361,12 @@ class AssistantEngine(
         )
     }
 
-    /** Сохраняет надиктованный текст заметкой. */
+    /** Сохраняет надиктованный текст заметкой: расставляет точки, заглавные буквы и абзацы. */
     suspend fun saveDictation(raw: String): AssistantReply = mutex.withLock {
-        val text = SpecialCommands.cleanDictation(raw)
+        val text = ai.nova.core.nlp.DictationText.format(SpecialCommands.cleanDictation(raw))
         if (text.isBlank()) return@withLock AssistantReply("Ничего не услышала — заметку не сохраняю.")
-        val title = text.split(Regex("""\s+""")).take(6).joinToString(" ").trimEnd(',', '.', ':').replaceFirstChar { it.uppercase() }
-        val note = notes.create(ai.nova.core.model.NoteKind.NOTE, title, text.replaceFirstChar { it.uppercase() })
+        val title = ai.nova.core.nlp.DictationText.title(text)
+        val note = notes.create(ai.nova.core.model.NoteKind.NOTE, title, text)
         context.touchRecord(RecordRef(RecordType.NOTE, note.id, note.title))
         runCatching { conversations.add(context.conversationId, MessageRole.USER, text) }
         val words = text.split(Regex("""\s+""")).size
@@ -1307,6 +1404,21 @@ class AssistantEngine(
         } finally {
             executor.trusted = false
         }
+    }
+
+    /**
+     * Сводка по расписанию (утро, вечер, итоги недели, сценарий): полный текст пишется в историю общения.
+     * Уведомление обрезает длинный текст, а история — нет, поэтому сводку всегда можно перечитать целиком;
+     * заодно она становится последним ответом, и «повтори» прочитает её ещё раз.
+     */
+    suspend fun recordScheduledReport(text: String): String {
+        val full = text.trim()
+        if (full.isEmpty()) return full
+        runCatching { conversations.add(context.conversationId, MessageRole.ASSISTANT, full) }
+            .onFailure { Logger.w(TAG, "Не удалось сохранить сводку в историю", it) }
+        lastReply = AssistantReply(full)
+        lastReplyAt = time.now()
+        return full
     }
 
     private suspend fun runCommands(routine: ai.nova.core.model.Routine, cfg: AssistantSettings): AssistantReply {
@@ -1378,7 +1490,14 @@ class AssistantEngine(
      */
     private fun guardDeviceActions(plan: AssistantPlan, userText: String): AssistantPlan {
         val rejected = ArrayList(plan.rejected)
+        val n = ai.nova.core.nlp.RuTokenizer.normalize(userText)
+        // Записи уходят из приложения, только если вы сами попросили отправить: подсказка из заметки не считается.
+        val wantsShare = Regex("""отправ|перешл|подел|скинь|пошли""").containsMatchIn(n)
         val kept = plan.actions.filter { a ->
+            if (a is AssistantAction.ShareNote && !wantsShare) {
+                rejected += "AI предложил отправить запись, о которой вы не просили — не выполняю"
+                return@filter false
+            }
             val cmd = (a as? AssistantAction.Device)?.command ?: return@filter true
             val ok = DeviceGuard.allowed(cmd, userText)
             if (!ok) rejected += "AI предложил действие, о котором вы не просили — не выполняю"
@@ -1476,7 +1595,7 @@ class AssistantEngine(
         val followUp = plan.expectFollowUp || context.dialogMode || awaitingAnswer || result.pendingConfirmation != null
         // Запись голосовой заметки займёт микрофон: разговор на этом заканчиваем.
         val recording = plan.actions.any { (it as? AssistantAction.Device)?.command == DeviceCommand.VoiceMemo }
-        return AssistantReply(
+        val reply = AssistantReply(
             endsDialog = recording,
             text = parts.filter { it.isNotBlank() }.joinToString("\n").trim().replace("{name}", name),
             outcomes = result.outcomes,
@@ -1487,6 +1606,11 @@ class AssistantEngine(
             offline = offline,
             changedData = changed,
         )
+        // Журнал: только реально выполненные действия (не уточнения и не разговор).
+        if (plan.actions.isNotEmpty() && result.outcomes.any { it.kind != Outcome.Kind.ERROR }) {
+            runCatching { onExecuted(plan.actions, reply) }
+        }
+        return reply
     }
 
     /**
@@ -1527,6 +1651,7 @@ class AssistantEngine(
         is AssistantAction.AppendNote -> action.copy(target = action.target.withId(id), splitQueryFromContent = false)
         is AssistantAction.UpdateNote -> action.copy(target = action.target.withId(id))
         is AssistantAction.DeleteNote -> action.copy(target = action.target.withId(id))
+        is AssistantAction.ShareNote -> action.copy(target = action.target.withId(id), last = null)
         is AssistantAction.CompleteTask -> action.copy(target = action.target.withId(id))
         is AssistantAction.DeleteTask -> action.copy(target = action.target.withId(id))
         is AssistantAction.CancelReminder -> action.copy(target = action.target.withId(id))

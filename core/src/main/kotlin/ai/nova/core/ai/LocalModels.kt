@@ -126,6 +126,43 @@ object LocalModels {
         return dropForeignPreamble(out).trim()
     }
 
+    /**
+     * Ответ для озвучки: убираем приветствие в начале («Привет, Саня! Сон — это…») и обрубок,
+     * если генерацию остановили по таймауту («Привет, Саня! С» — так говорить нельзя).
+     */
+    fun polishReply(text: String, userText: String, truncated: Boolean): String {
+        var out = text.trim()
+        if (truncated) out = cutOffTail(out)
+        if (!isGreeting(userText)) {
+            // Приветствие в начале ответа не нужно: вопрос был не «привет».
+            GREETING_HEAD.find(out)?.let { m ->
+                val rest = out.substring(m.range.last + 1).trimStart(' ', ',', '—', '-', ':')
+                if (rest.split(Regex("""\s+""")).size >= 3) out = rest
+            }
+        }
+        return out
+    }
+
+    private val GREETING_HEAD = Regex(
+        """^(?:привет(?:ик)?|здравствуй(?:те)?|доброе\s+утро|добрый\s+(?:день|вечер)|хай|салют|рад[а]?\s+(?:тебя|вас)\s+видеть)[!,.\s]+(?:[А-ЯЁ][а-яё]+[!,.\s]+)?""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    private val GREETING_WORDS = Regex("""^(?:привет|приветик|здравствуй|здравствуйте|хай|доброе\s+утро|добрый\s+день|добрый\s+вечер)\b""")
+
+    private fun isGreeting(text: String): Boolean =
+        GREETING_WORDS.containsMatchIn(text.trim().lowercase().replace('ё', 'е'))
+
+    /** Обрыв по таймауту: договариваем до конца предложения (или хотя бы до целого слова). */
+    fun cutOffTail(text: String): String {
+        val t = text.trimEnd()
+        val end = t.indexOfLast { it in ".!?…" }
+        if (end >= 0 && end < t.length - 1) return t.substring(0, end + 1)
+        if (end == t.length - 1) return t
+        val space = t.lastIndexOf(' ')
+        return if (space > 0) t.substring(0, space).trimEnd(' ', ',', '—', '-', ':', ';') else t
+    }
+
     /** Строки, с которых «думающие» модели начинают рассуждения в служебной форме. */
     private val THINKING_LINE = Regex(
         """(?i)^(?:okay|ok|hmm|well|let me|let's|i (?:need|should|will|must)|we (?:need|are|should)|the user|user asks|firstly|first,|so,|thinking|draft|note:|the question|question:|answer:)""",

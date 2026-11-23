@@ -56,6 +56,8 @@ class AppContainer(private val context: Context) {
 
     val secrets = KeystoreSecretStore(context)
     val settings = SettingsRepository(context, appScope)
+    /** Что Нова сделала: журнал действий, только на этом телефоне. */
+    val journal = ai.nova.app.diagnostics.ActionJournal(context)
 
     /** Клиент создаётся при первом запросе: его загрузка на старте съедала секунды и приводила к ANR. */
     val http: HttpClient by lazy {
@@ -168,7 +170,11 @@ class AppContainer(private val context: Context) {
     val device = AndroidDeviceController(context, launcher, appAccess, permissions, fallbackReminder = { text, at ->
         val r = store.reminders.create(text, at, null, time.zone().id)
         reminderScheduler.schedule(r)
-    }, timers = timers, relaxation = relaxation, driving = driving)
+    }, timers = timers, relaxation = relaxation, driving = driving,
+        // Карты из настроек: «в 2ГИС», «в Google» — иначе открываем те, что назначены системой для geo:.
+        mapsApp = { ai.nova.core.assistant.MapsApp.fromId(settings.settings.value.mapsApp) },
+        // «Мой город»: маршрут ищется в нём; пусто — как раньше, по последнему городу карт.
+        city = { settings.settings.value.city.takeIf { it.isNotBlank() } })
     /** Связь с «Финансовым помощником»: траты уходят туда, ответы о деньгах — оттуда. */
     val finance = ai.nova.app.device.FinanceBridge(context, appScope)
     /** Траты, которые заодно уходят в помощник. Сама Нова пишет их так же, как раньше. */
@@ -229,6 +235,10 @@ class AppContainer(private val context: Context) {
             agendaExtras = { date -> skills.agendaExtras(date, assistantSettings()) },
             contactBirthdays = { if (assistantSettings().locked) emptyList() else skillHost.contactBirthdays() },
             onPersistentReminder = { nags.mark(it) },
+            onCriticalReminder = { nags.mark(it); nags.markCritical(it) },
+            onReminderCancelled = { nags.clear(it); nags.clearCritical(it) },
+            videoPlatform = { ai.nova.core.assistant.VideoPlatform.fromId(settings.settings.value.videoPlatform) },
+            onVideoPlatform = { platform -> appScope.launch { settings.setVideoPlatform(platform.id) } },
             onPlanCreated = { plan -> engine.notePlan(plan) },
         )
     }
@@ -242,6 +252,7 @@ class AppContainer(private val context: Context) {
         routines = { store.routines.all() }, shoppingItems = { store.shopping.all() },
         skills = skills,
         onNotUnderstood = { ai.nova.app.diagnostics.Diagnostics.rememberUnknown(context, it) },
+        onExecuted = { actions, reply -> journal.log(actions, reply) },
         localChat = offlineLlm,
         habits = ai.nova.core.health.Habits(store.habits, time),
         daySpend = ::daySpend,
@@ -263,8 +274,15 @@ class AppContainer(private val context: Context) {
     suspend fun eveningSummary(): String {
         val zone = time.zone()
         val today = time.today()
+        val blocks = settings.current().briefBlocks
         val done = store.tasks.all().count { it.completedAt?.atZone(zone)?.toLocalDate() == today }
-        return ai.nova.core.health.Habits(store.habits, time).daySummaryText(done, daySpend(today))
+        val summary = ai.nova.core.health.Habits(store.habits, time).daySummaryText(done, daySpend(today), blocks)
+        if (!ai.nova.core.health.BriefBlocks.on(blocks, ai.nova.core.health.BriefBlocks.IDEAS)) return summary
+        val ideas = store.notes.all().count {
+            it.kind == ai.nova.core.model.NoteKind.IDEA && it.createdAt.atZone(zone).toLocalDate() == today
+        }
+        val ideasLine = if (ideas > 0) "Идей записано: $ideas." else ""
+        return listOf(summary, ideasLine).filter { it.isNotBlank() }.joinToString(" ")
     }
 
     fun assistantSettings(): AssistantSettings = settings.settings.value.let {
@@ -298,7 +316,11 @@ class AppContainer(private val context: Context) {
     val novaVoiceModels = ai.nova.app.voice.NovaVoiceModels(context)
     val novaVoice = ai.nova.app.voice.NovaVoice(
         novaVoiceModels,
-        voiceId = { novaVoiceModels.effective(settings.settings.value.novaVoice) },
+        // Род ассистента решает, каким голосом он говорит: мужское имя — мужской голос и наоборот.
+        voiceId = {
+            val s = settings.settings.value
+            novaVoiceModels.effectiveFor(s.novaVoice, ai.nova.core.nlp.Gender.ofAssistant(s.assistantName))
+        },
         rate = { settings.settings.value.speechRate },
         pitch = { settings.settings.value.speechPitch },
         volume = { settings.settings.value.speechVolume },
@@ -325,7 +347,13 @@ class AppContainer(private val context: Context) {
         },
     )
     val voice: VoiceController by lazy {
-        VoiceController(engine, settings.settings, systemStt, offlineStt, speech, appScope).also { v ->
+        VoiceController(
+            engine, settings.settings, systemStt, offlineStt, speech, appScope,
+            dictationKeepAlive = object : ai.nova.app.voice.DictationKeepAlive {
+                override fun start() = ai.nova.app.voice.DictationService.start(context)
+                override fun stop() = ai.nova.app.voice.DictationService.stop(context)
+            },
+        ).also { v ->
             // Пока микрофон слушает, музыка приглушается: голос ловится без крика.
             appScope.launch {
                 v.state.collect { st ->
@@ -336,7 +364,7 @@ class AppContainer(private val context: Context) {
                 }
             }
             val stopWords = ai.nova.app.voice.StopWordWatcher(context, voskEngine, voskModels)
-            v.stopWatcher = { stopWords.awaitStop() }
+            v.stopWatcher = { bargeIn -> stopWords.awaitInterruption(bargeIn) }
             v.understands = { engine.understandsLocally(it) }
             v.onStop = { offlineLlm.stop() }
             v.onVoiceReply = { reply ->

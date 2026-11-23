@@ -400,7 +400,7 @@ private fun OfflineModelSection(c: AppContainer) {
                 if (!c.offlineLlm.isDefaultModel) {
                     GroupDivider()
                     RowItem(
-                        title = "Вернуться к встроенной Qwen 2.5 1.5B",
+                        title = "Вернуться к встроенной Gemma 3 1B",
                         subtitle = "Скачивать заново не нужно, если файл остался на телефоне",
                         onClick = { c.offlineLlm.useDefault() },
                     )

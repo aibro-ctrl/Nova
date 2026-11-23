@@ -58,7 +58,7 @@ class DeviceCommandsTest {
         assertEquals(DeviceCommand.Call("маме"), device("позвони маме"))
         assertEquals(DeviceCommand.Message("саше", "я задержусь"), device("напиши саше что я задержусь"))
         assertEquals(DeviceCommand.WebSearch("рецепт борща"), device("найди в интернете рецепт борща"))
-        assertEquals(DeviceCommand.Navigate("вокзала"), device("построй маршрут до вокзала"))
+        assertEquals(DeviceCommand.Navigate("вокзал"), device("построй маршрут до вокзала"))
     }
 
     @Test fun moreVoiceCommands() {
@@ -70,6 +70,9 @@ class DeviceCommandsTest {
         assertEquals(DeviceCommand.Camera(video = true), device("сними видео"))
         assertEquals(DeviceCommand.OpenUrl("https://habr.com"), device("открой сайт habr.com"))
         assertEquals(DeviceCommand.Play("рецепт пиццы", youtube = true), device("найди на ютубе рецепт пиццы"))
+        // Просьба про видео без платформы — ищем видео, а не заметку.
+        assertEquals(DeviceCommand.Play("рыбалка", youtube = true), device("найди видео про рыбалку"))
+        assertEquals(DeviceCommand.Play("котиков", youtube = true), device("покажи ролик про котиков"))
         assertEquals(DeviceCommand.Play("queen"), device("включи песню queen"))
         assertEquals(DeviceCommand.DoNotDisturb(true), device("включи режим не беспокоить"))
         assertEquals(DeviceCommand.Brightness(70), device("яркость на 70"))

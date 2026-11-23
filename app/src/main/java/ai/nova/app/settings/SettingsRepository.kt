@@ -181,6 +181,14 @@ data class AppSettings(
     val morningBrief: Boolean = true,
     /** В 21:00 — итоги дня (по умолчанию выключено). */
     val eveningBrief: Boolean = false,
+    /** Какие блоки включать в сводки; выключенный блок не озвучивается. */
+    val briefBlocks: Set<String> = ai.nova.core.health.BriefBlocks.ALL,
+    /** Где искать видео: youtube, vk, rutube; пусто — спросим один раз при первом поиске. */
+    val videoPlatform: String = "",
+    /** Перебивать Нову голосом: любая речь останавливает озвучку (слово «стоп» работает всегда). */
+    val bargeIn: Boolean = true,
+    /** Карты для маршрутов: google, yandex, 2gis; пусто — те, что выбраны в системе для ссылок geo:. */
+    val mapsApp: String = "",
     /** По воскресеньям в 19:00 — итоги недели (по умолчанию выключено). */
     val weeklyReview: Boolean = false,
     /** Характер Нова: caring / business / playful. */
@@ -233,6 +241,10 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val secureScreen = booleanPreferencesKey("secure_screen")
         val morningBrief = booleanPreferencesKey("morning_brief")
         val eveningBrief = booleanPreferencesKey("evening_brief")
+        val briefBlocks = stringPreferencesKey("brief_blocks")
+        val videoPlatform = stringPreferencesKey("video_platform")
+        val bargeIn = booleanPreferencesKey("barge_in")
+        val mapsApp = stringPreferencesKey("maps_app")
         val weeklyReview = booleanPreferencesKey("weekly_review")
         val persona = stringPreferencesKey("persona")
         val quickInput = booleanPreferencesKey("quick_input")
@@ -330,6 +342,10 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             secureScreen = p[K.secureScreen] ?: false,
             morningBrief = p[K.morningBrief] ?: true,
             eveningBrief = p[K.eveningBrief] ?: false,
+            briefBlocks = ai.nova.core.health.BriefBlocks.parse(p[K.briefBlocks]),
+            videoPlatform = p[K.videoPlatform].orEmpty(),
+            bargeIn = p[K.bargeIn] ?: true,
+            mapsApp = p[K.mapsApp].orEmpty(),
             weeklyReview = p[K.weeklyReview] ?: false,
             persona = p[K.persona] ?: "caring",
             quickInput = p[K.quickInput] ?: false,
@@ -422,6 +438,10 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setAccent(v: AccentColor) = store.edit { it[K.accent] = v.id; it[K.dynamicColor] = false }
     suspend fun setMorningBrief(v: Boolean) = store.edit { it[K.morningBrief] = v }
     suspend fun setEveningBrief(v: Boolean) = store.edit { it[K.eveningBrief] = v }
+    suspend fun setBriefBlocks(v: Set<String>) = store.edit { it[K.briefBlocks] = ai.nova.core.health.BriefBlocks.store(v) }
+    suspend fun setVideoPlatform(id: String) = store.edit { it[K.videoPlatform] = id }
+    suspend fun setBargeIn(v: Boolean) = store.edit { it[K.bargeIn] = v }
+    suspend fun setMapsApp(id: String) = store.edit { it[K.mapsApp] = id }
     suspend fun setWeeklyReview(v: Boolean) = store.edit { it[K.weeklyReview] = v }
     suspend fun setPersona(v: String) = store.edit { it[K.persona] = v }
     suspend fun setQuickInput(v: Boolean) = store.edit { it[K.quickInput] = v }

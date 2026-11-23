@@ -95,6 +95,14 @@ class ActionParser(
                 AssistantAction.UpdateNote(target(a, setOf(RecordType.NOTE, RecordType.IDEA), required = true), title, content)
             }
             "delete_note" -> AssistantAction.DeleteNote(target(a, setOf(RecordType.NOTE, RecordType.IDEA), required = true))
+            "query_notes", "list_notes" -> AssistantAction.QueryNotes(
+                kind = a.s("kind")?.takeIf { it.isNotBlank() }?.let { NoteKind.fromWire(it) },
+                limit = ((a.d("limit") ?: 5.0).toInt()).coerceIn(1, 20),
+            )
+            "share_note", "send_note" -> AssistantAction.ShareNote(
+                target = target(a, setOf(RecordType.NOTE, RecordType.IDEA), required = true),
+                app = a.s("app")?.trim()?.takeIf { it.isNotEmpty() && it != "null" },
+            )
             "create_expense" -> {
                 val amount = a.d("amount") ?: throw ValidationException("не указана сумма расхода")
                 if (amount <= 0 || amount > 1_000_000_000) throw ValidationException("некорректная сумма расхода")
@@ -190,7 +198,10 @@ class ActionParser(
             else -> throw ValidationException("не указано время напоминания")
         }
         if (trigger.isAfter(now.plusSeconds(60L * 60 * 24 * 366 * 5))) throw ValidationException("слишком далёкая дата напоминания")
-        return AssistantAction.CreateReminder(text, trigger, recurrence)
+        // «Критичное» — только разовое: будильник с полным экраном для повторяющегося напоминания слишком навязчив.
+        val level = a.s("importance")?.lowercase()
+        val critical = (level == "critical" || a.b("critical") == true) && recurrence == null
+        return AssistantAction.CreateReminder(text, trigger, recurrence, critical = critical)
     }
 
     private fun parseRecurrence(r: JsonObject): Recurrence {

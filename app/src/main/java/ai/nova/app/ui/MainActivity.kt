@@ -98,6 +98,8 @@ class MainActivity : ComponentActivity() {
     private val openBackupRequest = MutableStateFlow(0)
     /** Ярлык «Расход / Задача / Заметка» с долгого нажатия на значок: открыть чат с готовым началом фразы. */
     private val quickRequest = MutableStateFlow(0)
+    /** Уведомление со сводкой по расписанию: открыть чат, где лежит весь текст сводки. */
+    private val openChatRequest = MutableStateFlow(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -128,7 +130,7 @@ class MainActivity : ComponentActivity() {
                     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
                         // Фон всей программы: органические формы, подкрашенные выбранным цветом.
                         ai.nova.app.ui.components.OrganicBackground()
-                        NovaRoot(container, listenRequest, openSettingsRequest, openBackupRequest, quickRequest)
+                        NovaRoot(container, listenRequest, openSettingsRequest, openBackupRequest, quickRequest, openChatRequest)
                         ai.nova.app.ui.components.VoiceMemoOverlay(container)
                         ai.nova.app.ui.components.WhatsNewAutoShow()
                     }
@@ -168,6 +170,8 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_APPLICATION_PREFERENCES -> openSettingsRequest.value = openSettingsRequest.value + 1
             ACTION_BACKUP -> openBackupRequest.value = openBackupRequest.value + 1
             ACTION_VOICE_MEMO -> container.voiceMemo.start()
+            // Уведомление со сводкой (утро, вечер, итоги недели, сценарий): сразу в чат, где вся сводка.
+            ACTION_OPEN_CHAT -> openChatRequest.value = openChatRequest.value + 1
             ACTION_QUICK -> {
                 container.quickDraft.value = when (intent.getStringExtra("kind")) {
                     "expense" -> "Запиши расход "
@@ -186,6 +190,7 @@ class MainActivity : ComponentActivity() {
         const val ACTION_BACKUP = "ai.nova.action.BACKUP"
         const val ACTION_QUICK = "ai.nova.action.QUICK"
         const val ACTION_VOICE_MEMO = "ai.nova.action.VOICE_MEMO"
+        const val ACTION_OPEN_CHAT = "ai.nova.action.OPEN_CHAT"
         const val EXTRA_TOKEN = "ai.nova.token"
 
         /** Случайный секрет этой установки для своих уведомлений. */
@@ -302,7 +307,7 @@ private fun MicDeniedDialog() {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun NovaRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, openSettingsRequest: MutableStateFlow<Int>, openBackupRequest: MutableStateFlow<Int>, quickRequest: MutableStateFlow<Int>) {
+private fun NovaRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, openSettingsRequest: MutableStateFlow<Int>, openBackupRequest: MutableStateFlow<Int>, quickRequest: MutableStateFlow<Int>, openChatRequest: MutableStateFlow<Int>) {
     val settings by c.settings.settings.collectAsStateWithLifecycle()
     var showAuth by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
@@ -386,6 +391,14 @@ private fun NovaRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, open
             quickRequest.value = 0
             nav.showRoot(Tab.HOME)
             nav.open("chat/input")
+        }
+    }
+    val chatRequest by openChatRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(chatRequest) {
+        if (chatRequest > 0) {
+            openChatRequest.value = 0
+            nav.showRoot(Tab.HOME)
+            nav.open("chat")
         }
     }
     val backupRequest by openBackupRequest.collectAsStateWithLifecycle()

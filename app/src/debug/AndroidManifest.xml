@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- Только debug: прогон команды из adb без микрофона (см. CommandProbeReceiver). -->
+        <receiver
+            android:name="ai.nova.app.debug.CommandProbeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="ai.nova.app.DEBUG_COMMAND" />
+            </intent-filter>
+        </receiver>
+        <!-- Только debug: собрать сводку по расписанию вне её времени (см. BriefProbeReceiver). -->
+        <receiver
+            android:name="ai.nova.app.debug.BriefProbeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="ai.nova.app.DEBUG_BRIEF" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

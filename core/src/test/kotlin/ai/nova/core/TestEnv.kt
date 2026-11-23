@@ -7,6 +7,7 @@ import ai.nova.core.ai.AIResponse
 import ai.nova.core.ai.EmbeddingProvider
 import ai.nova.core.agent.AgentCore
 import ai.nova.core.assistant.ActionExecutor
+import ai.nova.core.assistant.ActionSummary
 import ai.nova.core.assistant.AssistantEngine
 import ai.nova.core.assistant.AssistantSettings
 import ai.nova.core.assistant.ReminderScheduler
@@ -37,6 +38,16 @@ class TestEnv(
     val scheduler = RecordingScheduler()
     /** Напоминания, созданные как «настойчивые». */
     val persistent = mutableListOf<String>()
+    /** Напоминания, созданные как «критичные» (будильник с полным экраном). */
+    val critical = mutableListOf<String>()
+    /** Отменённые напоминания: по ним больше не звоним и не повторяем. */
+    val cancelled = mutableListOf<String>()
+    /** Выбранная платформа видео: null — ещё не выбирали. */
+    var videoPlatform: ai.nova.core.assistant.VideoPlatform? = null
+    /** Выбор платформы, который сохранило приложение. */
+    var chosenVideoPlatform: ai.nova.core.assistant.VideoPlatform? = null
+    /** Журнал действий: «что Нова сделала». */
+    val journal = mutableListOf<String>()
     /** Планы голосом, которые ещё не в календаре (для «в календарь»). */
     val plans = mutableListOf<ai.nova.core.assistant.PlanCalendar>()
     private var engineRef: AssistantEngine? = null
@@ -48,7 +59,11 @@ class TestEnv(
         store.notes, expenses, store.tasks, store.reminders, store.memories, search, resolver, scheduler, time, device, lockPolicy,
         shopping = store.shopping, routines = store.routines, secrets = store.secrets,
         onPersistentReminder = { persistent += it },
+        onCriticalReminder = { critical += it },
+        onReminderCancelled = { cancelled += it },
         onPlanCreated = { plans += it; engineRef?.notePlan(it) },
+        videoPlatform = { videoPlatform },
+        onVideoPlatform = { chosenVideoPlatform = it; videoPlatform = it },
     )
     var settings = AssistantSettings(useAI = true)
     var ai: AIProvider? = null
@@ -72,6 +87,7 @@ class TestEnv(
         expensesBetween = { a, b -> store.expenses.between(a, b) },
         agent = AgentCore(store.agent, time),
         cooking = store.cooking,
+        onExecuted = { actions, _ -> actions.forEach { journal += ActionSummary.describe(it) } },
     ).also { engineRef = it }
 }
 

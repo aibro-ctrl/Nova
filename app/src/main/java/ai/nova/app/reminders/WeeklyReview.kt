@@ -1,17 +1,12 @@
 package ai.nova.app.reminders
 
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
-import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import ai.nova.app.NovaApp
-import ai.nova.app.R
-import ai.nova.app.ui.MainActivity
 import java.time.DayOfWeek
 import java.time.Duration
 import java.time.LocalTime
@@ -22,6 +17,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Итоги недели по воскресеньям в 19:00: траты, задачи, настроение и привычки в сравнении с прошлой неделей.
  * По умолчанию выключены; только на телефоне.
+ * Отдаётся через [SummaryDelivery]: приветствие по имени, полный текст в истории и озвучка целиком.
  */
 object WeeklyReview {
     private const val WORK = "nova-weekly-review"
@@ -46,25 +42,8 @@ object WeeklyReview {
             if (!c.settings.current().weeklyReview) return Result.success()
             c.awaitReady()
             val text = c.engine.weeklySummary().removePrefix("Итоги недели. ")
-            val open = PendingIntent.getActivity(
-                applicationContext, Notifications.WEEKLY_ID, Intent(applicationContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-            val n = NotificationCompat.Builder(applicationContext, Notifications.CHANNEL_REMINDERS)
-                .setSmallIcon(R.drawable.ic_stat_nova)
-                .setContentTitle("Итоги недели")
-                .setContentText(text.lineSequence().first())
-                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-                // Траты и настроение — личное: на экране блокировки только заголовок.
-                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-                .setPublicVersion(
-                    NotificationCompat.Builder(applicationContext, Notifications.CHANNEL_REMINDERS)
-                        .setSmallIcon(R.drawable.ic_stat_nova).setContentTitle("Итоги недели готовы").build(),
-                )
-                .setContentIntent(open)
-                .setAutoCancel(true)
-                .build()
-            Notifications.notifySafely(applicationContext, Notifications.WEEKLY_ID, n)
+            // Сводка целиком: приветствие по имени, история общения и озвучка — не только первая строка в пуше.
+            SummaryDelivery.deliver(applicationContext, c, Notifications.WEEKLY_ID, title = "Итоги недели", text = text)
             return Result.success()
         }
     }

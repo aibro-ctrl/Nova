@@ -22,7 +22,11 @@ class Vitals(private val store: HabitStore, private val time: TimeSource) {
         const val PULSE = "pulse"
         const val WEIGHT = "weight"
         const val SLEEP = "sleep"
+        const val STEPS = "steps"
         const val METER = "meter"
+
+        /** Норма шагов в день — по ней считаем, сколько осталось. */
+        private const val STEPS_GOAL = 10_000
 
         private fun rx(p: String) = Rx.of(p)
 
@@ -116,6 +120,16 @@ class Vitals(private val store: HabitStore, private val time: TimeSource) {
             return Reply("Записала вес ${fmt(w)} кг.$tail", changed = true, write = true)
         }
 
+        // --- Шаги
+        (rx("""^(?:я\s+)?(?:сегодня\s+|сейчас\s+)?(?:уже\s+)?(?:прош[её]л|прошла|прошло|прошагал\w*|прогулял\w*|нагулял\w*|протопал\w*|отходил\w*)\s+(?:сегодня\s+)?(\d{2,6})\s*(?:шаг\p{L}*)?$""").find(d)
+            ?: rx("""^(?:я\s+)?(?:сегодня\s+)?(?:прош[её]л\s+|за\s+день\s+)?(\d{2,6})\s+шаг\p{L}*$""").find(d))?.let { m ->
+            val steps = num(m.groupValues[1])?.toInt()?.takeIf { it in 1..200_000 } ?: return null
+            store.log(STEPS, "", steps.toDouble(), time.now())
+            val tail = if (steps >= STEPS_GOAL) " Норма пройдена!" else
+                " До ${RuFormat.count(STEPS_GOAL, "шага", "шагов", "шагов")} осталось ${RuFormat.count(STEPS_GOAL - steps, "шаг", "шага", "шагов")}."
+            return Reply("Записала ${RuFormat.count(steps, "шаг", "шага", "шагов")}.$tail", changed = true, write = true)
+        }
+
         // --- Сон
         rx("""^(?:я\s+)?(?:сегодня\s+|ночью\s+|вчера\s+)?(?:спал|спала|спали|поспал|поспала|проспал|проспала)\s+(?:сегодня\s+|ночью\s+)?(?:всего\s+|только\s+|около\s+)?(\d{1,2}(?:\.\d)?)(\s+с\s+половиной)?\s+час\p{L}*$""").find(d)?.let { m ->
             val h = (num(m.groupValues[1]) ?: return null) + if (m.groupValues[2].isNotBlank()) 0.5 else 0.0
@@ -135,6 +149,7 @@ class Vitals(private val store: HabitStore, private val time: TimeSource) {
         val days = if (month) 30L else 7L
         return when {
             rx("""давлени""").containsMatchIn(n) -> Reply(bpReport(days))
+            rx("""\bшаг\p{L}*""").containsMatchIn(n) -> Reply(stepsReport(days))
             rx("""\bвес\b|вешу|похудел|поправил|набрал\p{L}*\s+вес""").containsMatchIn(n) -> Reply(weightReport(if (rx("""недел""").containsMatchIn(n)) 7 else 30))
             rx("""\bспал|\bсон\b|\bсна\b|высыпаю|высыпал""").containsMatchIn(n) -> Reply(sleepReport(days))
             rx("""пульс""").containsMatchIn(n) -> Reply(pulseReport(days))
@@ -194,6 +209,22 @@ class Vitals(private val store: HabitStore, private val time: TimeSource) {
         return "Сон за ${if (days > 7) "месяц" else "неделю"}: в среднем ${fmt(Math.round(avg * 10) / 10.0)} ч, последняя ночь — ${fmt(list.last().amount)} ч." +
             (if (short > 0) " Меньше 6 часов — ${RuFormat.count(short, "ночь", "ночи", "ночей")}." else "") +
             (if (avg < 7) " Стоит ложиться пораньше." else "")
+    }
+
+    private suspend fun stepsReport(days: Long): String {
+        val list = store.since(since(days), STEPS)
+        if (list.isEmpty()) return "Шаги ещё не записаны. Скажите, например: «сегодня прошёл 8000 шагов»."
+        val zone = time.zone()
+        val today = time.today()
+        val todaySteps = list.filter { it.at.atZone(zone).toLocalDate() == today }.sumOf { it.amount }.toInt()
+        val perDay = list.groupBy { it.at.atZone(zone).toLocalDate() }.mapValues { (_, v) -> v.sumOf { it.amount }.toInt() }
+        val head = if (todaySteps > 0) "Сегодня — ${RuFormat.count(todaySteps, "шаг", "шага", "шагов")}." else {
+            "Сегодня шагов не записано, последняя запись — ${RuFormat.count(list.last().amount.toInt(), "шаг", "шага", "шагов")} (${day(list.last().at)})."
+        }
+        if (perDay.size < 2) return head
+        val avg = perDay.values.average().toInt()
+        return "$head За ${if (days > 7) "месяц" else "неделю"} в среднем ${RuFormat.count(avg, "шаг", "шага", "шагов")} в день" +
+            (if (avg >= STEPS_GOAL) ", норма." else ", до нормы не хватает ${RuFormat.count(STEPS_GOAL - avg, "шага", "шагов", "шагов")} в день.")
     }
 
     private suspend fun pulseReport(days: Long): String {

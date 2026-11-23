@@ -93,4 +93,20 @@ class ActionParserTest {
         assertTrue(plan.actions.isEmpty())
         assertEquals(1, plan.rejected.size)
     }
+
+    @Test fun shareNoteAndQueryNotes() {
+        val share = assertIs<AssistantAction.ShareNote>(
+            parser.parse("""{"actions":[{"type":"share_note","target":"#1","app":"телеграм"}]}""").actions.single(),
+        )
+        assertEquals("11111111-1111-1111-1111-111111111111", share.target.id)
+        assertEquals("телеграм", share.app)
+        assertNull(share.last)
+
+        val list = assertIs<AssistantAction.QueryNotes>(parser.parse("""{"actions":[{"type":"query_notes","kind":"idea","limit":3}]}""").actions.single())
+        assertEquals(NoteKind.IDEA, list.kind)
+        assertEquals(3, list.limit)
+
+        // Без ссылки на запись отправить нечего — действие отбрасывается, а не угадывается.
+        assertTrue(parser.parse("""{"actions":[{"type":"share_note"}]}""").actions.isEmpty())
+    }
 }

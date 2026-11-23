@@ -53,8 +53,9 @@ object LlamaNative {
 }
 
 /**
- * Офлайн-модель для разговора. По умолчанию — встроенная Qwen 2.5 1.5B Instruct (Apache-2.0), ~1 ГБ:
- * скачивается из служебного релиза models-v1 этого репозитория (с докачкой) и проверяется по sha256.
+ * Офлайн-модель для разговора. По умолчанию — Gemma 3 1B Instruct (Q4_K_M, ~0,8 ГБ) из релиза models-v1
+ * этого репозитория: скачивается с докачкой, проверяется по sha256, при недоступности GitHub берётся тот же файл
+ * с Hugging Face. Условия Gemma — https://ai.google.dev/gemma/terms.
  * Активную модель можно сменить на любую .gguf с Hugging Face (см. [ModelCatalog]) — выбор хранится в настройках.
  * Загружается в память при первом вопросе и выгружается после 5 минут без вопросов — чтобы не держать 1,5 ГБ ОЗУ.
  */
@@ -149,7 +150,7 @@ class OfflineLlm(
     /** Размер активной модели — для экрана настроек. */
     val sizeBytes: Long get() = model.size
 
-    /** Название активной модели: «Qwen 2.5 1.5B · Q4_K_M» или выбранный файл с Hugging Face. */
+    /** Название активной модели: «Gemma 3 1B · Q4_K_M» или выбранный файл с Hugging Face. */
     val modelLabel: String get() = model.label
 
     /** Встроенная модель (та, что по умолчанию): к ней можно вернуться в один шаг. */
@@ -236,7 +237,7 @@ class OfflineLlm(
         info.totalMem
     }.getOrDefault(0L)
 
-    /** Вернуться к встроенной модели Qwen 2.5 1.5B (если её файл ещё на телефоне — сразу готово). */
+    /** Вернуться к встроенной модели Gemma 3 1B (если её файл ещё на телефоне — сразу готово). */
     fun useDefault() {
         if (isDefaultModel) return
         writeActive(Active(FILE, MODEL_URL, SHA256, SIZE, DEFAULT_LABEL))
@@ -294,7 +295,18 @@ class OfflineLlm(
     private fun streamToPart(m: Active) {
         val size = m.size.coerceAtLeast(1)
         if (dir.usableSpace + part.length() < size + 50_000_000) error("не хватает места (нужно ~${LocalModels.sizeText(size)})")
-        var url = m.url
+        try {
+            stream(m, m.url, size)
+        } catch (e: java.io.IOException) {
+            // GitHub недоступен — берём тот же файл с запасного адреса; докачка продолжается с того же места.
+            if (m.url != MODEL_URL) throw e
+            Logger.w(TAG, "Основной адрес модели недоступен, пробую запасной", e)
+            stream(m, FALLBACK_URL, size)
+        }
+    }
+
+    private fun stream(m: Active, sourceUrl: String, size: Long) {
+        var url = sourceUrl
         var conn: HttpURLConnection
         var redirects = 0
         while (true) {
@@ -413,10 +425,28 @@ class OfflineLlm(
                     watchdog.cancel()
                 }
                 scheduleUnload()
-                out?.let { LocalModels.stripThinking(it) }?.takeIf { it.isNotEmpty() }
+                // Обрубок по таймауту и приветствие в начале ответа на вопрос озвучивать не нужно.
+                out?.let { LocalModels.stripThinking(it) }
+                    ?.let { LocalModels.polishReply(it, last?.content.orEmpty(), cancelled) }
+                    ?.takeIf { it.isNotEmpty() }
             }
         }
     }
+
+    /**
+     * В фоне Android режет процессу CPU (cpuset «restricted»): замер на Galaxy A56 — 14 токенов/с
+     * на экране и 0,2 в фоне, то есть ответ вместо трёх секунд идёт полторы минуты.
+     */
+    override val canAnswerNow: Boolean
+        get() = runCatching {
+            val power = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            if (power != null && !power.isInteractive) return@runCatching false
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager ?: return@runCatching true
+            val info = android.app.ActivityManager.RunningAppProcessInfo()
+            android.app.ActivityManager.getMyMemoryState(info)
+            Logger.d(TAG, "важность процесса ${info.importance}: ответ модели ${if (info.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE) "быстрый" else "медленный"}")
+            info.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
+        }.getOrDefault(true)
 
     /** Остановить ответ («стоп»). */
     fun stop() {
@@ -463,10 +493,13 @@ class OfflineLlm(
 
     companion object {
         private const val TAG = "OfflineLlm"
-        private const val FILE = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
-        private const val MODEL_URL = "https://github.com/Lucky2356/loli_ai/releases/download/models-v1/loli-llm-qwen2.5-1.5b-q4_k_m.gguf"
-        private const val SHA256 = "1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370"
-        const val SIZE = 986_048_768L
+        private const val FILE = "gemma-3-1b-it-Q4_K_M.gguf"
+        /** Своё хранилище: файл лежит в релизе проекта, а не в чужом репозитории. */
+        private const val MODEL_URL = "https://github.com/aibro-ctrl/Nova/releases/download/models-v1/gemma-3-1b-it-Q4_K_M.gguf"
+        /** Запасной адрес на случай, если GitHub недоступен: те же байты и тот же SHA-256. */
+        private const val FALLBACK_URL = "https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf"
+        private const val SHA256 = "8270790f3ab69fdfe860b7b64008d9a19986d8df7e407bb018184caa08798ebd"
+        const val SIZE = 806_058_272L
         private const val CONTEXT = 2048
         /** Сколько ждём ответ: на телефоне это секунды, но «задумавшуюся» модель пора останавливать. */
         private const val REPLY_TIMEOUT_MS = 40_000L
@@ -486,6 +519,6 @@ class OfflineLlm(
         private const val KEY_SHA = "sha"
         private const val KEY_SIZE = "size"
         private const val KEY_LABEL = "label"
-        private const val DEFAULT_LABEL = "Qwen 2.5 1.5B · Q4_K_M"
+        private const val DEFAULT_LABEL = "Gemma 3 1B · Q4_K_M"
     }
 }

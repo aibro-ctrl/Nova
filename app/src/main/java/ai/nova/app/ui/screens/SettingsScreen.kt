@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -181,15 +182,24 @@ private fun SettingsRoot(c: AppContainer, open: (SettingsPage) -> Unit) {
     if (guide) AssistantGuideDialog(s.assistantName) { guide = false }
     when (edit) {
         "name" -> TextDialog(
-            "Имя ассистента", s.assistantName, hint = "Это и слово для вызова: «${s.assistantName}, какая погода?»",
+            "Имя ассистента", s.assistantName,
+            hint = "Это и слово для вызова: «${s.assistantName}, какая погода?». По имени выбирается род: «Нова» — женский, «Джарвис» — мужской",
             presets = listOf("Нова", "Джарвис", "Кира", "Алиса", "Ника"), onDismiss = { edit = null },
         ) { v ->
             scope.launch {
                 c.settings.setAssistantName(v)
+                // Сменился род имени — голос тоже: иначе мужское имя говорит женским голосом.
+                val gender = ai.nova.core.nlp.Gender.ofAssistant(v)
+                val voice = c.novaVoiceModels.defaultFor(gender).id
+                if (voice != c.settings.settings.value.novaVoice) c.settings.setNovaVoice(voice)
                 if (WakeWordService.running) { WakeWordService.stop(context); WakeWordService.start(context) }
             }
         }
-        "user" -> TextDialog("Как вас зовут", s.userName, hint = "${s.assistantName} будет обращаться к вам по имени. Можно и голосом: «называй меня …»", onDismiss = { edit = null }) { v ->
+        "user" -> TextDialog(
+            "Как вас зовут", s.userName,
+            hint = "${s.assistantName} будет обращаться к вам по имени и в вашем роде. Можно и голосом: «называй меня …»",
+            onDismiss = { edit = null },
+        ) { v ->
             scope.launch { c.settings.setUserName(v) }
         }
         "city" -> TextDialog("Ваш город", s.city, hint = "Для погоды, когда геолокация выключена. Можно и голосом: «я живу в …»", onDismiss = { edit = null }) { v ->
@@ -221,7 +231,8 @@ private fun SettingsRoot(c: AppContainer, open: (SettingsPage) -> Unit) {
             Group {
                 ValueItem("Имя", s.assistantName, Icons.Rounded.Face) { edit = "name" }
                 GroupDivider(inset = 66.dp)
-                val voiceId = c.novaVoiceModels.effective(s.novaVoice)
+                // Показываем выбранный голос и его состояние; какой звучит на самом деле — написано в «Голосе и речи».
+                val voiceId = s.novaVoice
                 val nova = ai.nova.app.voice.NovaVoiceModels.VOICES.firstOrNull { it.id == voiceId }
                 val voiceTitle = when {
                     !s.ttsEnabled -> "выключен"
@@ -703,13 +714,16 @@ private fun AboutPage(c: AppContainer, onBack: () -> Unit) {
             val context = LocalContext.current
             // Счётчик перечитываем при каждом возвращении на экран: новые фразы появляются после разговора с Новой.
             var phrases by remember(rememberResumeTick()) { mutableStateOf(ai.nova.app.diagnostics.Diagnostics.unknownPhrases(context)) }
+            var showPhrases by remember { mutableStateOf(false) }
+            var journal by remember(rememberResumeTick()) { mutableStateOf(c.journal.entries()) }
             SectionLabel("Помочь улучшить ${s.assistantName}")
             Group {
                 RowItem(
                     title = "Непонятые фразы: ${phrases.size}",
                     subtitle = if (phrases.isEmpty()) "Здесь появятся фразы, которые ${s.assistantName} не поняла. Хранятся только на телефоне"
-                    else "Отправьте их разработчику — ${s.assistantName} научится их понимать. Откроется публичная заявка на GitHub: проверьте, что в ней нет личного. Последняя: «${phrases.last().take(60)}»",
+                    else "Список — источник новых правил: посмотрите, что именно не понято. Последняя: «${phrases.last().take(60)}»",
                     icon = Icons.Rounded.Lightbulb,
+                    onClick = { if (phrases.isNotEmpty()) showPhrases = true },
                     trailing = {
                         if (phrases.isNotEmpty()) TextButton(onClick = {
                             val body = phrases.joinToString("\n") { "- $it" }
@@ -722,6 +736,39 @@ private fun AboutPage(c: AppContainer, onBack: () -> Unit) {
                     GroupDivider()
                     RowItem(title = "Очистить список", onClick = { ai.nova.app.diagnostics.Diagnostics.clearUnknown(context); phrases = emptyList() })
                 }
+                GroupDivider()
+                RowItem(
+                    title = "Журнал действий: ${journal.size}",
+                    subtitle = if (journal.isEmpty()) "Здесь будет видно, что и когда ${s.assistantName} выполнила. Только на телефоне"
+                    else journal.first().label(),
+                    icon = Icons.Rounded.Check,
+                    onClick = { if (journal.isNotEmpty()) showPhrases = false },
+                    trailing = {
+                        if (journal.isNotEmpty()) TextButton(onClick = { c.journal.clear(); journal = emptyList() }) { Text("Очистить") }
+                    },
+                )
+                if (journal.isNotEmpty()) {
+                    GroupDivider()
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                        journal.take(6).forEach { e ->
+                            Text(e.label(), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 2.dp))
+                        }
+                    }
+                }
+            }
+            if (showPhrases && phrases.isNotEmpty()) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { showPhrases = false },
+                    confirmButton = { TextButton(onClick = { showPhrases = false }) { Text("Закрыть") } },
+                    title = { Text("Непонятые фразы") },
+                    text = {
+                        Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                            phrases.takeLast(40).reversed().forEach { p ->
+                                Text("«$p»", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 3.dp))
+                            }
+                        }
+                    },
+                )
             }
         }
         item(key = "security") {

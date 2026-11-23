@@ -19,6 +19,15 @@ class NagStore(context: Context) {
 
     fun clear(id: String) = prefs.edit().remove(id).apply()
 
+    /** «Критично»: будильник с полным экраном и звуком, пока не нажато «Готово». */
+    fun markCritical(id: String) = prefs.edit().putBoolean(key(id), true).apply()
+
+    fun isCritical(id: String): Boolean = prefs.getBoolean(key(id), false)
+
+    fun clearCritical(id: String) = prefs.edit().remove(key(id)).apply()
+
+    private fun key(id: String) = "critical:$id"
+
     companion object {
         const val INTERVAL_MINUTES = 10L
         const val MAX_REPEATS = 6

@@ -22,6 +22,30 @@ class LocalModelsTest {
         {"rfilename":"mmproj-qwen3.5-4b-f16.gguf","size":1200000000},
         {"rfilename":"qwen3.5-4b-q4_k_m-00001-of-00002.gguf","size":1800000000}]}"""
 
+    @Test fun replyOnQuestionDropsGreeting() {
+        assertEquals(
+            "Сон нужен, чтобы мозг отдыхал и запоминал новое.",
+            LocalModels.polishReply("Привет, Саня! Сон нужен, чтобы мозг отдыхал и запоминал новое.", "зачем нужен сон", truncated = false),
+        )
+        // Вопрос был приветствием — приветствие в ответе уместно.
+        assertEquals(
+            "Доброе утро! Как спалось?",
+            LocalModels.polishReply("Доброе утро! Как спалось?", "привет", truncated = false),
+        )
+        // Короткий ответ-приветствие без продолжения не режем.
+        assertEquals("Привет!", LocalModels.polishReply("Привет!", "почему небо голубое", truncated = false))
+    }
+
+    @Test fun cutOffTailFinishesSentence() {
+        assertEquals("Сон важен для здоровья.", LocalModels.cutOffTail("Сон важен для здоровья. Он также"))
+        assertEquals("Сон важен для организма", LocalModels.cutOffTail("Сон важен для организма, чтоб"))
+        assertEquals("Готово.", LocalModels.cutOffTail("Готово."))
+        assertEquals(
+            "Сон важен для здоровья.",
+            LocalModels.polishReply("Сон важен для здоровья. Он также", "зачем сон", truncated = true),
+        )
+    }
+
     @Test fun collectionKeepsOnlyModels() {
         assertEquals(listOf("Qwen/Qwen3.5-4B-Instruct", "Qwen/Qwen3.5-1.7B-Instruct"), LocalModels.parseCollection(collection))
     }

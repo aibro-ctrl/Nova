@@ -21,6 +21,7 @@ import ai.nova.app.ui.components.Hint
 import ai.nova.app.ui.components.RowItem
 import ai.nova.app.ui.components.SectionLabel
 import ai.nova.app.voice.NovaVoiceModels
+import ai.nova.core.nlp.Gender
 import kotlinx.coroutines.launch
 
 /**
@@ -46,15 +47,18 @@ fun NovaVoiceSection(c: AppContainer) {
         }
     }
 
+    // Род имени ассистента решает, какие голоса предлагать: мужское имя — мужские голоса, женское — женские.
+    val gender = Gender.ofAssistant(s.assistantName)
+    val voices = c.novaVoiceModels.forGender(gender)
     SectionLabel("Голос Нова")
     Group {
-        NovaVoiceModels.VOICES.forEachIndexed { i, v ->
+        voices.forEachIndexed { i, v ->
             if (i > 0) GroupDivider(inset = 16.dp)
             val state by c.novaVoiceModels.state(v.id).collectAsStateWithLifecycle()
-            val selected = c.novaVoiceModels.effective(s.novaVoice) == v.id
+            val selected = c.novaVoiceModels.effectiveFor(s.novaVoice, gender) == v.id
             val status = when (val st = state) {
                 NovaVoiceModels.State.Ready -> if (selected) "Выбран · работает без интернета" else "Скачан"
-                NovaVoiceModels.State.Missing -> "${v.subtitle} · скачать ${v.bytes / 1_000_000} МБ"
+                NovaVoiceModels.State.Missing -> "скачать ${v.bytes / 1_000_000} МБ"
                 is NovaVoiceModels.State.Downloading -> "Скачиваю… ${(st.progress * 100).toInt()}% · можно закрыть, продолжится с этого места"
                 NovaVoiceModels.State.Installing -> "Устанавливаю…"
                 is NovaVoiceModels.State.Failed -> "Не скачался: ${st.message}. Нажмите, чтобы повторить"
@@ -94,6 +98,18 @@ fun NovaVoiceSection(c: AppContainer) {
                 },
             )
         }
+    }
+    Hint(
+        "Голоса подбираются под имя ассистента: имя «Нова» или любое женское — женские голоса, мужское имя — мужские. " +
+            "Чтобы список изменился, поменяйте имя выше.",
+    )
+    // Голос другого рода может звучать, пока подходящий не скачан — об этом честно говорим.
+    val actual = c.novaVoiceModels.voice(c.novaVoiceModels.effectiveFor(s.novaVoice, gender))
+    if (c.novaVoiceModels.isReady(actual.id) && !c.novaVoiceModels.matches(actual.id, gender)) {
+        Hint(
+            "Сейчас звучит «${actual.title}» — ${actual.gender.label} голос при имени «${s.assistantName}». " +
+                "Скачайте голос нужного рода выше, и он заменит его сам.",
+        )
     }
     Hint(
         "Голоса скачиваются один раз из релизов Нова на GitHub (оттуда же приходят обновления) и проверяются по контрольной сумме. " +

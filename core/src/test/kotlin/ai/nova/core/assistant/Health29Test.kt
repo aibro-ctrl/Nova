@@ -35,6 +35,21 @@ class Health29Test {
         assertTrue(e.engine.handle("сколько я спала на этой неделе").text.startsWith("Сон за неделю: в среднем 6,3 ч"))
     }
 
+    @Test fun weightPhraseFromReview() = runTest {
+        // «Мой вес сегодня 106» из правок — это показатель, а не заметка.
+        val e = env()
+        assertEquals("Записала вес 106 кг.", e.engine.handle("мой вес сегодня 106").text)
+        assertTrue(e.engine.handle("вес 106 килограммов").text.startsWith("Записала вес 106 кг."))
+        assertEquals(0, e.store.notes.all().size)
+    }
+
+    @Test fun steps() = runTest {
+        val e = env()
+        assertEquals("Записала 8000 шагов. До 10000 шагов осталось 2000 шагов.", e.engine.handle("сегодня прошёл 8000 шагов").text)
+        assertEquals("Сегодня — 8000 шагов.", e.engine.handle("сколько шагов я прошёл").text)
+        assertEquals(0, e.store.tasks.all().size)
+    }
+
     @Test fun meters() = runTest {
         val e = env()
         val first = e.engine.handle("показания: холодная вода 345, горячая вода 210, свет 12500").text

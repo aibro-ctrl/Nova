@@ -60,9 +60,35 @@ class ActionExecutor(
     private val contactBirthdays: suspend () -> List<Pair<String, java.time.MonthDay>> = { emptyList() },
     /** Напоминание «настойчиво, пока не отмечу» создано: приложение запоминает его id и повторяет срабатывание. */
     private val onPersistentReminder: (String) -> Unit = {},
+    /** Критичное напоминание: сработает будильником с полным экраном до «Готово». */
+    private val onCriticalReminder: (String) -> Unit = {},
+    /** Напоминание отменили — перестаём его повторять и звонить по нему. */
+    private val onReminderCancelled: (String) -> Unit = {},
     /** Создан план с датой: ассистент предложит добавить его в календарь. */
     private val onPlanCreated: (PlanCalendar) -> Unit = {},
+    /** Где искать видео: человек уже выбрал YouTube, VK Видео или Rutube (null — ещё не выбрал). */
+    private val videoPlatform: () -> VideoPlatform? = { null },
+    /** Выбор платформы запомнен: приложение сохраняет его в настройках. */
+    private val onVideoPlatform: (VideoPlatform) -> Unit = {},
 ) {
+    /** Вопрос «где искать видео» ждёт ответа: запрос, который выполним, как только платформа выбрана. */
+    private var pendingVideo: String? = null
+
+    /** Ждём ответ про платформу видео — этот вопрос важнее остальных уточнений. */
+    fun awaitingVideo(): Boolean = pendingVideo != null
+
+    /**
+     * Ответ на вопрос «YouTube, VK Видео или Rutube?»: платформа запоминается, поиск выполняется сразу.
+     * Не похоже на ответ — null, вопрос снимаем (человек передумал и говорит о другом).
+     */
+    suspend fun answerVideo(text: String): ExecutionResult? {
+        val query = pendingVideo ?: return null
+        val platform = VideoChoice.parse(text) ?: run { pendingVideo = null; return null }
+        pendingVideo = null
+        onVideoPlatform(platform)
+        val r = device.perform(DeviceCommand.Play(query, youtube = true, platform = platform))
+        return ExecutionResult(listOf(Outcome(if (r.ok) "${platform.title}. ${r.text}" else r.text, if (r.ok) Outcome.Kind.QUERY else Outcome.Kind.ERROR)))
+    }
     /**
      * Сценарий по расписанию выполняется сам, когда телефон обычно заблокирован. Его создал владелец на разблокированном
      * телефоне (создание сценариев на блокировке запрещено), поэтому на время запуска правила блокировки не действуют.
@@ -99,6 +125,8 @@ class ActionExecutor(
     }
 
     suspend fun execute(actions: List<AssistantAction>, context: ConversationContext): ExecutionResult {
+        // Человек сказал что-то другое — вопрос «где искать видео» больше не ждёт ответа.
+        pendingVideo = null
         val outcomes = ArrayList<Outcome>()
         val confirmOps = ArrayList<DestructiveOp>()
         val confirmQuestions = ArrayList<String>()
@@ -141,6 +169,8 @@ class ActionExecutor(
                 RecordType.TASK -> tasks.delete(op.id).also { if (it) TaskReminders.cancel(op.title, reminders, scheduler) }
                 RecordType.REMINDER -> {
                     scheduler.cancel(op.id)
+                    // Отменённое напоминание не должно больше «доставать»: снимаем настойчивость и критичный сигнал.
+                    onReminderCancelled(op.id)
                     if (op.cancelOnly) reminders.cancel(op.id) != null else reminders.delete(op.id)
                 }
                 RecordType.MEMORY -> memories.delete(op.id)
@@ -204,6 +234,11 @@ class ActionExecutor(
         return n
     }
 
+    private suspend fun performDevice(command: DeviceCommand): Step {
+        val r = device.perform(command)
+        return if (r.ok) query(r.text) else error(r.text)
+    }
+
     private fun changed(text: String, record: RecordRef? = null) = Step(listOf(Outcome(text, Outcome.Kind.CHANGED, record)), record)
     private fun query(text: String) = Step(listOf(Outcome(text, Outcome.Kind.QUERY)))
     private fun error(text: String) = Step(listOf(Outcome(text, Outcome.Kind.ERROR)))
@@ -248,6 +283,30 @@ class ActionExecutor(
                 ))
                 is Resolution.Ambiguous -> ambiguous(r.options, "удалить", action)
                 Resolution.NotFound -> error("Не нашла такую запись.")
+            }
+
+            is AssistantAction.QueryNotes -> {
+                val kind = action.kind
+                val list = (if (kind == null) notes.all() else notes.all(kind))
+                    .sortedByDescending { it.createdAt }
+                    .take(action.limit)
+                if (list.isEmpty()) {
+                    query(
+                        when (kind) {
+                            NoteKind.IDEA -> "Идей пока нет. Скажите «запиши идею…», и я сохраню."
+                            NoteKind.NOTE -> "Заметок пока нет. Скажите «запиши заметку…», и я сохраню."
+                            null -> "Записей пока нет. Скажите «запиши заметку…» или «запиши идею…»."
+                        },
+                    )
+                } else {
+                    val head = when (kind) {
+                        NoteKind.IDEA -> "Последние идеи"
+                        NoteKind.NOTE -> "Последние заметки"
+                        null -> "Последние записи"
+                    }
+                    list.firstOrNull()?.let { n -> ctx.touchRecord(RecordRef(n.kind.recordType, n.id, n.title)) }
+                    query("$head (${list.size}):\n" + list.joinToString("\n") { "• ${it.title}" })
+                }
             }
 
             is AssistantAction.CreateExpense -> {
@@ -323,9 +382,14 @@ class ActionExecutor(
                 val reminder = reminders.create(action.text, action.triggerAt, action.recurrence, zone.id)
                 scheduler.schedule(reminder)
                 if (action.persistent) onPersistentReminder(reminder.id)
+                if (action.critical) onCriticalReminder(reminder.id)
                 val whenText = RuFormat.dateTime(reminder.triggerAt, zone, now)
                 val repeat = action.recurrence?.let { " Повтор: ${it.describeRu()}." } ?: ""
-                val nag = if (action.persistent) " Буду напоминать каждые 10 минут, пока не нажмёте «Готово»." else ""
+                val nag = when {
+                    action.critical -> " Это критичное напоминание: включу экран и буду звонить, пока не нажмёте «Готово»."
+                    action.persistent -> " Буду напоминать каждые 10 минут, пока не нажмёте «Готово»."
+                    else -> ""
+                }
                 if (action.recurrence == null) {
                     runCatching { onPlanCreated(PlanCalendar(reminder.text, reminder.triggerAt, allDay = false)) }
                 }
@@ -474,8 +538,16 @@ class ActionExecutor(
             }
 
             is AssistantAction.Device -> {
-                val r = device.perform(action.command)
-                if (r.ok) query(r.text) else error(r.text)
+                val command = action.command
+                // Видео: платформу спрашиваем один раз и запоминаем; явное «на ютубе» в фразе главнее.
+                if (command is DeviceCommand.Play && command.youtube && command.platform == null) {
+                    val chosen = videoPlatform()
+                    if (chosen == null) {
+                        pendingVideo = command.query
+                        return query(VideoChoice.question(command.query))
+                    }
+                    performDevice(command.copy(platform = chosen))
+                } else performDevice(command)
             }
 
             is AssistantAction.AddToList -> {
@@ -534,7 +606,10 @@ class ActionExecutor(
                     reminders.all().filter { it.text.equals(text, true) }.forEach { reminders.delete(it.id); scheduler.cancel(it.id) }
                     val rem = reminders.create(text, rule.nextAfter(now, zone, now), rule, zone.id)
                     scheduler.schedule(rem)
-                    return changed("Готово! ${r.trigger} выполню сама: ${r.commands.joinToString("; ")}. Результат покажу уведомлением и скажу вслух, если включены ответы голосом.")
+                    return changed(
+                        "Готово! ${r.trigger} выполню сама: ${r.commands.joinToString("; ")}. " +
+                            "Сводку скажу вслух и оставлю целиком в истории общения — перечитать можно в любой момент.",
+                    )
                 }
                 changed("Готово! Когда скажете ${RuFormat.quote(r.trigger)}, я выполню: ${r.commands.joinToString("; ")}.")
             }
@@ -760,6 +835,31 @@ class ActionExecutor(
                 if (r.ok) query(r.text) else error(r.text)
             }
 
+            is AssistantAction.ShareNote -> {
+                val ref = action.last?.let { pick -> lastNote(pick, ctx) }
+                if (action.last != null && ref == null) {
+                    return error(
+                        when (action.last) {
+                            NotePick.IDEA -> "Идей пока нет — отправлять нечего."
+                            NotePick.NOTE -> "У вас пока нет заметок — отправлять нечего."
+                            NotePick.ANY -> "Записей пока нет — отправлять нечего."
+                        },
+                    )
+                }
+                val resolved = if (ref != null) Resolution.Found(ref) else resolver.resolve(action.target, ctx.focus, ctx.recent)
+                when (resolved) {
+                    is Resolution.Found -> {
+                        val note = notes.get(resolved.ref.id) ?: return error("Запись не найдена.")
+                        val body = if (note.content.isBlank() || note.content.equals(note.title, true)) note.title
+                        else "${note.title}\n\n${note.content}"
+                        val r = device.perform(DeviceCommand.Share(action.app.orEmpty(), body))
+                        if (r.ok) query(r.text) else error(r.text)
+                    }
+                    is Resolution.Ambiguous -> ambiguous(resolved.options, "отправить", action)
+                    Resolution.NotFound -> error("Не нашла такую запись — уточните, какую отправить.")
+                }
+            }
+
             is AssistantAction.PutThing -> {
                 val content = things.put(action.item, action.place)
                 changed("Запомнила: $content. Спросите «где ${ai.nova.core.personal.nominative(action.item).lowercase()}?» — подскажу.")
@@ -847,6 +947,7 @@ class ActionExecutor(
         is AssistantAction.CreateReminder, is AssistantAction.Remember, is AssistantAction.AppendNote -> "добавлять записи"
         is AssistantAction.QueryExpenses, is AssistantAction.QueryTasks, AssistantAction.QueryReminders,
         is AssistantAction.QueryMemories, is AssistantAction.Search, is AssistantAction.Agenda -> "смотреть записи"
+        is AssistantAction.ShareNote, is AssistantAction.SendList, is AssistantAction.Export -> "отправлять записи"
         else -> "изменять и удалять записи"
     }
 
@@ -892,6 +993,23 @@ class ActionExecutor(
         }
         if (bestK == 0 || bestScore < TargetResolver.MIN_SCORE) return null to text
         return words.take(bestK).joinToString(" ") to words.drop(bestK).joinToString(" ")
+    }
+
+    /** Последняя заметка (или идея) для «отправь последнюю заметку…». */
+    private suspend fun lastNote(pick: NotePick, ctx: ConversationContext): RecordRef? {
+        val types = when (pick) {
+            NotePick.NOTE -> setOf(RecordType.NOTE)
+            NotePick.IDEA -> setOf(RecordType.IDEA)
+            NotePick.ANY -> setOf(RecordType.NOTE, RecordType.IDEA)
+        }
+        ctx.lastCreated?.takeIf { it.type in types && exists(it) }?.let { return it }
+        val kind = when (pick) {
+            NotePick.NOTE -> NoteKind.NOTE
+            NotePick.IDEA -> NoteKind.IDEA
+            NotePick.ANY -> null
+        }
+        val note = (if (kind == null) notes.all() else notes.all(kind)).maxByOrNull { it.createdAt } ?: return null
+        return RecordRef(note.kind.recordType, note.id, note.title)
     }
 
     private suspend fun lastRecord(type: RecordType?, ctx: ConversationContext): RecordRef? {

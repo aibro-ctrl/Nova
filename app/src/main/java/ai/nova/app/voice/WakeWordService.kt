@@ -153,7 +153,11 @@ class WakeWordService : LifecycleService() {
                     val match = matcher.match(text)
                     when {
                         match != null && match.command.split(" ").count { it.isNotBlank() } >= 1 -> dispatch(match.command)
-                        match != null || matcher.containsWakeWord(text) -> if (!openAssistWindow()) enterCommandMode()
+                        // Экран погас или заблокирован — окна ассистента не видно: отвечаем голосом «Слушаю».
+                        match != null || matcher.containsWakeWord(text) -> {
+                            val visible = screenVisible()
+                            if (!visible || !openAssistWindow()) enterCommandMode(announce = !visible)
+                        }
                     }
                 }
                 Mode.COMMAND -> dispatch(matcher.match(text)?.command?.ifBlank { null } ?: text)
@@ -176,11 +180,35 @@ class WakeWordService : LifecycleService() {
         return container.launcher.launch(intent)
     }
 
-    private fun enterCommandMode() {
+    /** Экран включён и телефон разблокирован — тогда пользователь видит интерфейс и подсказку на экране. */
+    private fun screenVisible(): Boolean {
+        val interactive = getSystemService(android.os.PowerManager::class.java)?.isInteractive ?: true
+        return interactive && !container.isLocked()
+    }
+
+    private fun enterCommandMode(announce: Boolean = false) {
         mode = Mode.COMMAND
         commandDeadline = System.currentTimeMillis() + COMMAND_WINDOW_MS
-        beep()
         updateNotification(getString(R.string.wake_command))
+        if (announce) sayListening() else beep()
+    }
+
+    /**
+     * Экран заблокирован — пользователь не видит ни орб, ни окно ассистента: подтверждаем голосом «Слушаю».
+     * Свой голос не должен попасть в распознавание, поэтому на время подсказки микрофон на паузе,
+     * а после неё распознаватель сбрасывается — команда иначе получила бы хвост «слушаю».
+     */
+    private fun sayListening() {
+        if (!container.settings.settings.value.ttsEnabled) { beep(); return }
+        lifecycleScope.launch {
+            speechService?.setPause(true)
+            runCatching { container.speech.speak(getString(R.string.wake_listening_cue)) }
+            delay(250)
+            recognizer?.reset()
+            speechService?.setPause(false)
+            // Отсчёт окна команды начинается после подсказки, а не во время неё.
+            commandDeadline = System.currentTimeMillis() + COMMAND_WINDOW_MS
+        }
     }
 
     @Volatile private var stoppedByUser = false

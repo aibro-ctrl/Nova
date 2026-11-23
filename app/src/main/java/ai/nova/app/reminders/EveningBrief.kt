@@ -1,17 +1,12 @@
 package ai.nova.app.reminders
 
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
-import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import ai.nova.app.NovaApp
-import ai.nova.app.R
-import ai.nova.app.ui.MainActivity
 import java.time.Duration
 import java.time.LocalTime
 import java.time.ZonedDateTime
@@ -20,6 +15,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Вечерняя сводка в 21:00: настроение, закрытые задачи, траты, вода и привычки за день, и приглашение
  * записать, как прошёл день. По умолчанию выключена; только на телефоне.
+ * Отдаётся через [SummaryDelivery]: приветствие по имени, полный текст в истории и озвучка целиком.
  */
 object EveningBrief {
     private const val WORK = "nova-evening-brief"
@@ -43,26 +39,13 @@ object EveningBrief {
             val c = (applicationContext as NovaApp).container
             if (!c.settings.current().eveningBrief) return Result.success()
             c.awaitReady()
-            val text = c.eveningSummary() + "\nСкажите «как прошёл день», чтобы записать настроение."
-            val open = PendingIntent.getActivity(
-                applicationContext, Notifications.EVENING_ID, Intent(applicationContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-            val n = NotificationCompat.Builder(applicationContext, Notifications.CHANNEL_REMINDERS)
-                .setSmallIcon(R.drawable.ic_stat_nova)
-                .setContentTitle("Итоги дня")
-                .setContentText(text.lineSequence().first())
-                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-                // Настроение и траты — личное: на экране блокировки только заголовок.
-                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-                .setPublicVersion(
-                    NotificationCompat.Builder(applicationContext, Notifications.CHANNEL_REMINDERS)
-                        .setSmallIcon(R.drawable.ic_stat_nova).setContentTitle("Итоги дня готовы").build(),
-                )
-                .setContentIntent(open)
-                .setAutoCancel(true)
-                .build()
-            Notifications.notifySafely(applicationContext, Notifications.EVENING_ID, n)
+            // Выключенные блоки не озвучиваются; если выключили всё — сводки нет.
+            val summary = c.eveningSummary()
+            if (summary.isBlank()) return Result.success()
+            val health = ai.nova.core.health.BriefBlocks.on(c.settings.current().briefBlocks, ai.nova.core.health.BriefBlocks.HEALTH)
+            val text = if (health) summary + "\nСкажите «как прошёл день», чтобы записать настроение." else summary
+            // Сводка целиком: приветствие по имени, история общения и озвучка — не только первая строка в пуше.
+            SummaryDelivery.deliver(applicationContext, c, Notifications.EVENING_ID, title = "Итоги дня", text = text)
             return Result.success()
         }
     }

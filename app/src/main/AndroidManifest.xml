@@ -18,6 +18,8 @@
     <!-- Одно нажатие «Разрешить» вместо поиска Нова в настройках батареи: напоминания и «Нова» в фоне не засыпают. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Критичные напоминания: включить экран и показать будильник поверх блокировки (Android 14+ — по разрешению). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- Выдаётся только вручную (ADB или Shizuku): включить службу Нова в спецвозможностях без ограничений прошивки. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
@@ -182,6 +184,16 @@
             android:theme="@style/Theme.Nova"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- Критичное напоминание во весь экран: загорается экран, сигнал до «Готово». -->
+        <activity
+            android:name=".reminders.AlarmActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.Nova" />
+
         <!-- Окно ассистента поверх приложений: жест ассистента, плитка, сессия VoiceInteraction. -->
         <activity
             android:name=".assist.AssistActivity"
@@ -203,6 +215,12 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- Долгая диктовка при погашенном экране: микрофон и блокировка сна, пока человек диктует. -->
+        <service
+            android:name=".voice.DictationService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Нова как «Цифровой ассистент» Android: сервис, сессия и офлайн-распознавание речи. -->
         <service

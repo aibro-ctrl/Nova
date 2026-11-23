@@ -5,7 +5,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import ai.nova.app.AppContainer
 import ai.nova.app.NovaApp
 import ai.nova.app.R
@@ -36,8 +39,11 @@ class ReminderReceiver : BroadcastReceiver() {
                     ACTION_FIRE -> fire(context, c, id)
                     ACTION_DONE -> {
                         Notifications.cancel(context, notificationId(id))
-                        // «Готово» останавливает и настойчивые повторы.
+                        // «Готово» останавливает и настойчивые повторы, и критичный будильник.
                         c.nags.clear(id)
+                        c.nags.clearCritical(id)
+                        context.stopService(Intent(context, ai.nova.app.media.RingService::class.java))
+                        AlarmActivity.finishIfShowing(id)
                         c.store.reminders.get(id)?.let { r ->
                             if (r.recurrence == null && r.active) {
                                 c.store.reminders.update(r.copy(active = false))
@@ -47,6 +53,9 @@ class ReminderReceiver : BroadcastReceiver() {
                     }
                     ACTION_SNOOZE, ACTION_SNOOZE_HOUR -> {
                         Notifications.cancel(context, notificationId(id))
+                        // Отложили — сигнал замолкает, но уровень важности остаётся до «Готово».
+                        context.stopService(Intent(context, ai.nova.app.media.RingService::class.java))
+                        AlarmActivity.finishIfShowing(id)
                         val minutes = if (intent.action == ACTION_SNOOZE_HOUR) 60L else SNOOZE_MINUTES
                         c.store.reminders.get(id)?.let { r ->
                             val snoozed = c.store.reminders.update(r.copy(triggerAt = Instant.now().plusSeconds(minutes * 60), active = true))
@@ -56,6 +65,9 @@ class ReminderReceiver : BroadcastReceiver() {
                     ACTION_TOMORROW -> {
                         Notifications.cancel(context, notificationId(id))
                         c.nags.clear(id)
+                        c.nags.clearCritical(id)
+                        context.stopService(Intent(context, ai.nova.app.media.RingService::class.java))
+                        AlarmActivity.finishIfShowing(id)
                         c.store.reminders.get(id)?.let { r ->
                             val zone = runCatching { ZoneId.of(r.timeZone) }.getOrDefault(ZoneId.systemDefault())
                             var next = r.triggerAt.atZone(zone).plusDays(1)
@@ -80,6 +92,7 @@ class ReminderReceiver : BroadcastReceiver() {
         const val ACTION_SNOOZE_HOUR = "ai.nova.action.REMINDER_SNOOZE_HOUR"
         const val ACTION_TOMORROW = "ai.nova.action.REMINDER_TOMORROW"
         const val EXTRA_ID = "reminder_id"
+        const val EXTRA_TEXT = "reminder_text"
         private const val SNOOZE_MINUTES = 10L
         /** Опоздание меньше этого порога не показываем: будильники системы и так плавают на минуту. */
         private val LATE_NOTE_AFTER = Duration.ofMinutes(2)
@@ -89,6 +102,29 @@ class ReminderReceiver : BroadcastReceiver() {
         private const val ROUTINE_TIMEOUT_MS = 25_000L
         private const val SPEAK_TIMEOUT_MS = 30_000L
         fun notificationId(id: String) = 5000 + (id.hashCode() and 0x0fffffff) % 100000
+
+        /** Android 14+ выдаёт полный экран только при разрешении USE_FULL_SCREEN_INTENT; ниже — всегда можно. */
+        fun canFullScreen(context: Context): Boolean =
+            Build.VERSION.SDK_INT < 34 || NotificationManagerCompat.from(context).canUseFullScreenIntent()
+
+        /** Разрешение на полный экран выключено — объясняем, что включить, вместо тихого «не сработало». */
+        private fun fullScreenHint(context: Context, id: String) {
+            val open = PendingIntent.getActivity(
+                context, notificationId(id) + 1,
+                Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:" + context.packageName)),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            val n = NotificationCompat.Builder(context, Notifications.CHANNEL_SYSTEM)
+                .setSmallIcon(R.drawable.ic_stat_nova)
+                .setContentTitle("Критичное напоминание без полного экрана")
+                .setContentText("Разрешите «Полноэкранные уведомления» — и Нова сможет включать экран и звонить.")
+                .setStyle(NotificationCompat.BigTextStyle().bigText("Разрешите «Полноэкранные уведомления» в настройках Нова — и критичные напоминания будут включать экран и звонить до «Готово»."))
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .setContentIntent(open)
+                .build()
+            Notifications.notifySafely(context, notificationId(id) + 1, n)
+        }
 
         /** Будильник и страховка ([ReminderWatchdog]) могут прийти одновременно: срабатывание одно за другим, не вместе. */
         private val fireLock = Mutex()
@@ -122,7 +158,8 @@ class ReminderReceiver : BroadcastReceiver() {
                 } else reminder.text
                 val repeatsBefore = c.nags.repeats(id)
                 if (repeatsBefore != null && repeatsBefore > 0) text += "\nНапоминаю снова ($repeatsBefore из ${NagStore.MAX_REPEATS})"
-                show(context, id, text, recurring = reminder.recurrence != null)
+                val critical = c.nags.isCritical(id)
+                show(context, id, text, recurring = reminder.recurrence != null, critical = critical)
                 val fired = c.store.reminders.markFired(id, now)
                 fired?.let { if (it.active) c.reminderScheduler.schedule(it) }
                 // Настойчивое: пока не нажали «Готово», ещё раз через 10 минут (не больше MAX_REPEATS раз).
@@ -138,36 +175,19 @@ class ReminderReceiver : BroadcastReceiver() {
             runRoutine(context, c, id, routine)
         }
 
-        /** Выполняет сценарий: результат — уведомлением (личное скрыто на экране блокировки) и вслух, если ответы голосом включены. */
+        /**
+         * Выполняет сценарий: приветствие по имени, полный текст в историю общения, озвучка целиком
+         * и уведомление, по нажатию открывающее чат. Раньше результат был только в пуше и обрезался.
+         */
         private suspend fun runRoutine(context: Context, c: AppContainer, id: String, text: String) {
             c.awaitReady()
             val reply = withTimeoutOrNull(ROUTINE_TIMEOUT_MS) { c.engine.runScheduledRoutine(text) } ?: return
             val title = text.removePrefix(Routine.SCHEDULE_PREFIX)
-            val open = PendingIntent.getActivity(
-                context, notificationId(id), Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
             val body = reply.text.substringAfter('\n', reply.text)
-            val n = NotificationCompat.Builder(context, Notifications.CHANNEL_REMINDERS)
-                .setSmallIcon(R.drawable.ic_stat_nova)
-                .setContentTitle("Сценарий: $title")
-                .setContentText(body.lineSequence().first())
-                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-                .setPublicVersion(
-                    NotificationCompat.Builder(context, Notifications.CHANNEL_REMINDERS)
-                        .setSmallIcon(R.drawable.ic_stat_nova).setContentTitle("Сценарий выполнен").build(),
-                )
-                .setContentIntent(open)
-                .setAutoCancel(true)
-                .build()
-            Notifications.notifySafely(context, notificationId(id), n)
-            if (c.settings.current().ttsEnabled) {
-                withTimeoutOrNull(SPEAK_TIMEOUT_MS) { runCatching { c.speech.speak(SpeechText.forSpeech(body)) } }
-            }
+            SummaryDelivery.deliver(context, c, notificationId(id), title = "Сценарий: $title", text = body)
         }
 
-        private fun show(context: Context, id: String, text: String, recurring: Boolean) {
+        private fun show(context: Context, id: String, text: String, recurring: Boolean, critical: Boolean = false) {
             val nid = notificationId(id)
             fun action(action: String, code: Int) = PendingIntent.getBroadcast(
                 context, code,
@@ -178,7 +198,16 @@ class ReminderReceiver : BroadcastReceiver() {
                 context, nid, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            val notification = NotificationCompat.Builder(context, Notifications.CHANNEL_REMINDERS)
+            // Критичное: полный экран (звонок-будильник) — Android 14+ требует разрешения, иначе остаётся только
+            // громкое уведомление, поэтому проверяем canUseFullScreenIntent() и подсказываем, что включить.
+            val fullScreen = critical && canFullScreen(context)
+            val fullScreenIntent = PendingIntent.getActivity(
+                context, nid,
+                Intent(context, AlarmActivity::class.java).putExtra(EXTRA_ID, id).putExtra(EXTRA_TEXT, text)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            val notification = NotificationCompat.Builder(context, if (fullScreen) Notifications.CHANNEL_CRITICAL else Notifications.CHANNEL_REMINDERS)
                 .setSmallIcon(R.drawable.ic_stat_nova)
                 .setContentTitle(context.getString(R.string.reminder_title))
                 .setContentText(text.lineSequence().first())
@@ -193,9 +222,28 @@ class ReminderReceiver : BroadcastReceiver() {
                 .apply {
                     if (recurring) addAction(0, context.getString(R.string.reminder_hour), action(ACTION_SNOOZE_HOUR, 3))
                     else addAction(0, context.getString(R.string.reminder_tomorrow), action(ACTION_TOMORROW, 3))
+                    if (fullScreen) {
+                        setFullScreenIntent(fullScreenIntent, true)
+                        setOngoing(true)
+                    }
                 }
                 .build()
             Notifications.notifySafely(context, nid, notification)
+            if (fullScreen) {
+                // Сигнал повторяется, пока не нажали «Готово»: звук идёт через поток будильника.
+                runCatching {
+                    ContextCompat.startForegroundService(
+                        context,
+                        Intent(context, ai.nova.app.media.RingService::class.java)
+                            .putExtra(ai.nova.app.media.RingService.EXTRA_TITLE, context.getString(R.string.reminder_title))
+                            .putExtra(ai.nova.app.media.RingService.EXTRA_TEXT, text.lineSequence().first())
+                            .putExtra(ai.nova.app.media.RingService.EXTRA_LOUD, true),
+                    )
+                }
+            } else if (critical) {
+                // Полный экран запрещён пользователем — говорим прямо, а не делаем вид, что будильник сработал.
+                fullScreenHint(context, id)
+            }
         }
     }
 }

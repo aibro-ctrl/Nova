@@ -47,6 +47,15 @@ sealed interface VoiceState {
  *  - Надёжность: если системное распознавание не работает на этом телефоне, автоматически переходит
  *    на встроенное офлайн-распознавание Vosk, а в крайнем случае — на системное окно Google.
  */
+/**
+ * Долгая диктовка при погашенном экране: служба микрофона и блокировка сна.
+ * Интерфейс — чтобы голосовой конвейер не зависел от Android-служб.
+ */
+interface DictationKeepAlive {
+    fun start()
+    fun stop()
+}
+
 class VoiceController(
     private val engine: AssistantEngine,
     private val settings: StateFlow<AppSettings>,
@@ -54,6 +63,8 @@ class VoiceController(
     private val offlineStt: SpeechRecognitionProvider,
     private val tts: TextToSpeechProvider,
     private val scope: CoroutineScope,
+    /** Держит диктовку живой в фоне (экран погашен): служба микрофона и блокировка сна. */
+    private val dictationKeepAlive: DictationKeepAlive? = null,
 ) {
     private val _state = MutableStateFlow<VoiceState>(VoiceState.Idle)
     val state: StateFlow<VoiceState> = _state.asStateFlow()
@@ -78,7 +89,8 @@ class VoiceController(
     /** «Стоп» — прервать и ответ офлайн-модели, который считается на телефоне. */
     var onStop: () -> Unit = {}
     /** Слушает «стоп», пока Нова говорит; true — пользователь её остановил (задаётся приложением). */
-    var stopWatcher: (suspend () -> Boolean)? = null
+    /** Слушает «стоп» (и, если включено, любую речь), пока Нова говорит. */
+    var stopWatcher: (suspend (bargeIn: Boolean) -> Interruption)? = null
     /** Понимает ли Нова фразу — для выбора лучшего из вариантов распознавания. */
     var understands: (String) -> Boolean = { false }
 
@@ -216,6 +228,16 @@ class VoiceController(
      * (или «стоп», или не помолчит дважды подряд). Потом сохраняем заметку и называем её.
      */
     private suspend fun dictate(source: InputSource): AssistantReply {
+        // Экран может погаснуть посреди диктовки — служба не даёт системе забрать микрофон и усыпить процессор.
+        runCatching { dictationKeepAlive?.start() }
+        try {
+            return dictateLoop(source)
+        } finally {
+            runCatching { dictationKeepAlive?.stop() }
+        }
+    }
+
+    private suspend fun dictateLoop(source: InputSource): AssistantReply {
         val parts = ArrayList<String>()
         var silent = 0
         while (parts.sumOf { it.length } < 20_000) {
@@ -325,6 +347,8 @@ class VoiceController(
         // Нова произносит через 1–2 секунды, а не после всего ответа.
         val written = StringBuilder()
         var interrupted = false
+        /** Перебили словом «стоп» — разговор заканчивается; просто речью — продолжаем слушать. */
+        var endedByStopWord = false
         var foreignLanguage: String? = null
         val reply = coroutineScope {
             val queue = Channel<String>(Channel.UNLIMITED)
@@ -332,7 +356,14 @@ class VoiceController(
             val speaker = if (willSpeak) launch {
                 // Пока Нова говорит, её можно перебить словом «стоп» (если микрофон не занят фоновой службой — та ловит «стоп» сама).
                 val watcher = stopWatcher?.takeIf { !wakeHoldsMic.value }?.let { w ->
-                    launch { if (w()) { interrupted = true; tts.stop(); runCatching { onStop() } } }
+                    launch {
+                        when (w(settings.value.bargeIn)) {
+                            Interruption.STOP_WORD -> { interrupted = true; endedByStopWord = true; tts.stop(); runCatching { onStop() } }
+                            // Перебили голосом: замолкаем сразу, но разговор не заканчиваем — человек скажет, что хотел.
+                            Interruption.SPEECH -> { interrupted = true; tts.stop() }
+                            Interruption.NONE -> Unit
+                        }
+                    }
                 }
                 try {
                     for (sentence in queue) {
@@ -388,10 +419,11 @@ class VoiceController(
         _state.value = VoiceState.Idle
         _lastReply.value = reply
         if (source != InputSource.TEXT) runCatching { onVoiceReply(reply) }
-        if (interrupted) {
+        if (endedByStopWord) {
             engine.endDialog()
             return reply.copy(expectFollowUp = false, endsDialog = true)
         }
+        if (interrupted) return reply.copy(expectFollowUp = true)
         return reply
     }
 

@@ -62,11 +62,13 @@ data class LockPolicy(
         is AssistantAction.PutThing, is AssistantAction.AddDebt, is AssistantAction.CreateList, is AssistantAction.AddDeadline -> create
         is AssistantAction.Clarify -> true
         is AssistantAction.QueryList, is AssistantAction.QueryBirthdays, AssistantAction.QueryRoutines, is AssistantAction.QuerySubscriptions,
-        is AssistantAction.QueryDebts, AssistantAction.QueryLists, is AssistantAction.QueryDeadlines -> view
+        is AssistantAction.QueryDebts, AssistantAction.QueryLists, is AssistantAction.QueryDeadlines, is AssistantAction.QueryNotes -> view
         // Файл с тратами уходит из приложения: только на разблокированном.
         is AssistantAction.Export -> view && apps
         // Список уходит другому человеку: нужно и смотреть записи, и писать сообщения.
         is AssistantAction.SendList -> view && calls
+        // Заметка уходит из приложения: как выгрузка — только на разблокированном.
+        is AssistantAction.ShareNote -> view && apps
         is AssistantAction.QueryExpenses, is AssistantAction.QueryTasks, AssistantAction.QueryReminders,
         is AssistantAction.QueryMemories, is AssistantAction.Search, is AssistantAction.Agenda -> view
         is AssistantAction.Device -> when (val c = action.command) {
@@ -78,6 +80,7 @@ data class LockPolicy(
             // Где машина — личное место: запомнить можно как запись, посмотреть — как просмотр записей.
             is DeviceCommand.Parking -> if (c.save) create else view
             is DeviceCommand.VoiceMemo -> create
+            DeviceCommand.UndoDevice -> view
             // Экран копии показывает все данные: на экране блокировки закрыт.
             is DeviceCommand.OpenBackup -> view && edit
             else -> apps

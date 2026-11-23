@@ -1,6 +1,7 @@
 package ai.nova.app.voice
 
 import android.content.Context
+import ai.nova.core.nlp.Gender
 import ai.nova.core.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +24,9 @@ import java.util.zip.ZipInputStream
  */
 class NovaVoiceModels(context: Context) {
     data class Voice(val id: String, val title: String, val subtitle: String, val sha256: String, val bytes: Long) {
+        /** Род голоса берётся из подписи каталога («Мужской», «Женский, мягкий»), чтобы не дублировать данные. */
+        val gender: Gender get() = if (subtitle.startsWith("Мужской", ignoreCase = true)) Gender.MASCULINE else Gender.FEMININE
+
         val url get() = "https://github.com/$REPO/releases/download/$RELEASE/loli-voice-ru-$id.zip"
         val folder get() = "vits-piper-ru_RU-$id-medium"
         val modelFile get() = "ru_RU-$id-medium.onnx"
@@ -56,6 +60,38 @@ class NovaVoiceModels(context: Context) {
 
     /** Выбранный голос, а если он не скачан — любой уже скачанный (чтобы смена голоса по умолчанию не оставила без голоса). */
     fun effective(id: String): String = if (isReady(id)) id else VOICES.firstOrNull { isReady(it.id) }?.id ?: id
+
+    /**
+     * Голоса, подходящие к роду имени ассистента: мужское имя — только мужские, женское — только женские.
+     * Род не определился — показываем все, чтобы не отнимать выбор.
+     */
+    fun forGender(gender: Gender): List<Voice> = when {
+        gender.isMasculine -> VOICES.filter { it.gender.isMasculine }
+        gender.isFeminine -> VOICES.filter { it.gender.isFeminine }
+        else -> VOICES
+    }
+
+    /** Голос соответствует роду имени? Если род не определён — подходит любой. */
+    fun matches(id: String, gender: Gender): Boolean {
+        if (gender == Gender.NEUTRAL) return true
+        return voice(id).gender == gender
+    }
+
+    /**
+     * Чем реально озвучивать: выбранный голос главнее рода (человек мог скачать его раньше),
+     * иначе — скачанный голос нужного рода, иначе любой скачанный (лучше голос другого рода, чем молчание).
+     */
+    fun effectiveFor(id: String, gender: Gender): String {
+        if (isReady(id)) return id
+        if (gender != Gender.NEUTRAL) forGender(gender).firstOrNull { isReady(it.id) }?.let { return it.id }
+        return VOICES.firstOrNull { isReady(it.id) }?.id ?: id
+    }
+
+    /** Голос, который логично поставить при смене рода имени: скачанный подходящий, иначе первый подходящий. */
+    fun defaultFor(gender: Gender): Voice {
+        val list = forGender(gender)
+        return list.firstOrNull { isReady(it.id) } ?: list.firstOrNull() ?: voice(DEFAULT)
+    }
 
     suspend fun download(id: String): Boolean = mutex.withLock {
         val v = voice(id)
@@ -187,7 +223,11 @@ class NovaVoiceModels(context: Context) {
         private const val RELEASE = "voices-v1"
         private const val INCOMPLETE = ".incomplete"
         private const val BUFFER = 64 * 1024
-        const val DEFAULT = "denis"
+        /**
+         * Голос по умолчанию — женский: при первом запуске ассистента зовут «Нова», и он говорит о себе
+         * в женском роде. Для мужского имени [effectiveFor] подберёт мужской голос.
+         */
+        const val DEFAULT = "vera"
 
         val VOICES = listOf(
             Voice("denis", "Денис", "Мужской", "8bcfc5cea11b0d943d03f6b4d4da0eacf8b5ec2af5c35ff021a03c65b16c2138", 67_424_164),

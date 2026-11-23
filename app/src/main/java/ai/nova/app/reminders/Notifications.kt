@@ -18,6 +18,8 @@ object Notifications {
     const val CHANNEL_RESULTS = "results"
     /** Таймеры Нова и «найди телефон»: звук играет сам сервис, у канала — без звука. */
     const val CHANNEL_ALARMS = "alarms"
+    /** Критичные напоминания: полный экран и звук будильника (звук играет RingService). */
+    const val CHANNEL_CRITICAL = "critical"
     /** Радио и отсчёт таймеров. */
     const val CHANNEL_MEDIA = "media"
     /** Быстрый ввод из шторки. */
@@ -61,6 +63,16 @@ object Notifications {
                 description = "Сигнал таймера Нова и «Нова, где ты?»"
                 setSound(null, null)
                 enableVibration(true)
+            },
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_CRITICAL, "Критичные напоминания", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Включают экран и звонят, пока не нажато «Готово». Только для напоминаний, которые вы сами назвали критичными."
+                // Содержимое скрыто на заблокированном экране: это личное (лекарства, здоровье).
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+                enableVibration(true)
+                setSound(null, null)
+                setBypassDnd(false)
             },
         )
         nm.createNotificationChannel(

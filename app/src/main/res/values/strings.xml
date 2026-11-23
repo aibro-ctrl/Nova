@@ -5,6 +5,7 @@
     <string name="wake_model_missing">Офлайн-модель речи не установлена — откройте Настройки → Голос</string>
     <string name="wake_command_starting">Включаю прослушивание…</string>
     <string name="wake_command">Слушаю команду…</string>
+    <string name="wake_listening_cue">Слушаю.</string>
     <string name="wake_thinking">Выполняю…</string>
     <string name="wake_stop">Выключить</string>
     <string name="wake_reactivate">Телефон перезагружен. Нажмите, чтобы снова включить прослушивание.</string>

@@ -18,12 +18,18 @@ class ChatSearch(private val conversations: ConversationRepository, private val 
     companion object {
         private const val PERIOD = """(вчера|сегодня|позавчера|на\s+прошлой\s+неделе|на\s+этой\s+неделе|на\s+неделе|за\s+неделю|в\s+этом\s+месяце|в\s+прошлом\s+месяце|за\s+месяц|недавно)"""
         private val ABOUT = Rx.of("""^(?:а\s+)?(?:что|когда)\s+(?:я\s+)?(?:тебе\s+)?(?:говорил|говорила|говорили|рассказывал|рассказывала|спрашивал|спрашивала|писал|писала|упоминал|упоминала)\s+(?:тебе\s+)?(?:про|о|об|насчет|насчёт)\s+(.+?)(?:\s+$PERIOD)?$""")
+        /** Период стоит между глаголом и темой: «о чём я говорил вчера насчёт здоровья». */
+        private val ABOUT_TOPIC_AFTER_PERIOD = Rx.of("""^(?:о\s+ч[её]м|про\s+что)\s+(?:я\s+)?(?:тебе\s+)?(?:говорил|говорила|рассказывал|рассказывала|спрашивал|спрашивала)\s+$PERIOD\s+(?:про|о|об|насчет|насчёт)\s+(.+?)$""")
+        /** «О чём я говорил насчёт здоровья» — без периода вовсе. */
+        private val ABOUT_TOPIC = Rx.of("""^(?:о\s+ч[её]м|про\s+что)\s+(?:я\s+)?(?:тебе\s+)?(?:говорил|говорила|рассказывал|рассказывала|спрашивал|спрашивала)\s+(?:про|о|об|насчет|насчёт)\s+(.+?)(?:\s+$PERIOD)?$""")
         private val FIND = Rx.of("""^(?:найди|поищи|покажи)\s+(?:в\s+)?(?:наших\s+)?(?:разговорах|переписке|истории\s+(?:чата|разговоров)|чате|диалогах)\s+(?:про\s+|о\s+|об\s+)?(.+?)(?:\s+$PERIOD)?$""")
         private val TALKED = Rx.of("""^(?:о\s+ч[её]м|про\s+что)\s+мы\s+(?:с\s+тобой\s+)?(?:говорили|разговаривали|болтали)\s+$PERIOD$""")
 
         fun parse(text: String, today: LocalDate): Ask? {
             val n = RuTokenizer.normalize(text).trim().trimEnd('?', '.', '!')
             ABOUT.find(n)?.let { m -> return withPeriod(m.groupValues[1], m.groupValues[2], today) }
+            ABOUT_TOPIC_AFTER_PERIOD.find(n)?.let { m -> return withPeriod(m.groupValues[2], m.groupValues[1], today) }
+            ABOUT_TOPIC.find(n)?.let { m -> return withPeriod(m.groupValues[1], m.groupValues[2], today) }
             FIND.find(n)?.let { m -> return withPeriod(m.groupValues[1], m.groupValues[2], today) }
             TALKED.find(n)?.let { m -> return withPeriod(null, m.groupValues[1], today) }
             return null

@@ -138,7 +138,10 @@ class Audit223Test {
 
     @Test fun ideasQuestionPointsToRecords() = runTest {
         val e = env()
-        assertTrue(e.engine.handle("какие у меня идеи").text.startsWith("Идеи — на вкладке"))
+        // Раньше отвечали «Идеи — на вкладке…»: теперь список последних идей приходит голосом.
+        assertTrue(e.engine.handle("какие у меня идеи").text.startsWith("Идей пока нет"))
+        e.store.notes.create(ai.nova.core.model.NoteKind.IDEA, "Приложение для склада", "")
+        assertTrue(e.engine.handle("какие у меня идеи").text.startsWith("Последние идеи (1)"))
     }
 
     @Test fun sayToMomThatIsAMessage() {

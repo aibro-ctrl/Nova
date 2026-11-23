@@ -449,27 +449,35 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
             return Reply(saveMood(score, ""), changed = true)
         }
         if (Regex("""^(?:итоги\s+дня|подведи\s+итоги(?:\s+дня)?|как\s+я\s+провел[аи]?\s+день|что\s+(?:я\s+)?сегодня\s+сделал[аи]?)$""").containsMatchIn(t)) {
-            return Reply(daySummary(tasksDone(), spend()))
+            return Reply(daySummary(tasksDone(), spend(), BriefBlocks.ALL))
         }
         return null
     }
 
     /** «Итоги дня» для вечерней сводки — тот же текст, что и по голосовой команде. */
-    suspend fun daySummaryText(tasksDone: Int, spend: String?): String = daySummary(tasksDone, spend)
+    /** [blocks] — выбранные блоки сводки; выключенные не попадают в текст (пустая строка, если выключено всё). */
+    suspend fun daySummaryText(tasksDone: Int, spend: String?, blocks: Set<String> = BriefBlocks.ALL): String =
+        daySummary(tasksDone, spend, blocks)
 
-    private suspend fun daySummary(tasksDone: Int, spend: String?): String {
+    private suspend fun daySummary(tasksDone: Int, spend: String?, blocks: Set<String>): String {
+        val health = BriefBlocks.on(blocks, BriefBlocks.HEALTH)
         val from = time.today().atStartOfDay(time.zone()).toInstant()
         val today = store.since(from)
         val mood = today.lastOrNull { it.kind == MOOD }
         val water = today.filter { it.kind == WATER }.sumOf { it.amount }
         val habits = today.filter { it.kind == HABIT }.map { it.name }.distinct()
         val parts = buildList {
-            add(mood?.let { "Настроение: ${it.amount.toInt()} из 5${if (it.name.isNotBlank()) " (${it.name})" else ""}." } ?: "Настроение сегодня не записано — скажите «как прошёл день».")
-            add(if (tasksDone > 0) "Закрыто задач: $tasksDone." else "Закрытых задач сегодня нет.")
-            spend?.let { add(it) }
-            if (water > 0) add("Воды: ${glassesText(water)}.")
-            if (habits.isNotEmpty()) add("Привычки: ${habits.joinToString(", ")}.")
+            if (health) {
+                add(mood?.let { "Настроение: ${it.amount.toInt()} из 5${if (it.name.isNotBlank()) " (${it.name})" else ""}." } ?: "Настроение сегодня не записано — скажите «как прошёл день».")
+                if (water > 0) add("Воды: ${glassesText(water)}.")
+                if (habits.isNotEmpty()) add("Привычки: ${habits.joinToString(", ")}.")
+            }
+            if (BriefBlocks.on(blocks, BriefBlocks.TASKS)) {
+                add(if (tasksDone > 0) "Закрыто задач: $tasksDone." else "Закрытых задач сегодня нет.")
+            }
+            if (BriefBlocks.on(blocks, BriefBlocks.SPEND)) spend?.let { add(it) }
         }
+        if (parts.isEmpty()) return ""
         return "Итоги дня. " + parts.joinToString(" ")
     }
 

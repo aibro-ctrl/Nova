@@ -1,6 +1,7 @@
 package ai.nova.core.assistant
 
 import ai.nova.core.nlp.RuNumbers
+import ai.nova.core.nlp.RuQuery
 import ai.nova.core.nlp.RuTokenizer
 import ai.nova.core.nlp.Rx
 import java.time.DayOfWeek
@@ -25,14 +26,15 @@ sealed interface DeviceCommand {
     data class Media(val action: MediaAction) : DeviceCommand
     data class Volume(val change: VolumeChange, val percent: Int? = null) : DeviceCommand
     data class WebSearch(val query: String) : DeviceCommand
-    data class Navigate(val destination: String) : DeviceCommand
+    /** Маршрут; [app] — карты, выбранные голосом («в 2ГИС»), иначе те, что выбраны в настройках. */
+    data class Navigate(val destination: String, val app: MapsApp? = null) : DeviceCommand
     data class OpenSettings(val section: SettingsSection) : DeviceCommand
     data object Stopwatch : DeviceCommand
     data object ShowAlarms : DeviceCommand
     data class Camera(val video: Boolean = false, val selfie: Boolean = false) : DeviceCommand
     data class OpenUrl(val url: String) : DeviceCommand
     /** Музыка/видео по запросу: «включи Queen», «найди на ютубе рецепт пиццы». */
-    data class Play(val query: String, val youtube: Boolean = false) : DeviceCommand
+    data class Play(val query: String, val youtube: Boolean = false, val platform: VideoPlatform? = null) : DeviceCommand
     data class CalendarEvent(val title: String, val start: Instant?, val allDay: Boolean = false) : DeviceCommand
     data class AddContact(val name: String, val phone: String?) : DeviceCommand
     data class Share(val app: String, val text: String) : DeviceCommand
@@ -54,6 +56,8 @@ sealed interface DeviceCommand {
     data class ShareFile(val name: String, val mime: String, val content: String) : DeviceCommand
     /** Голосовая заметка со звуком: запись голоса и текст. */
     data object VoiceMemo : DeviceCommand
+    /** «Отмени последнее действие»: фонарик, «не беспокоить», яркость, громкость — то, что можно вернуть. */
+    data object UndoDevice : DeviceCommand
     /** Парковка: [save] — запомнить место машины (и [note]: «третий уровень, место 45»), иначе — показать на карте. */
     data class Parking(val save: Boolean, val note: String = "") : DeviceCommand
 }
@@ -227,6 +231,7 @@ object DevicePhrases {
         when {
             re("""^(?:сделай|сними)\s+селфи|^(?:открой|включи)\s+(?:фронтальную|переднюю|селфи)\s*камеру""").containsMatchIn(t) -> return cmd(DeviceCommand.Camera(selfie = true))
             re("""^(?:сделай|сними)\s+(?:фото|фотографию|снимок)|^(?:открой|включи|запусти)\s+камеру$|^сфотографируй|^сфоткай""").containsMatchIn(t) -> return cmd(DeviceCommand.Camera())
+            re("""^(?:отмени|верни)\s+(?:свое\s+|своё\s+)?(?:последн\w+\s+)?(?:действие|команду|как\s+было)$|^верни\s+как\s+было$|^отмени\s+что\s+(?:ты\s+)?сделал\w*$""").containsMatchIn(t) -> return cmd(DeviceCommand.UndoDevice)
             re("""^(?:сними|запиши)\s+видео|^(?:включи|начни)\s+(?:запись видео|видеозапись)""").containsMatchIn(t) -> return cmd(DeviceCommand.Camera(video = true))
         }
 
@@ -248,7 +253,13 @@ object DevicePhrases {
 
         // Музыка и видео по запросу.
         re("""^(?:найди|включи|открой|покажи|поставь)\s+(?:на\s+)?(?:ютубе|youtube)\s+(.+)$|^(?:включи|найди|покажи)\s+(.+?)\s+(?:на\s+)?(?:ютубе|youtube)$""").find(t)?.let { m ->
-            val q = m.groupValues[1].ifBlank { m.groupValues[2] }.trim()
+            val q = RuQuery.toSearchForm(m.groupValues[1].ifBlank { m.groupValues[2] }.trim())
+            if (q.isNotEmpty()) return cmd(DeviceCommand.Play(q, youtube = true))
+        }
+        // «Найди видео про рыбалку», «покажи ролик про котиков» — поиск видео на YouTube.
+        re("""^(?:найди|поищи|покажи|включи|открой)\s+(?:мне\s+)?(?:видео|видос\w*|ролик\w*|клип\w*)\s+(?:про|о|об|на\s+тему)?\s*(.+)$""").find(t)?.let { m ->
+            // «про рыбалку» → «рыбалка»: в поиске YouTube словарная форма точнее.
+            val q = RuQuery.toSearchForm(m.groupValues[1].trim())
             if (q.isNotEmpty()) return cmd(DeviceCommand.Play(q, youtube = true))
         }
         re("""^(?:включи|поставь|сыграй|воспроизведи|вруби|врубай|запусти)\s+(?:песню|песенку|трек|музыку|музычку|музон|альбом|плейлист|группу|исполнителя)\s+(.+)$""").find(t)?.let {
@@ -391,9 +402,11 @@ object DevicePhrases {
             if (isRecipient(who) && !re("""^(?:мне|нам|тебе|себе|ей|ему|им|всем)$""").matches(who)) return cmd(DeviceCommand.Message(who, it.groupValues[2].trim()))
         }
 
-        // Маршрут.
+        // Маршрут: «построй маршрут до вокзала», «как доехать до дома в 2ГИС».
         re("""^(?:построй\s+маршрут|проложи\s+маршрут|как\s+(?:доехать|добраться|пройти)|маршрут|навигатор|поехали)\s+(?:до|к|в|на)\s+(.+)$""").find(t)?.let {
-            return cmd(DeviceCommand.Navigate(it.groupValues[1].trim()))
+            val (place, app) = stripMapsApp(it.groupValues[1].trim())
+            // «до вокзала» → «вокзал»: карты точнее находят словарную форму.
+            return cmd(DeviceCommand.Navigate(RuQuery.toSearchForm(place), app))
         }
 
         // Поиск в интернете: «найди в интернете …», «загугли …».
@@ -610,6 +623,23 @@ object DevicePhrases {
         if (from.kind != to.kind || from === to) return null
         val r = v * from.factor / to.factor
         return "${fmt(v)} ${from.title} = ${fmt(r)} ${to.title}."
+    }
+
+    /**
+     * Отделяет от адреса название карт: «дом в 2ГИС» → («дом», 2ГИС).
+     * Без карт в фразе приложение выберет настройка.
+     */
+    internal fun stripMapsApp(destination: String): Pair<String, MapsApp?> {
+        val app = MapsApp.parse(destination) ?: return destination to null
+        val words = """2\s*гис|2гис|дубльгис|2gis|яндекс\s*карт\w*|яндексе|яндекс|google\s*карт\w*|гугл\s*карт\w*|гуглкарт\w*|гугле|гугл"""
+        val cleaned = destination
+            // «в 2ГИС», «через Яндекс Карты» — убираем предлог вместе с названием.
+            .replace(Regex("""(?i)\s*(?:в|на|через|открой|открыть|приложение)?\s*(?:$words)"""), " ")
+            .replace(Regex("""\s{2,}"""), " ")
+            .trim()
+            .replace(Regex("""(?i)^(?:до|к|в|на)\s+"""), "")
+            .trim().trim(',', '.', '-')
+        return (cleaned.ifBlank { destination }.trim()) to app
     }
 
     private fun fmt(v: Double): String {

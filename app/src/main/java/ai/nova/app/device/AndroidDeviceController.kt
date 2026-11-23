@@ -61,9 +61,16 @@ class AndroidDeviceController(
     private val relaxation: ai.nova.app.health.Relaxation? = null,
     /** «Я за рулём»: чтение новых сообщений вслух. */
     private val driving: ai.nova.app.health.DrivingMode? = null,
+    /** Карты, выбранные в настройках; null — открываем те, что назначены системой для ссылок geo:. */
+    private val mapsApp: () -> ai.nova.core.assistant.MapsApp? = { null },
+    /** «Мой город» из настроек: маршрут ищется в нём, а не в случайном городе. */
+    private val city: () -> String? = { null },
 ) : DeviceController {
 
     private val players = ai.nova.app.media.OtherPlayers(context)
+
+    /** Обратный ход последней команды: фонарик, «не беспокоить», яркость, громкость. */
+    private var undoLast: (suspend () -> String?)? = null
 
     override suspend fun perform(command: DeviceCommand): DeviceResult = withContext(Dispatchers.Main) {
         try {
@@ -149,6 +156,7 @@ class AndroidDeviceController(
                 val id = cm.cameraIdList.firstOrNull { cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true }
                     ?: return DeviceResult("На этом телефоне нет вспышки.", ok = false)
                 cm.setTorchMode(id, c.on)
+                undoLast = { runCatching { cm.setTorchMode(id, !c.on) }.getOrNull(); "фонарик " + if (c.on) "выключен" else "включён" }
                 DeviceResult(if (c.on) "Фонарик включён." else "Фонарик выключен.")
             }
             DeviceCommand.Battery -> {
@@ -190,6 +198,8 @@ class AndroidDeviceController(
                 val am = context.getSystemService(AudioManager::class.java)
                 val stream = AudioManager.STREAM_MUSIC
                 val max = am.getStreamMaxVolume(stream)
+                val before = am.getStreamVolume(stream)
+                undoLast = { runCatching { am.setStreamVolume(stream, before, AudioManager.FLAG_SHOW_UI) }.getOrNull(); "громкость как была" }
                 when (c.change) {
                     VolumeChange.UP -> repeat(2) { am.adjustStreamVolume(stream, AudioManager.ADJUST_RAISE, if (it == 1) AudioManager.FLAG_SHOW_UI else 0) }
                     VolumeChange.DOWN -> repeat(2) { am.adjustStreamVolume(stream, AudioManager.ADJUST_LOWER, if (it == 1) AudioManager.FLAG_SHOW_UI else 0) }
@@ -201,15 +211,41 @@ class AndroidDeviceController(
                 val percent = am.getStreamVolume(stream) * 100 / max.coerceAtLeast(1)
                 DeviceResult(if (c.change == VolumeChange.MUTE) "Звук выключен." else "Громкость $percent%.")
             }
+            DeviceCommand.UndoDevice -> {
+                val undo = undoLast
+                if (undo == null) {
+                    DeviceResult("Нечего отменять: последнее действие вернуть нельзя. Так можно только фонарик, «не беспокоить», яркость и громкость.", ok = false)
+                } else {
+                    // Отменяем один раз: повторное «отмени» не должно ходить по кругу.
+                    undoLast = null
+                    val what = runCatching { undo() }.getOrNull()
+                    if (what == null) DeviceResult("Не получилось вернуть как было.", ok = false) else DeviceResult("Вернула как было: $what.")
+                }
+            }
             is DeviceCommand.WebSearch -> {
                 val search = Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, c.query)
                 val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(c.query)))
                 open(if (resolves(search)) search else web, "Ищу «${c.query}».", "Поиск: ${c.query}")
             }
             is DeviceCommand.Navigate -> {
-                val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(c.destination)))
-                val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://yandex.ru/maps/?text=" + Uri.encode(c.destination)))
-                open(if (resolves(geo)) geo else web, "Строю маршрут: ${c.destination}.", "Маршрут")
+                // Карты: выбранные голосом («в 2ГИС») важнее настроек, а настройки — важнее системного выбора.
+                val chosen = c.app ?: mapsApp()
+                // «Мой город» из настроек: без него карты ищут «вокзал» в последнем открытом городе.
+                val query = ai.nova.core.nlp.RuQuery.withCity(c.destination, city())
+                val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(query)))
+                val target = chosen?.takeIf { installed(it.pkg) }
+                val intent = when {
+                    target != null -> geo.setPackage(target.pkg)
+                    chosen != null -> Intent(Intent.ACTION_VIEW, Uri.parse(chosen.web + Uri.encode(query)))
+                    resolves(geo) -> geo
+                    else -> Intent(Intent.ACTION_VIEW, Uri.parse("https://yandex.ru/maps/?text=" + Uri.encode(query)))
+                }
+                val where = when {
+                    target != null -> " в ${target.title}"
+                    chosen != null -> " в ${chosen.title} (в браузере)"
+                    else -> ""
+                }
+                open(intent, "Строю маршрут$where: $query.", "Маршрут")
             }
             is DeviceCommand.OpenSettings -> {
                 val q = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
@@ -262,9 +298,24 @@ class AndroidDeviceController(
             is DeviceCommand.OpenUrl -> open(Intent(Intent.ACTION_VIEW, Uri.parse(c.url)), "Открываю ${Uri.parse(c.url).host ?: c.url}.", "Сайт")
             is DeviceCommand.Play -> {
                 if (c.youtube) {
-                    val app = Intent(Intent.ACTION_SEARCH).setPackage(YOUTUBE).putExtra("query", c.query)
-                    val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(c.query)))
-                    open(if (resolves(app)) app else web, "Ищу на YouTube: ${c.query}.", "YouTube")
+                    // Платформу человек выбрал один раз; поиск идёт в её приложении, а без приложения — в браузере.
+                    when (c.platform ?: ai.nova.core.assistant.VideoPlatform.YOUTUBE) {
+                        ai.nova.core.assistant.VideoPlatform.YOUTUBE -> {
+                            val app = Intent(Intent.ACTION_SEARCH).setPackage(YOUTUBE).putExtra("query", c.query)
+                            val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(c.query)))
+                            open(if (resolves(app)) app else web, "Ищу на YouTube: ${c.query}.", "YouTube")
+                        }
+                        ai.nova.core.assistant.VideoPlatform.VK -> {
+                            val app = context.packageManager.getLaunchIntentForPackage(VK)
+                            val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://m.vk.com/video?q=" + Uri.encode(c.query)))
+                            open(app ?: web, "Ищу в VK Видео: ${c.query}.", "VK Видео")
+                        }
+                        ai.nova.core.assistant.VideoPlatform.RUTUBE -> {
+                            val app = context.packageManager.getLaunchIntentForPackage(RUTUBE)
+                            val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://rutube.ru/search/?query=" + Uri.encode(c.query)))
+                            open(app ?: web, "Ищу в Rutube: ${c.query}.", "Rutube")
+                        }
+                    }
                 } else {
                     val music = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
                         .putExtra(SearchManager.QUERY, c.query)
@@ -299,7 +350,9 @@ class AndroidDeviceController(
                 if (!nm.isNotificationPolicyAccessGranted) {
                     open(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS), "Разрешите Нова управлять режимом «Не беспокоить» — и повторите команду.", "Не беспокоить")
                 } else {
+                    val before = nm.currentInterruptionFilter
                     nm.setInterruptionFilter(if (c.on) NotificationManager.INTERRUPTION_FILTER_PRIORITY else NotificationManager.INTERRUPTION_FILTER_ALL)
+                    undoLast = { runCatching { nm.setInterruptionFilter(before) }.getOrNull(); "режим «Не беспокоить» как был" }
                     DeviceResult(if (c.on) "Режим «Не беспокоить» включён." else "Режим «Не беспокоить» выключен.")
                 }
             }
@@ -315,6 +368,10 @@ class AndroidDeviceController(
                     val current = Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS, 128) * 100 / 255
                     val target = (c.percent ?: (current + c.delta)).coerceIn(1, 100)
                     Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, target * 255 / 100)
+                    undoLast = {
+                        runCatching { Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, current * 255 / 100) }.getOrNull()
+                        "яркость $current%"
+                    }
                     DeviceResult("Яркость $target%.")
                 }
             }
@@ -425,6 +482,9 @@ class AndroidDeviceController(
     // ------------------------------------------------------------------ Вспомогательное
 
     private fun resolves(intent: Intent): Boolean = intent.resolveActivity(context.packageManager) != null
+
+    /** Установлено ли приложение: у выбранных карт ссылка geo: может не открыться, тогда идём в браузер. */
+    private fun installed(pkg: String): Boolean = runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
 
     /** Файл (таблица) — во временную папку и в системное «Поделиться»: почта, мессенджер, Диск, Excel. */
     private suspend fun shareFile(c: DeviceCommand.ShareFile): DeviceResult {
@@ -576,6 +636,8 @@ class AndroidDeviceController(
         private const val PARKING_PREFS = "nova_parking"
         private const val TAG = "Device"
         private const val YOUTUBE = "com.google.android.youtube"
+        private const val VK = "com.vkontakte.android"
+        private const val RUTUBE = "ru.rutube.app"
         private val SHARE_APPS = mapOf(
             "телеграм" to "org.telegram.messenger", "telegram" to "org.telegram.messenger",
             "ватсап" to "com.whatsapp", "вотсап" to "com.whatsapp", "whatsapp" to "com.whatsapp",

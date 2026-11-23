@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <exception>
 #include <string>
 #include <vector>
@@ -28,6 +29,12 @@ struct Session {
      */
     std::vector<llama_token> cached;
 };
+
+// Сколько миллисекунд прошло: скорость модели на разных телефонах нужна для честной настройки потоков.
+long long now_ms() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
 
 void log_callback(ggml_log_level level, const char *text, void *) {
     if (level >= GGML_LOG_LEVEL_WARN) __android_log_print(ANDROID_LOG_WARN, TAG, "%s", text);
@@ -129,9 +136,13 @@ Java_ai_nova_app_llm_LlamaNative_load(JNIEnv *env, jclass, jstring jpath, jint n
     // llama.cpp объявляет ошибки исключениями (включая «failed to allocate compute buffers» при нехватке ОЗУ).
     // Неперехваченное C++ исключение на границе JNI = SIGABRT и закрытое приложение — ловим и возвращаем 0.
     try {
+        const long long t_load = now_ms();
+        // Обычный mmap: веса читаются с флеша в общий кэш страниц и не занимают лишнюю память —
+        // на телефоне с 8 ГБ это важно (копия весов в куче стоила бы ещё ~600 МБ).
         llama_model_params mp = llama_model_default_params();
         model = llama_model_load_from_file(path.c_str(), mp);
         if (!model) { LOGW("model load failed"); return 0; }
+        LOGI("модель прочитана: %lld мс", now_ms() - t_load);
 
         llama_context_params cp = llama_context_default_params();
         cp.n_ctx = static_cast<uint32_t>(n_ctx);
@@ -292,6 +303,8 @@ jstring generate_impl(JNIEnv *env, jlong handle, jobjectArray jmessages, jint ma
 
     std::string out, pending;
     std::vector<char> piece(256);
+    const long long t_gen = now_ms();
+    int32_t produced = 0;
     for (int32_t i = 0; i < max_tokens && !s->stop; i++) {
         llama_token tok = llama_sampler_sample(smpl, s->ctx, -1);
         if (llama_vocab_is_eog(s->vocab, tok)) break;
@@ -320,6 +333,12 @@ jstring generate_impl(JNIEnv *env, jlong handle, jobjectArray jmessages, jint ma
         llama_batch next = llama_batch_get_one(&tok, 1);
         if (llama_decode(s->ctx, next) != 0) break;
         s->cached.push_back(tok);
+        produced++;
+    }
+    if (produced > 0) {
+        const long long ms = now_ms() - t_gen;
+        LOGI("генерация: %d токенов за %lld мс (%.1f ток/с)", produced, ms,
+             ms > 0 ? produced * 1000.0 / (double) ms : 0.0);
     }
     if (cls) env->DeleteLocalRef(cls);
     if (!pending.empty() && complete_utf8_prefix(pending) == pending.size()) out += pending;

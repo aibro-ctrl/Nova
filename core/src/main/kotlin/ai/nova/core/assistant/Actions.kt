@@ -41,6 +41,9 @@ sealed interface AssistantAction {
 
     data class DeleteNote(val target: TargetRef) : AssistantAction { override val isDestructive = true }
 
+    /** «Покажи мои последние заметки», «какие у меня идеи»: список записей без поиска по смыслу. */
+    data class QueryNotes(val kind: NoteKind?, val limit: Int = 5) : AssistantAction
+
     data class CreateExpense(
         val amountMinor: Long,
         val currency: String,
@@ -73,8 +76,17 @@ sealed interface AssistantAction {
 
     data class DeleteTask(val target: TargetRef) : AssistantAction { override val isDestructive = true }
 
-    /** [persistent] — «настойчиво, пока не отмечу»: после срабатывания напоминание повторяется, пока его не отметят (только разовое). */
-    data class CreateReminder(val text: String, val triggerAt: Instant, val recurrence: Recurrence?, val persistent: Boolean = false) : AssistantAction
+    /**
+     * [persistent] — «настойчиво, пока не отмечу»: после срабатывания напоминание повторяется, пока его не отметят (только разовое).
+     * [critical] — «критично»: будильник с полным экраном и сигналом до «Готово» (тоже только разовое).
+     */
+    data class CreateReminder(
+        val text: String,
+        val triggerAt: Instant,
+        val recurrence: Recurrence?,
+        val persistent: Boolean = false,
+        val critical: Boolean = false,
+    ) : AssistantAction
 
     data class CancelReminder(val target: TargetRef) : AssistantAction { override val isDestructive = true }
 
@@ -165,9 +177,18 @@ sealed interface AssistantAction {
     data class Export(val kind: String, val from: LocalDate?, val to: LocalDate?) : AssistantAction
     /** «Отправь список покупок Маше» — текстом в мессенджер или СМС. [app] — «в телеграм». */
     data class SendList(val listName: String, val who: String?, val app: String? = null) : AssistantAction
+    /**
+     * «Отправь последнюю заметку на почту», «поделись заметкой про борщ в телеграм»:
+     * текст записи уходит в мессенджер или почту через системное «Поделиться».
+     * [last] — отправить последнюю запись выбранного вида, без поиска по смыслу.
+     */
+    data class ShareNote(val target: TargetRef, val app: String? = null, val last: NotePick? = null) : AssistantAction
     /** Секретная заметка: только на устройстве, открывается по отпечатку. */
     data class CreateSecretNote(val title: String, val content: String) : AssistantAction
 }
+
+/** Какую запись считать «последней» при отправке. */
+enum class NotePick { ANY, NOTE, IDEA }
 
 /** Недостающие данные, которые ассистент спросит у пользователя и дозаполнит следующей репликой. */
 sealed interface SlotRequest {

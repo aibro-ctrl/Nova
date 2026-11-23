@@ -89,6 +89,15 @@ internal fun VoiceSpeechPage(c: AppContainer, onBack: () -> Unit) {
                 }
             }
         }
+        if (s.ttsEnabled) item(key = "barge-in") {
+            Group(Modifier.padding(top = 4.dp)) {
+                SwitchItem(
+                    "Перебивать голосом",
+                    "Начните говорить — ${s.assistantName} сразу замолчит и станет слушать. Слово «стоп» работает всегда",
+                    s.bargeIn,
+                ) { v -> scope.launch { c.settings.setBargeIn(v) } }
+            }
+        }
         if (s.ttsEnabled) item(key = "nova-voice") { NovaVoiceSection(c) }
         if (s.ttsEnabled) item(key = "style") {
             if (systemMode && (ru == AndroidTtsProvider.RuStatus.NO_RUSSIAN || ru == AndroidTtsProvider.RuStatus.MISSING_DATA)) {
@@ -172,14 +181,22 @@ internal fun VoiceSpeechPage(c: AppContainer, onBack: () -> Unit) {
                 RadioRow("Как в системе", "Голос по умолчанию синтезатора речи", s.voiceName.isBlank()) {
                     scope.launch { c.settings.setVoiceName(""); c.tts.speak(sample) }
                 }
-                val list = voices
+                // Голоса с известным родом подбираем под имя ассистента; те, где род не указан, показываем как есть.
+                val assistantGender = ai.nova.core.nlp.Gender.ofAssistant(s.assistantName)
+                val list = voices?.filter { it.gender == ai.nova.core.nlp.Gender.NEUTRAL || it.gender == assistantGender }
                 if (list == null) {
                     GroupDivider(inset = 52.dp)
                     Hint("Загружаю голоса…")
-                } else list.forEach { v ->
-                    GroupDivider(inset = 52.dp)
-                    RadioRow(v.title, v.subtitle, s.voiceName == v.name) {
-                        scope.launch { c.settings.setVoiceName(v.name); c.tts.preview(sample, v.name) }
+                } else {
+                    list.forEach { v ->
+                        GroupDivider(inset = 52.dp)
+                        RadioRow(v.title, v.subtitle, s.voiceName == v.name) {
+                            scope.launch { c.settings.setVoiceName(v.name); c.tts.preview(sample, v.name) }
+                        }
+                    }
+                    if (list.isEmpty()) {
+                        GroupDivider(inset = 52.dp)
+                        Hint("У этого синтезатора нет голосов под имя «${s.assistantName}». Выберите «Как в системе» или другой синтезатор.")
                     }
                 }
             }

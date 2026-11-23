@@ -403,6 +403,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         // Доходы, долги, накопления, дни рождения, списки покупок.
         parseReschedule(original, n, now, zone, today)?.let { return plan(it) }
         parseLife(original, n, now, zone, today)?.let { return it }
+        parseShareNote(original, n)?.let { return plan(it) }
         // «Напиши заметку: список дел на выходные» — это новая заметка, а не вопрос о задачах.
         if (Regex("""^(?:напиши|запиши|создай|сделай|сохрани|заведи)\s+(?:новую\s+)?заметк""").containsMatchIn(n)) {
             parseNote(original, n)?.let { return plan(it) }
@@ -567,8 +568,10 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             }
         }
         // «…настойчиво», «…пока не отмечу», «…не отстану»: напоминание повторяется, пока его не отметят.
-        val nag = NAG.containsMatchIn(body)
-        val cleanBody = if (nag) NAG.replace(body, " ").replace(Regex("""\s{2,}"""), " ").trim() else body
+        // «…критично», «…очень важно», «…разбуди»: будильник с полным экраном и сигналом до «Готово».
+        val critical = CRITICAL.containsMatchIn(body)
+        val nag = critical || NAG.containsMatchIn(body)
+        val cleanBody = if (nag) NAG.replace(CRITICAL.replace(body, " "), " ").replace(Regex("""\s{2,}"""), " ").trim() else body
         var parsedRaw = dates.parse(cleanBody, today)
         // «Напомни позже позвонить» — без точного времени это через 2 часа.
         if (parsedRaw.spec.isEmpty && LATER.containsMatchIn(cleanBody)) parsedRaw = dates.parse(LATER.replace(cleanBody, " через 2 часа "), today)
@@ -607,7 +610,10 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             return AssistantPlan("", emptyList(), slot = SlotRequest.ReminderTime(text, "Это время уже прошло. Когда напомнить ${RuFormat.quote(text)}? Например: ${exampleTime(now, zone)}."))
         }
         val recurrence = dates.effectiveRecurrence(parsed.spec)
-        return AssistantPlan("", listOf(AssistantAction.CreateReminder(text, trigger, recurrence, persistent = nag && recurrence == null)))
+        return AssistantPlan(
+            "",
+            listOf(AssistantAction.CreateReminder(text, trigger, recurrence, persistent = nag && recurrence == null, critical = critical && recurrence == null)),
+        )
     }
 
     /** День — сегодня, а часа, сдвига и повтора нет. */
@@ -911,9 +917,20 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             val base = q ?: AssistantAction.QueryExpenses(PeriodPreset.THIS_MONTH, null, null, null, ReportMode.TOTAL)
             return plan(base.copy(category = ExpenseCategories.INCOME, mode = ReportMode.TOTAL))
         }
-        // Разделы самого приложения.
-        Regex("""^(?:(?:открой|покажи)\s+(?:мои\s+|все\s+)?|какие\s+(?:у меня\s+|есть\s+)(?:мои\s+)?)(заметки|идеи|записи)$""").find(n)?.let {
-            return AssistantPlan("${it.groupValues[1].replaceFirstChar { c -> c.uppercase() }} — на вкладке «Записи». Могу и найти нужную: скажите «найди заметку про …».", emptyList())
+        // «Что я сегодня придумал», «какие идеи я записал» — это список записей, а не поиск по словам.
+        Regex("""^(?:что|чего)\s+я\s+(?:сегодня\s+|вчера\s+|за\s+день\s+)?(придумал\w*|напридумывал\w*|сочинил\w*|записал\w*|написал\w*)(?:\s+(?:сегодня|вчера|за\s+день))?$""").find(n)?.let { m ->
+            val ideas = Regex("""придумал|сочинил""").containsMatchIn(m.groupValues[1])
+            return plan(AssistantAction.QueryNotes(if (ideas) NoteKind.IDEA else null))
+        }
+        // Разделы самого приложения и список последних записей — голосом, без открытия экрана.
+        Regex("""^(?:(?:открой|покажи|перечисли|найди|поищи|прочитай)(?:\s+и\s+(?:прочитай|покажи|перечисли))?\s+(?:(?:мне|мои|все|последние)\s+)*(заметки|идеи|записи)|(?:какие|что)\s+(?:у меня\s+)?(?:есть\s+)?(?:(?:мои|последние)\s+)?(заметки|идеи|записи)|мои\s+(заметки|идеи|записи)|(заметки|идеи|записи))(?:\s+(?:я\s+)?(?:записал\w*|придумал\w*|сохранил\w*|создал\w*|написал\w*)(?:\s+(?:сегодня|вчера|за\s+день|за\s+неделю))?)?$""").find(n)?.let { m ->
+            val word = m.groupValues.drop(1).first { it.isNotEmpty() }
+            val kind = when (word) {
+                "идеи" -> NoteKind.IDEA
+                "записи" -> null
+                else -> NoteKind.NOTE
+            }
+            return plan(AssistantAction.QueryNotes(kind))
         }
         // Что в списке покупок.
         if (Regex("""^(?:что\s+(?:у меня\s+)?(?:в|во)\s+|покажи\s+|открой\s+|какой\s+|мой\s+)?списо?к\w*\s+покупок$""").containsMatchIn(n)) {
@@ -1005,6 +1022,54 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             val hasPreposition = words.any { RuTokenizer.normalize(it) in setOf("для", "на", "в", "с", "из", "без", "по") }
             if (spaceSplit && words.size in 2..6 && !hasAdjective && !hasPreposition && words.none { it.any(Char::isDigit) }) words else listOf(chunk)
         }.map { it.replaceFirstChar { c -> c.uppercase() } }
+    }
+
+    // --- Отправка заметки в мессенджер или на почту -----------------------------
+
+    /**
+     * «Отправь последнюю заметку на почту», «поделись заметкой про борщ в телеграм».
+     * Отправляет саму запись, а не свободный текст — для свободного текста есть «отправь в телеграм …».
+     */
+    private fun parseShareNote(original: String, n: String): AssistantAction? {
+        val verb = """(?:отправь|перешли|скинь|поделись|пошли|отправить|переслать)"""
+        val kind = """(?:заметк\w*|запис\w*|иде\w*)"""
+        val app = """(?:в|на|по)\s+(телеграм\w*|телега|телеге|ватсап\w*|вотсап\w*|whatsapp|telegram|вк|вконтакте|viber|вайбер|почт\w*|gmail)"""
+
+        // «отправь заметку на почту», «скинь последнюю заметку в телеграм».
+        Regex("""^$verb\s+(?:мне\s+)?(?:эту\s+|последнюю\s+|мою\s+)?($kind)(?:\s+$app)?${'$'}""").find(n)?.let { m ->
+            val to = Regex("""\s$app${'$'}""").find(n)?.groupValues?.get(1)?.let(::shareApp)
+            return AssistantAction.ShareNote(TargetRef(null, null, shareTypes(m.groupValues[1])), to, last = notePick(m.groupValues[1]))
+        }
+
+        // «отправь заметку про борщ в телеграм», «поделись идеей насчёт ремонта на почту».
+        val m = Regex("""^$verb\s+(?:мне\s+)?($kind)\s+(?:про|о|об|насч[её]т|по\s+поводу)\s+(.+?)(?:\s+$app)?${'$'}""").find(n) ?: return null
+        val query = sub(original, m.groups[2]!!).trim('«', '»', '"', ' ').ifEmpty { return null }
+        val to = m.groups[3]?.value?.takeIf { it.isNotBlank() }?.let(::shareApp)
+        return AssistantAction.ShareNote(TargetRef(null, query, shareTypes(m.groupValues[1])), to)
+    }
+
+    private fun notePick(word: String): NotePick = when {
+        word.startsWith("иде") -> NotePick.IDEA
+        word.startsWith("запис") -> NotePick.ANY
+        else -> NotePick.NOTE
+    }
+
+    private fun shareTypes(word: String): Set<RecordType> = when (notePick(word)) {
+        NotePick.IDEA -> setOf(RecordType.IDEA)
+        NotePick.NOTE -> setOf(RecordType.NOTE)
+        NotePick.ANY -> setOf(RecordType.NOTE, RecordType.IDEA)
+    }
+
+    /** Название приложения — как его понимает система «Поделиться». */
+    private fun shareApp(raw: String): String = when {
+        raw.startsWith("телег") -> "телеграм"
+        raw.startsWith("telegram") -> "telegram"
+        raw.startsWith("ватсап") || raw.startsWith("вотсап") || raw.startsWith("whatsapp") -> "ватсап"
+        raw.startsWith("вконтакт") -> "вконтакте"
+        raw == "вк" -> "вк"
+        raw.startsWith("вайбер") || raw.startsWith("viber") -> "вайбер"
+        raw.startsWith("почт") || raw.startsWith("gmail") -> "почту"
+        else -> raw
     }
 
     // --- Идеи ------------------------------------------------------------------
@@ -1312,6 +1377,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         private const val TIME_AT = """(?:в|к|на)\s+\d{1,2}(?::\d{2})?(?:\s+(?:утра|дня|вечера|ночи))?"""
         private val TWO_TIMES = Regex("""^(напомни(?:те)?(?:\s+мне)?)\s+($TIME_AT)\s+и\s+($TIME_AT)\s+(.+)$""", RegexOption.IGNORE_CASE)
         private val NAG = Regex("""[,\s]*(?:(?:каждые\s+\d+\s+минут\w*\s+)?(?:пока|до тех пор,?\s+пока)\s+(?:я\s+)?не\s+(?:отмечу|отвечу|подтвержу|нажму|скажу|сделаю|выключу)|настойчиво|не\s+отстан\w+(?:\s+от\s+меня)?)""", RegexOption.IGNORE_CASE)
+        private val CRITICAL = Regex("""[,\s]*(?:критичн\w*|очень\s+важн\w*|срочно\s+и\s+важно|важно\s+и\s+срочно)""", RegexOption.IGNORE_CASE)
         private val LATER = Regex("""(?:^|\s)(?:попозже|позже)(?=\s|$)""", RegexOption.IGNORE_CASE)
         private val SUBORDINATE = Regex("""^\s*(?:что|чтобы|о том|об этом|будто|который|которая|которое|которые)(?=[\s,]|$)""", RegexOption.IGNORE_CASE)
         private val TRAILING_BARE = Regex("""^(.+?)[,.]\s*(?:запиши|добавь|запомни|сохрани)(?:\s+это)?$""", RegexOption.IGNORE_CASE)

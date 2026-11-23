@@ -100,7 +100,7 @@ class DictationTest {
         assertTrue(r.changedData)
         val note = env.store.notes.all().single()
         assertEquals("Идеи для ремонта кухни поменять плитку", note.title)
-        assertEquals("Идеи для ремонта кухни поменять плитку и не забыть купить краску", note.content)
+        assertEquals("Идеи для ремонта кухни поменять плитку и не забыть купить краску.", note.content)
     }
 }
 
