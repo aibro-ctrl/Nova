@@ -106,7 +106,25 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
                 Group {
                     hits.forEachIndexed { i, h ->
                         if (i > 0) GroupDivider()
-                        RowItem(title = h.doc.title, subtitle = listOf(h.doc.type.titleRu, h.doc.body.take(120)).filter { it.isNotBlank() }.joinToString(" · "))
+                        // Найденную запись можно открыть сразу — кроме задач и расходов:
+                        // они живут в своих разделах, и делать вид, что здесь их можно править, нельзя.
+                        val open = when (h.doc.type) {
+                            ai.nova.core.model.RecordType.NOTE, ai.nova.core.model.RecordType.IDEA -> {
+                                val found = (notes + ideas).firstOrNull { it.id == h.doc.id }
+                                found?.let { n -> { editNote = n } }
+                            }
+                            ai.nova.core.model.RecordType.MEMORY -> {
+                                val found = memories.firstOrNull { it.id == h.doc.id }
+                                found?.let { m -> { editMemory = m } }
+                            }
+                            else -> null
+                        }
+                        RowItem(
+                            title = h.doc.title,
+                            subtitle = listOf(h.doc.type.titleRu, h.doc.body.take(120)).filter { it.isNotBlank() }.joinToString(" · "),
+                            chevron = open != null,
+                            onClick = open,
+                        )
                     }
                 }
             }
