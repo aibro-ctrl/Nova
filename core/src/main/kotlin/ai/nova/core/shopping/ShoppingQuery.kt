@@ -8,14 +8,18 @@ enum class ShoppingCategory(val title: String) {
     TECH("техника"),
     HOME("дом"),
     PET("товары для животных"),
+    AUTO("авто"),
     FOOD("продукты"),
     KIDS("детское"),
     BEAUTY("косметика"),
+    SPORT("спорт"),
+    GARDEN("сад и огород"),
+    BOOKS("книги и канцелярия"),
     OTHER("товары"),
     ;
 
     /** У обуви и одежды размер обязателен: без него подборка бессмысленна. */
-    val needsSize: Boolean get() = this == SHOES || this == CLOTHES || this == OUTERWEAR || this == KIDS
+    val needsSize: Boolean get() = this == SHOES || this == CLOTHES || this == OUTERWEAR
 }
 
 /**

@@ -2,6 +2,8 @@ package ai.nova.core.shopping
 
 import ai.nova.core.domain.MemoryRepository
 import ai.nova.core.model.MemoryItem
+import ai.nova.core.skills.SkillCommand
+import ai.nova.core.skills.SkillPhrases
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -37,6 +39,57 @@ class ShoppingTest {
         assertEquals("неразлучники", q.subject)
         assertEquals("500 г", q.volume)
         assertEquals(1000, q.priceTo)
+    }
+
+    @Test
+    fun `товары из разных категорий распознаются`() {
+        // Просьба найти товар не должна упираться в узкий список категорий.
+        val cases = mapOf(
+            "найди молоток" to ShoppingCategory.HOME,
+            "найди шуруповерт" to ShoppingCategory.HOME,
+            "найди корм для кошек" to ShoppingCategory.PET,
+            "найди подгузники" to ShoppingCategory.KIDS,
+            "найди наушники беспроводные" to ShoppingCategory.TECH,
+            "найди сковороду" to ShoppingCategory.HOME,
+            "найди шоколад" to ShoppingCategory.FOOD,
+            "найди шампунь" to ShoppingCategory.BEAUTY,
+            "найди шины 205 55 16" to ShoppingCategory.AUTO,
+            "найди моторное масло" to ShoppingCategory.AUTO,
+            "найди гантели" to ShoppingCategory.SPORT,
+            "найди семена томатов" to ShoppingCategory.GARDEN,
+            "найди шариковую ручку" to ShoppingCategory.BOOKS,
+        )
+        val today = java.time.LocalDate.of(2026, 9, 25)
+        cases.forEach { (text, category) ->
+            assertEquals(category, ShoppingIntent.category(text), text)
+            val cmd = SkillPhrases.parse(text, today)
+            assertTrue(cmd is SkillCommand.Shopping, "$text → $cmd")
+            assertEquals(category, (cmd as SkillCommand.Shopping).query.category, text)
+        }
+    }
+
+    @Test
+    fun `у игрушек и конструкторов размер не спрашивают`() {
+        val today = java.time.LocalDate.of(2026, 9, 25)
+        val cmd = SkillPhrases.parse("найди конструктор лего", today)
+        assertTrue(cmd is SkillCommand.Shopping, cmd.toString())
+        val query = (cmd as SkillCommand.Shopping).query
+        assertFalse(query.category.needsSize, query.category.title)
+        assertTrue(query.questions(ShoppingFacts()).isEmpty(), query.questions(ShoppingFacts()).toString())
+    }
+
+    @Test
+    fun `справка и рецепт не превращаются в поиск товара`() {
+        val today = java.time.LocalDate.of(2026, 9, 25)
+        listOf(
+            "найди рецепт борща",
+            "найди информацию о Гагарине",
+            "найди курс доллара",
+            "найди песню Queen",
+            "купи хлеб",
+        ).forEach { text ->
+            assertTrue(SkillPhrases.parse(text, today) !is SkillCommand.Shopping, text)
+        }
     }
 
     @Test

@@ -667,6 +667,8 @@ object SkillPhrases {
     private val SHOPPING_FORGET = rx("""^(?:забудь|удали|сотри|убери)\s+(?:из\s+памяти\s+)?(?:про\s+|о\s+)?(?:покупк\w*|размер\w*|обув\w*|одежд\w*|бренд\w*|питомц\w*|животн\w*)""")
 
     /** Просьба о поиске товара: без неё «кеды» — просто слово, а не команда. */
+    private val SHOPPING_SEARCH_VERB = rx("""^(?:а\s+)?(?:нова,?\s*)?(?:найди|поищи|посмотри|подбери|подобрать|выбери)\b""")
+
     private val SHOPPING_VERB = rx("""^(?:а\s+)?(?:нова,?\s*)?(?:найди|поищи|посмотри|подбери|подобрать|выбери|купи|купить|закажи|заказать|хочу|хотел\w*|ищу|нужн\w*|надо|помоги\s+(?:выбрать|найти|купить))\b""")
 
     /** Прошедшее время покупки — расход, а не просьба найти товар. */
@@ -708,8 +710,8 @@ object SkillPhrases {
         // «Сколько стоят кеды?» — тоже покупка: ответ с ценами полезнее статьи.
         val verb = SHOPPING_VERB.containsMatchIn(t) || PRICE_QUESTION.containsMatchIn(t)
         if (category == null) return null
-        // Продукты ищут на площадке только с названием магазина: «купи хлеб» — это список покупок.
-        if (category == ShoppingCategory.FOOD && marketplaces == null) return null
+        // Продукты ищут на площадке только по явной просьбе найти: «купи хлеб» — это список покупок.
+        if (category == ShoppingCategory.FOOD && marketplaces == null && !SHOPPING_SEARCH_VERB.containsMatchIn(t)) return null
         if (!verb && marketplaces == null) {
             // «кеды puma 46 размер» без глагола — тоже просьба, но только если есть признак товара.
             val hint = ShoppingIntent.size(t) != null || ShoppingIntent.brand(original) != null
