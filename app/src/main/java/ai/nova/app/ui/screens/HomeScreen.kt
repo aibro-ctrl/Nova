@@ -116,7 +116,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 
 /** Примеры команд: нажатие выполняет команду. Порядок меняется при каждом запуске — так человек узнаёт новое. */
-private val allSuggestions = listOf(
+private val suggestionPool = listOf(
     "Какая погода?",
     "Что у меня на сегодня?",
     "Напомни через 10 минут выключить плиту",
@@ -130,12 +130,24 @@ private val allSuggestions = listOf(
     "Расскажи сказку",
     "Кто такой Гагарин?",
     "Что ты умеешь?",
+    "Сколько будет 15% от 2000",
+    "Ближайшая аптека",
+    "Где поесть",
+    "Включи песню Queen",
+    "Сколько заряда",
+    "Время в Токио",
+    "Сколько дней до нового года",
+    "Подбрось монетку",
+    "Что ты обо мне знаешь?",
+    "Итоги недели",
+    "Сколько я потратила в этом месяце",
 )
 
-/** Четыре примера на главной: разные по смыслу и без повторов. */
-private val suggestions: List<String> by lazy {
-    (allSuggestions.shuffled().take(3) + "Что ты умеешь?").distinct()
-}
+/** Два ряда по десять подсказок: набор каждый раз новый, но ряды всегда полные. */
+private val suggestionRows: List<List<String>> by lazy { suggestionPool.shuffled().chunked(10).take(2) }
+
+/** Короткие примеры для пустого чата — списком, а не чипами. */
+private val chatSuggestions = listOf("Что ты умеешь?", "Какая погода?", "Что у меня на сегодня?", "Расход 500 ₽ на продукты")
 
 /**
  * Состояние голосового помощника — то, что видит человек.
@@ -232,8 +244,8 @@ fun HomeScreen(
         )
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val viewport = maxHeight
-            // Сфера занимает середину экрана и сама подбирает размер под высоту окна:
-            // в обычном состоянии прокрутка не нужна, а если появились предупреждения — список листается.
+            // Сфера занимает середину экрана и сама подбирает размер под высоту окна, оставляя место
+            // подсказкам и разговору: в обычном состоянии прокрутка не нужна, а с предупреждениями — список листается.
             Column(
                 Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = viewport),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -254,14 +266,14 @@ fun HomeScreen(
                     onTap = { if (ui.active) vm.stop() else onMic() },
                     onClearError = { vm.clearError() },
                 )
+                // Подсказки — два прокручиваемых ряда сразу над разговором: фраз много, а высоту они почти не занимают.
+                SuggestionRows { vm.send(it); openChat(false) }
                 // Разговор — заметный блок с заголовком и последними репликами: в чат заходят отсюда.
                 if (history.isNotEmpty()) {
                     ConversationTeaser(history, settings.assistantName, onOpen = { openChat(false) })
                 }
             }
         }
-        // Примеры фраз и сводка — по одной строке, чтобы не отнимать высоту у сферы.
-        SuggestionRow { vm.send(it); openChat(false) }
         SummaryStrip(
             summary = summary,
             onExpenses = openExpenses,
@@ -345,7 +357,7 @@ private fun OrbPanel(
                 .semantics { contentDescription = if (ui.active) "Остановить" else "Слушать" },
         ) {
             // Размер считается от свободной высоты: сфера никогда не выталкивает остальное за экран.
-            val full = (viewport * 0.56f).coerceIn(150.dp, 264.dp)
+            val full = (viewport * 0.40f).coerceIn(130.dp, 208.dp)
             AssistantOrb(mode, ui.level, size = if (compact) (full * 0.66f).coerceAtLeast(112.dp) else full)
         }
         if (ui.stage != VoiceStage.IDLE) {
@@ -375,12 +387,19 @@ private fun OrbPanel(
 
 /** Примеры фраз: одно касание — и команда выполнена. Работают и без голоса. */
 @Composable
-private fun SuggestionRow(onSend: (String) -> Unit) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = NovaSpace.screen),
-        horizontalArrangement = Arrangement.spacedBy(NovaSpace.s),
+private fun SuggestionRows(onSend: (String) -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(top = NovaSpace.m),
+        verticalArrangement = Arrangement.spacedBy(NovaSpace.s),
     ) {
-        items(suggestions) { s -> Suggestion(s) { onSend(s) } }
+        suggestionRows.forEach { row ->
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = NovaSpace.screen),
+                horizontalArrangement = Arrangement.spacedBy(NovaSpace.s),
+            ) {
+                items(row) { s -> Suggestion(s) { onSend(s) } }
+            }
+        }
     }
 }
 
@@ -654,7 +673,7 @@ private fun ChatEmpty(name: String, onSend: (String) -> Unit) {
             modifier = Modifier.padding(top = NovaSpace.s),
         )
         Column(Modifier.padding(top = NovaSpace.l), verticalArrangement = Arrangement.spacedBy(NovaSpace.s)) {
-            suggestions.forEach { s -> Suggestion(s, Modifier.fillMaxWidth()) { onSend(s) } }
+            chatSuggestions.forEach { s -> Suggestion(s, Modifier.fillMaxWidth()) { onSend(s) } }
         }
     }
 }
