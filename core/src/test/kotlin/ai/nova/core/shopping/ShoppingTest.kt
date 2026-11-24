@@ -57,6 +57,13 @@ class ShoppingTest {
             "найди моторное масло" to ShoppingCategory.AUTO,
             "найди гантели" to ShoppingCategory.SPORT,
             "найди семена томатов" to ShoppingCategory.GARDEN,
+            "найди рюкзак" to ShoppingCategory.HOME,
+            "найди чемодан" to ShoppingCategory.HOME,
+            "найди зарядное устройство" to ShoppingCategory.TECH,
+            "найди постельное белье 2 спальное" to ShoppingCategory.HOME,
+            "найди смартфон" to ShoppingCategory.TECH,
+            "найди корм для кошек" to ShoppingCategory.PET,
+            "найди наполнитель для кошачьего туалета" to ShoppingCategory.PET,
             "найди шариковую ручку" to ShoppingCategory.BOOKS,
         )
         val today = java.time.LocalDate.of(2026, 9, 25)
@@ -66,6 +73,29 @@ class ShoppingTest {
             assertTrue(cmd is SkillCommand.Shopping, "$text → $cmd")
             assertEquals(category, (cmd as SkillCommand.Shopping).query.category, text)
         }
+    }
+
+    @Test
+    fun `животное из просьбы не спрашиваем повторно`() {
+        mapOf(
+            "найди корм для кошек" to "кошка",
+            "найди наполнитель для кошачьего туалета" to "кошка",
+            "найди корм для собак" to "собака",
+        ).forEach { (text, pet) ->
+            val q = ShoppingIntent.parse(text)
+            assertEquals(pet, q.subject, text)
+            assertTrue(
+                q.questions(ShoppingFacts()).none { it.kind == ShoppingQuestion.Kind.SUBJECT },
+                "$text спрашивает вид животного",
+            )
+        }
+    }
+
+    @Test
+    fun `постельное белье не требует размера одежды`() {
+        val q = ShoppingIntent.parse("найди постельное белье 2 спальное")
+        assertEquals(ShoppingCategory.HOME, q.category)
+        assertTrue(q.questions(ShoppingFacts()).isEmpty(), q.questions(ShoppingFacts()).toString())
     }
 
     @Test
