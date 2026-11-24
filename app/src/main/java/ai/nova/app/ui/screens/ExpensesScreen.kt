@@ -62,6 +62,7 @@ import ai.nova.core.nlp.ExpenseCategories
 import ai.nova.core.nlp.Money
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import ai.nova.app.ui.components.bodySecondaryStyle
 
 /** Доли категорий в одной бирюзово-шалфейной гамме: цвет помогает, но не превращает экран в радугу. */
 private val palette = listOf(
@@ -105,7 +106,7 @@ fun ExpensesScreen(c: AppContainer) {
                 Text(
                     ExpenseAnalytics.plural(report.count, "операция", "операции", "операций") +
                         report.otherCurrencies.entries.joinToString("") { (cur, sum) -> " · + ${Money.format(sum, cur)}" },
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = bodySecondaryStyle(),
                 )
             }
         }
@@ -245,7 +246,7 @@ private fun BankPushSheet(
         Text(
             "Банк присылает пуш «Покупка 850 ₽ · Пятёрочка» — Нова записывает трату в расходы. " +
                 "Данные остаются на телефоне, в банк приложение не входит.",
-            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = bodySecondaryStyle(),
         )
         Group {
             BankPushMode.entries.forEachIndexed { i, mode ->

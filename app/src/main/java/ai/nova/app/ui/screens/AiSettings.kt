@@ -71,6 +71,8 @@ import ai.nova.core.ai.AIProviderFactory
 import ai.nova.core.ai.AIProviderType
 import ai.nova.core.ai.ModelInfo
 import kotlinx.coroutines.launch
+import ai.nova.app.ui.components.captionStyle
+import ai.nova.app.ui.components.bodySecondaryStyle
 
 /** Короткое пояснение к провайдеру — чтобы было понятно, что выбрать. */
 private fun AIProviderType.about(): String = when (this) {
@@ -205,7 +207,7 @@ fun ProviderScreen(c: AppContainer, type: AIProviderType, onBack: () -> Unit) {
                         Icon(Icons.Rounded.Key, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                         Text(
                             if (hasKey) "Ключ сохранён в зашифрованном виде" else "Ключ не задан",
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = bodySecondaryStyle(),
                             modifier = Modifier.padding(start = 8.dp),
                         )
                     }
@@ -355,8 +357,8 @@ private fun ModelPicker(c: AppContainer, type: AIProviderType, current: String, 
                         Column(Modifier.weight(1f)) {
                             Text(m.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             when {
-                                m.name != m.id -> Text(m.id, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                                m.id == type.defaultModel -> Text("по умолчанию", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                m.name != m.id -> Text(m.id, style = captionStyle(), maxLines = 1)
+                                m.id == type.defaultModel -> Text("по умолчанию", style = captionStyle(), maxLines = 1)
                             }
                         }
                         if (m.id == current) Icon(Icons.Rounded.Check, contentDescription = "Выбрана", tint = MaterialTheme.colorScheme.primary)
@@ -580,7 +582,7 @@ private fun OfflineModelPicker(c: AppContainer, onDismiss: () -> Unit) {
                     Text("Модель на телефоне", style = MaterialTheme.typography.titleLarge)
                     Text(
                         "Отвечает на вопросы без интернета и ключей, а если правила не поняли команду — переписывает фразу в команду. Выберите одну — Нова скачает её сама",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = captionStyle(),
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
@@ -594,7 +596,7 @@ private fun OfflineModelPicker(c: AppContainer, onDismiss: () -> Unit) {
                         androidx.compose.material3.LinearProgressIndicator(progress = { st.progress }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
                         Text(
                             "Лист можно закрыть: загрузка продолжится в фоне и докачается с того же места",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = captionStyle(),
                             modifier = Modifier.padding(top = 8.dp),
                         )
                     }
@@ -611,7 +613,7 @@ private fun OfflineModelPicker(c: AppContainer, onDismiss: () -> Unit) {
                         Text("Не получилось скачать: ${st.message}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                         Text(
                             "Проверьте интернет и свободное место, затем попробуйте ещё раз — докачка начнётся с того же места",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = captionStyle(),
                             modifier = Modifier.padding(top = 4.dp),
                         )
                         retry?.let { f -> PrimaryButton("Повторить", { start(f) }, modifier = Modifier.padding(top = 10.dp)) }
@@ -683,7 +685,7 @@ private fun OfflineModelPicker(c: AppContainer, onDismiss: () -> Unit) {
                                 "1. Откройте huggingface.co и найдите модель со словом GGUF, например «Qwen2.5 3B Instruct GGUF».\n" +
                                 "2. На странице модели нажмите «⋯» → «Copy model name» — получится «автор/название».\n" +
                                 "3. Вставьте это в поле ниже. Подходящий файл Нова выберет сама — для телефона это обычно Q4_K_M.",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = captionStyle(),
                         )
                         NovaField(
                             value = custom, onChange = { custom = it }, label = "Репозиторий",

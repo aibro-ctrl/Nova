@@ -33,6 +33,7 @@ import ai.nova.app.ui.components.RowItem
 import ai.nova.app.ui.components.SecondaryButton
 import ai.nova.core.model.SecretNote
 import kotlinx.coroutines.launch
+import ai.nova.app.ui.components.captionStyle
 
 /** Строка «Секретные заметки» в «Записях»: открывает их только после отпечатка или PIN-кода. */
 @Composable
@@ -88,7 +89,7 @@ private fun SecretNotesSheet(c: AppContainer, notes: List<SecretNote>, onDismiss
             }
             Text(
                 "Хранятся только в зашифрованной базе этого телефона: не синхронизируются, не попадают в поиск и не отправляются в AI.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = captionStyle(),
             )
             Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Spacer(Modifier.weight(1f))

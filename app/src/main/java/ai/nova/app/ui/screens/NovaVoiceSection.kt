@@ -23,6 +23,7 @@ import ai.nova.app.ui.components.SectionLabel
 import ai.nova.app.voice.NovaVoiceModels
 import ai.nova.core.nlp.Gender
 import kotlinx.coroutines.launch
+import ai.nova.app.ui.components.captionStyle
 
 /**
  * «Кто говорит»: встроенный «Голос Нова» (одинаково по-русски на любом телефоне)
@@ -118,7 +119,7 @@ fun NovaVoiceSection(c: AppContainer) {
     )
     Text(
         "Стили звучания и скорость ниже работают и для голоса Нова.",
-        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = captionStyle(),
         modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
     )
 }

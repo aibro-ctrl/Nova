@@ -69,6 +69,8 @@ class AndroidDeviceController(
     private val city: () -> String? = { null },
     /** Сохранённые места («я дома», «это моя работа»): маршрут до них строится по координатам. */
     private val places: () -> List<ai.nova.core.skills.SavedPlace> = { emptyList() },
+    /** Где искать в интернете: Android не сообщает поисковик браузера, поэтому выбор хранит Нова. */
+    private val searchEngine: () -> ai.nova.core.assistant.SearchEngine = { ai.nova.core.assistant.SearchEngine.DEFAULT },
     /** Поиск ближайших мест по названию: без точки карты показывают список, а не маршрут. */
     private val streetPlaces: StreetPlaces? = null,
     /** Где телефон сейчас — чтобы ближайшее место искать рядом, а не в другом городе. */
@@ -234,9 +236,16 @@ class AndroidDeviceController(
                 }
             }
             is DeviceCommand.WebSearch -> {
-                val search = Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, c.query)
-                val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(c.query)))
-                open(if (resolves(search)) search else web, "Ищу «${c.query}».", "Поиск: ${c.query}")
+                // ACTION_WEB_SEARCH на многих прошивках открывает главную страницу браузера без запроса
+                // (а Google-приложение может быть отключено). Поэтому открываем страницу результатов
+                // по ссылке: она всегда показывает именно то, что просили.
+                val engine = searchEngine()
+                val url = engine.searchUrl(c.query)
+                open(
+                    Intent(Intent.ACTION_VIEW, Uri.parse(url)),
+                    "Ищу «${c.query}» в ${engine.title}. Открыла результаты в браузере.",
+                    "Поиск: ${c.query}",
+                )
             }
             is DeviceCommand.Navigate -> navigate(c)
             is DeviceCommand.OpenSettings -> {

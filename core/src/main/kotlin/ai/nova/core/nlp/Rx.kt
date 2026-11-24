@@ -15,4 +15,13 @@ object Rx {
 
     /** Скомпилированные выражения кэшируются: разбор фразы вызывает их десятки раз. */
     fun of(pattern: String): Regex = cache.getOrPut(pattern) { Regex(unicode(pattern)) }
+
+    /**
+     * То же с флагом регистра. Раньше этот путь компилировал выражение заново при каждом вызове,
+     * а через него идёт [ai.nova.core.assistant.LocalCommandParser.cleanup] — то есть каждая фраза.
+     */
+    fun of(pattern: String, ignoreCase: Boolean): Regex =
+        cache.getOrPut(if (ignoreCase) "i\u0000$pattern" else pattern) {
+            Regex(unicode(pattern), if (ignoreCase) setOf(RegexOption.IGNORE_CASE) else emptySet())
+        }
 }

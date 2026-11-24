@@ -22,6 +22,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.nova.app.AppContainer
 import ai.nova.app.voice.VoiceMemoRecorder
 import kotlinx.coroutines.delay
+import ai.nova.app.ui.components.bodySecondaryStyle
 
 /** Панель записи голосовой заметки внизу экрана: время, уровень звука, текст по мере расшифровки, «Готово». */
 @Composable
@@ -45,7 +46,7 @@ fun VoiceMemoOverlay(c: AppContainer) {
                         LinearProgressIndicator(progress = { s.level }, modifier = Modifier.fillMaxWidth())
                         Text(
                             s.text.ifBlank { "Говорите — закончу сама, когда замолчите." }.takeLast(240),
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = bodySecondaryStyle(),
                         )
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { PrimaryButton("Готово", { c.voiceMemo.stop() }) }
                     }

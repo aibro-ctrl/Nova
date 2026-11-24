@@ -63,6 +63,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -100,6 +101,21 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 // ---------------------------------------------------------------------------------------------
 // Базовые элементы минималистичного интерфейса: крупный заголовок, группы-карточки, строки, таблетки.
 // ---------------------------------------------------------------------------------------------
+
+/**
+ * Стиль подписи-пояснения: одинаковый на всех экранах.
+ *
+ * Раньше эту пару («bodySmall + onSurfaceVariant») повторяли в 40+ местах, и любая правка
+ * читаемости в тёмной теме требовала обойти все экраны. Теперь — одно место.
+ */
+@Composable
+fun captionStyle(): TextStyle =
+    MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+/** То же для чуть более крупного пояснения — [MaterialTheme.typography.bodyMedium]. */
+@Composable
+fun bodySecondaryStyle(): TextStyle =
+    MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
 
 /** Цвет карточек-групп: белые на светлой теме, чуть светлее фона на тёмной. */
 @Composable

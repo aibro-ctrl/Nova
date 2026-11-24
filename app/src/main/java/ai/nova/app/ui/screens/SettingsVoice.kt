@@ -52,6 +52,7 @@ import ai.nova.app.voice.AndroidTtsProvider
 import ai.nova.app.voice.VoskModelManager
 import ai.nova.app.voice.WakeWordService
 import kotlinx.coroutines.launch
+import ai.nova.app.ui.components.captionStyle
 
 /**
  * «Голос и речь»: сверху — то, что меняют обычно (кто говорит и каким голосом);
@@ -329,7 +330,7 @@ internal fun PlacesDialog(c: AppContainer, onDismiss: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "Нужны для напоминаний «когда буду дома…» и «когда уйду с работы…». Хранятся только на телефоне.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = captionStyle(),
                 )
                 places.forEach { p ->
                     Row {

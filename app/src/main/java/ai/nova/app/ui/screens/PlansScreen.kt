@@ -58,6 +58,7 @@ import ai.nova.core.model.Reminder
 import ai.nova.core.model.TaskItem
 import ai.nova.core.nlp.RuDateTimeParser
 import kotlinx.coroutines.launch
+import ai.nova.app.ui.components.bodySecondaryStyle
 
 /** План → календарь телефона: одно нажатие вместо ручного ввода события. */
 private fun addToCalendar(c: AppContainer, context: android.content.Context, title: String, at: java.time.Instant, allDay: Boolean, scope: kotlinx.coroutines.CoroutineScope) {
@@ -214,7 +215,7 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
             Text(
                 (if (r.active) "Сработает " else "Было ") + RuFormat.dateTime(if (r.active) r.triggerAt else (r.lastFiredAt ?: r.triggerAt), zone, c.time.now()) +
                     (r.recurrence?.let { ", ${it.describeRu()}" } ?: ""),
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = bodySecondaryStyle(),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 SecondaryButton("Удалить", { askDelete = true }, danger = true)

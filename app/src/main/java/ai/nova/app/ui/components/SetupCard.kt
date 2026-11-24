@@ -48,6 +48,7 @@ import ai.nova.app.ui.screens.isDefaultAssistant
 import ai.nova.app.ui.screens.requestBatteryExemption
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import ai.nova.app.ui.components.captionStyle
 
 private class SetupStep(
     val id: String,
@@ -206,7 +207,7 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
                                     .joinToString(", ") { it.title.lowercase() } +
                                     if (required.size > 3) " и ещё ${required.size - 3}" else ""
                             },
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = captionStyle(),
                         )
                     }
                     IconButton(onClick = { dismissed = true; auto = false; prefs.edit().putBoolean("setup_dismissed", true).apply() }) {

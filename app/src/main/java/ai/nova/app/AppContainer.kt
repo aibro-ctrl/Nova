@@ -179,6 +179,8 @@ class AppContainer(private val context: Context) {
     }, timers = timers, relaxation = relaxation, driving = driving,
         // Карты из настроек: «в 2ГИС», «в Google» — иначе открываем те, что назначены системой для geo:.
         mapsApp = { ai.nova.core.assistant.MapsApp.fromId(settings.settings.value.mapsApp) },
+        // Где искать в интернете: Android не сообщает поисковик браузера, поэтому выбор хранит Нова.
+        searchEngine = { ai.nova.core.assistant.SearchEngine.fromId(settings.settings.value.searchEngine) },
         // «Мой город»: маршрут ищется в нём; пусто — как раньше, по последнему городу карт.
         city = { settings.settings.value.city.takeIf { it.isNotBlank() } },
         // «Я дома», «это моя работа»: маршрут до сохранённого места строится по координатам.

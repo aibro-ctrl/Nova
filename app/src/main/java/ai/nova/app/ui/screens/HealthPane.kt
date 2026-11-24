@@ -38,6 +38,8 @@ import ai.nova.core.health.HabitEntry
 import ai.nova.core.health.Vitals
 import kotlinx.coroutines.launch
 import java.time.Instant
+import ai.nova.app.ui.components.captionStyle
+import ai.nova.app.ui.components.bodySecondaryStyle
 
 /** Здоровье: шаги с телефона (по согласию), сводка за сегодня и графики за 30 дней. */
 @Composable
@@ -86,7 +88,7 @@ fun HealthPane(c: AppContainer, name: String) {
                                 steps.needsPermission() -> "Нужно разрешение «Физическая активность». Считает сам телефон: без сети, в облако не уходит."
                                 else -> "Считает сам телефон: без сети, в облако не уходит. Шаги — с первого запуска Новы за день."
                             },
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = captionStyle(),
                         )
                     }
                     Spacer(Modifier.width(12.dp))
@@ -114,7 +116,7 @@ fun HealthPane(c: AppContainer, name: String) {
         if (bp.isEmpty() && weight.isEmpty() && sleep.isEmpty()) {
             Text(
                 "Графики появятся после первых замеров. Скажите: «$name, давление 120 на 80», «вес 68», «спала 7 часов».",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = bodySecondaryStyle(),
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
             )
             return@Column
@@ -174,7 +176,7 @@ private fun ChartCard(title: String, value: String, series: List<List<Pair<Insta
                     }
                 }
             } else {
-                Text("Нужно хотя бы два замера, чтобы нарисовать график.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                Text("Нужно хотя бы два замера, чтобы нарисовать график.", style = captionStyle(), modifier = Modifier.padding(top = 8.dp))
             }
         }
     }

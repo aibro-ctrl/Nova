@@ -97,6 +97,8 @@ import ai.nova.core.nlp.Money
 import java.time.LocalTime
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import ai.nova.app.ui.components.captionStyle
+import ai.nova.app.ui.components.bodySecondaryStyle
 
 /** Примеры команд: нажатие выполняет команду. Порядок меняется при каждом запуске — так человек узнаёт новое. */
 private val allSuggestions = listOf(
@@ -328,7 +330,7 @@ private fun HomeBottomPanel(
                         .clickable(interactionSource = interaction, indication = null, onClick = onType)
                         .padding(horizontal = 16.dp),
                     contentAlignment = Alignment.CenterStart,
-                ) { Text("Спросите или скажите", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1) }
+                ) { Text("Спросите или скажите", style = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurfaceVariant), maxLines = 1) }
                 Spacer(Modifier.width(10.dp))
                 RoundButton(if (active) Icons.Rounded.Stop else Icons.Rounded.Mic, if (active) "Остановить" else "Говорить", onMic)
             }
@@ -509,7 +511,7 @@ private fun MicAccessCard(onEnable: () -> Unit) {
             Text("Микрофон выключен", style = MaterialTheme.typography.titleSmall)
             Text(
                 "Разрешение на микрофон не выдано, поэтому голосом Нова не услышит. Написать текстом можно в любой момент.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = captionStyle(),
                 modifier = Modifier.padding(top = 2.dp, end = 8.dp),
             )
             androidx.compose.material3.TextButton(onClick = onEnable) { Text("Включить микрофон") }
@@ -551,7 +553,7 @@ private fun SummaryLine(
             Crossfade(hints[hintIndex % hints.size], animationSpec = androidx.compose.animation.core.tween(280), label = "hint") { hint ->
                 Text(
                     "Скажите: «" + hint.removeSuffix("?") + "»",
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = bodySecondaryStyle(),
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.clickable(onClick = onExample).heightIn(min = 48.dp).padding(vertical = 12.dp),
                 )
@@ -559,7 +561,7 @@ private fun SummaryLine(
         } else {
             parts.forEachIndexed { i, part ->
                 if (i > 0) {
-                    Text("·", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp))
+                    Text("·", style = bodySecondaryStyle(), modifier = Modifier.padding(horizontal = 8.dp))
                 }
                 Text(
                     part.text, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,

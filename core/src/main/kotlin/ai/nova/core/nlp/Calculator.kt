@@ -14,40 +14,104 @@ object Calculator {
         Regex("""\bминус\b|\bотнять\b|\bвычесть\b""") to "-",
     ).map { (r, op) -> Regex(Rx.unicode(r.pattern)) to op }
 
+    private const val NUM = """(\d+(?:[.,]\d+)?)"""
+    private const val PCT = """(?:%|процент\w*)"""
+
+    /** «20% от 1000», «15 процентов от 2000». */
+    private val percentOf = Rx.of("""^$NUM\s*$PCT\s+от\s+$NUM$""")
+
+    /** «минус 20% от тысячи» — это тысяча без двадцати процентов, то есть 800. */
+    private val minusPercentOf = Rx.of("""^(?:минус|отнять|вычесть)\s+$NUM\s*$PCT\s+от\s+$NUM$""")
+    private val plusPercentOf = Rx.of("""^(?:плюс|прибавить)\s+$NUM\s*$PCT\s+от\s+$NUM$""")
+
+    /** «2000 минус 20%», «2000 плюс 20 процентов». */
+    private val baseMinusPercent = Rx.of("""^$NUM\s*(?:минус|отнять|вычесть)\s+$NUM\s*$PCT$""")
+    private val basePlusPercent = Rx.of("""^$NUM\s*(?:плюс|прибавить)\s+$NUM\s*$PCT$""")
+    private val baseSignPercent = Rx.of("""^$NUM\s*([-+])\s*$NUM\s*$PCT$""")
+
+    /** «20 от тысячи» без знака % — так тоже говорят, но только когда явно просят посчитать. */
+    private val bareOf = Rx.of("""^$NUM\s+от\s+$NUM$""")
+
     /** Вычисляет выражение из фразы; null, если это не арифметика. */
     fun evaluate(text: String): Double? {
-        var t = RuTokenizer.normalize(text)
-            .replace(Regex("""^(сколько будет|посчитай|вычисли|подсчитай|реши|сколько)\s*"""), "")
-            .replace("×", "*").replace("÷", "/").trim().trimEnd('?', '.', '=')
-        val explicitCalc = Regex("""^(сколько будет|посчитай|вычисли|подсчитай|реши)""").containsMatchIn(RuTokenizer.normalize(text).trim())
+        val normalized = RuTokenizer.normalize(text)
+        val explicitCalc = LEAD.containsMatchIn(normalized.trim())
+        var t = normalized
+            .replace(LEAD, "")
+            .replace('−', '-').replace("×", "*").replace("÷", "/").trim().trimEnd('?', '.', '=')
         // «x»/«х» и «на» считаем умножением только между числами: «3 х 4», «250 на 4» (последнее — только после «сколько будет»)
-        t = t.replace(Regex("""(?<=\d)\s*[хx]\s*(?=\d)"""), " * ")
-        if (explicitCalc) t = t.replace(Regex("""(?<=\d)\s+на\s+(?=\d)"""), " * ")
-        // Проценты: «15 процентов от 2000» / «15% от 2000»
-        Regex(Rx.unicode("""^(\d+(?:[.,]\d+)?)\s*(?:%|процент\w*)\s+от\s+(\d+(?:[.,]\d+)?)$""")).find(t)?.let { m ->
-            val p = m.groupValues[1].replace(',', '.').toDouble()
-            val v = m.groupValues[2].replace(',', '.').toDouble()
-            return p * v / 100
-        }
-        // Числительные словами → цифры
-        val tokens = RuTokenizer.tokenize(t)
-        if (tokens.any { it.isNumber }) {
-            val sb = StringBuilder()
-            var cursor = 0
-            for (tok in tokens) {
-                sb.append(t, cursor, tok.start)
-                sb.append(if (tok.isNumber) formatNum(tok.number!!) else tok.text)
-                cursor = tok.end
-            }
-            sb.append(t.substring(cursor))
-            t = sb.toString()
-        }
-        for ((r, op) in wordOps) t = r.replace(t, " $op ")
-        t = t.replace(" ", "").replace(',', '.')
-        if (!Regex("""^[\d.+\-*/()]+$""").matches(t)) return null
-        if (!Regex("""[+\-*/]""").containsMatchIn(t.drop(1))) return null
-        return runCatching { Parser(t).parse() }.getOrNull()?.takeIf { it.isFinite() }
+        t = t.replace(timesSign, " * ")
+        if (explicitCalc) t = t.replace(timesWord, " * ")
+        // Числительные словами → цифры. Важно до процентов: иначе «20% от тысячи» не распознавалось вовсе.
+        t = numerals(t)
+        // Проценты считаем до знаков действий: «минус» ниже станет дефисом и смысл потеряется.
+        percent(t, explicitCalc)?.let { return it }
+
+        var expr = t
+        for ((r, op) in wordOps) expr = r.replace(expr, " $op ")
+        expr = expr.replace(" ", "").replace(',', '.')
+        if (!allowedChars.matches(expr)) return null
+        if (!anyOperator.containsMatchIn(expr.drop(1))) return null
+        return runCatching { Parser(expr).parse() }.getOrNull()?.takeIf { it.isFinite() }
     }
+
+    private val LEAD = Regex("""^(сколько будет|посчитай|вычисли|подсчитай|реши|сколько)\s*""")
+
+    /** «x»/«х» и «на» между числами — умножение: «3 х 4», «250 на 4». */
+    private val timesSign = Regex("""(?<=\d)\s*[хx]\s*(?=\d)""")
+    private val timesWord = Regex("""(?<=\d)\s+на\s+(?=\d)""")
+    private val allowedChars = Regex("""^[\d.+\-*/()]+$""")
+    private val anyOperator = Regex("""[+\-*/]""")
+
+    /** Числительные словами → цифры: «двадцать процентов от тысячи» → «20 процентов от 1000». */
+    private fun numerals(t: String): String {
+        val tokens = RuTokenizer.tokenize(t)
+        if (tokens.none { it.isNumber }) return t
+        val sb = StringBuilder()
+        var cursor = 0
+        for (tok in tokens) {
+            sb.append(t, cursor, tok.start)
+            val n = tok.number
+            sb.append(if (n != null) formatNum(n) else tok.text)
+            cursor = tok.end
+        }
+        sb.append(t.substring(cursor))
+        return sb.toString()
+    }
+
+    /** Проценты и скидки. Возвращает null, если это не проценты. */
+    private fun percent(t: String, explicitCalc: Boolean): Double? {
+        val s = t.trim()
+        percentOf.find(s)?.let { m -> return share(num(m.groupValues[1]), num(m.groupValues[2])) }
+        minusPercentOf.find(s)?.let { m ->
+            val base = num(m.groupValues[2])
+            return base - share(num(m.groupValues[1]), base)
+        }
+        plusPercentOf.find(s)?.let { m ->
+            val base = num(m.groupValues[2])
+            return base + share(num(m.groupValues[1]), base)
+        }
+        baseMinusPercent.find(s)?.let { m ->
+            val base = num(m.groupValues[1])
+            return base - share(num(m.groupValues[2]), base)
+        }
+        basePlusPercent.find(s)?.let { m ->
+            val base = num(m.groupValues[1])
+            return base + share(num(m.groupValues[2]), base)
+        }
+        baseSignPercent.find(s)?.let { m ->
+            val base = num(m.groupValues[1])
+            val part = share(num(m.groupValues[3]), base)
+            return if (m.groupValues[2] == "-") base - part else base + part
+        }
+        if (explicitCalc) bareOf.find(s)?.let { m -> return share(num(m.groupValues[1]), num(m.groupValues[2])) }
+        return null
+    }
+
+    /** Сколько составляет [p] процентов от [base]. */
+    private fun share(p: Double, base: Double): Double = p * base / 100
+
+    private fun num(s: String): Double = s.replace(',', '.').toDouble()
 
     fun format(v: Double): String {
         val bd = BigDecimal(v).setScale(4, RoundingMode.HALF_UP).stripTrailingZeros()

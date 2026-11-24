@@ -36,6 +36,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.time.LocalDate
+import ai.nova.app.ui.components.captionStyle
+import ai.nova.app.ui.components.bodySecondaryStyle
 
 /**
  * «Резервная копия»: все записи, секретные заметки, привычки и места — в один файл, зашифрованный вашим паролем.
@@ -120,7 +122,7 @@ fun BackupPage(c: AppContainer, onBack: () -> Unit) {
             Text(
                 "Без аккаунта ваши записи живут только в этом телефоне: потеряли или сбросили телефон — они пропадут. " +
                     "Копия — один файл, зашифрованный паролем. ${s.assistantName} не запоминает пароль и не отправляет файл никуда сама.",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = bodySecondaryStyle(),
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
             )
         }
@@ -138,7 +140,7 @@ fun BackupPage(c: AppContainer, onBack: () -> Unit) {
                     Text(
                         if (s.syncChat) "В копию войдёт и переписка с ${s.assistantName} (вы включили её синхронизацию)."
                         else "Переписка с ${s.assistantName} в копию не входит. API-ключи и вход в аккаунт — тоже никогда.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = captionStyle(),
                     )
                 }
             }
@@ -151,14 +153,14 @@ fun BackupPage(c: AppContainer, onBack: () -> Unit) {
                         Text(
                             "Введите пароль выше дважды и выберите папку — например, папку облака (Google Диск, Яндекс Диск) или SD-карту. " +
                                 "Для фоновой копии пароль хранится в защищённом хранилище телефона; запомните его — на новом телефоне без него файл не открыть.",
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = bodySecondaryStyle(),
                         )
                         SecondaryButton(if (busy) "Подождите…" else "Выбрать папку и включить", { message = null; pickFolder.launch(null) },
                             enabled = validNew && !busy)
                     } else {
                         Text(
                             "Включена: раз в неделю новая копия в выбранной папке, хранятся 4 последние.",
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = bodySecondaryStyle(),
                         )
                         SecondaryButton(if (busy) "Подождите…" else "Сделать копию сейчас", {
                             message = null
@@ -186,7 +188,7 @@ fun BackupPage(c: AppContainer, onBack: () -> Unit) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
                         "Введите пароль выше и выберите файл. Записи добавятся к тем, что уже есть: более новые версии на телефоне не затираются.",
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = bodySecondaryStyle(),
                     )
                     SecondaryButton(if (busy) "Подождите…" else "Выбрать файл копии", { message = null; restore.launch(arrayOf("*/*")) },
                         enabled = password.isNotEmpty() && !busy)
@@ -207,7 +209,7 @@ fun BackupPage(c: AppContainer, onBack: () -> Unit) {
             if (last > 0) Text(
                 "Последняя копия с этого телефона: " + java.time.format.DateTimeFormatter.ofPattern("d MMMM yyyy, HH:mm", java.util.Locale("ru"))
                     .withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.ofEpochMilli(last)),
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = captionStyle(),
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
             )
         }

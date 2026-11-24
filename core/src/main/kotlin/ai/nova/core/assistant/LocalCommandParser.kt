@@ -21,7 +21,7 @@ import java.util.Locale
 
 /** Все шаблоны этого файла компилируются с Unicode-границами слов (см. [Rx]). */
 private fun Regex(pattern: String): kotlin.text.Regex = Rx.of(pattern)
-private fun Regex(pattern: String, option: RegexOption): kotlin.text.Regex = kotlin.text.Regex(Rx.unicode(pattern), option)
+private fun Regex(pattern: String, option: RegexOption): kotlin.text.Regex = Rx.of(pattern, option == RegexOption.IGNORE_CASE)
 
 /**
  * Локальное понимание речи — основной режим работы (без облачного AI и без интернета).

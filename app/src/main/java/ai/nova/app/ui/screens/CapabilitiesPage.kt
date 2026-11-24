@@ -23,6 +23,7 @@ import ai.nova.app.ui.components.Hint
 import ai.nova.app.ui.components.NovaScreen
 import ai.nova.app.ui.components.RowItem
 import ai.nova.app.ui.components.SectionLabel
+import ai.nova.app.ui.components.captionStyle
 
 private data class Ability(val title: String, val examples: String)
 
@@ -144,7 +145,7 @@ private fun AbilityGroup(items: List<Ability>, icon: ImageVector) {
                 Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 2.dp))
                 Column(Modifier.padding(start = 14.dp)) {
                     Text(a.title, style = MaterialTheme.typography.titleSmall)
-                    Text(a.examples, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+                    Text(a.examples, style = captionStyle(), modifier = Modifier.padding(top = 2.dp))
                 }
             }
         }

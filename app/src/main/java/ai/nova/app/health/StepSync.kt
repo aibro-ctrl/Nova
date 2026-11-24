@@ -74,7 +74,9 @@ class StepSync(
                         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
                     }
                     cont.invokeOnCancellation { manager.unregisterListener(listener) }
-                    if (!manager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_FASTEST)) {
+                    // Счётчик отдаёт накопленное значение сразу после подписки: максимальная частота
+                    // не нужна, а на FASTEST датчик будит процессор лишний раз.
+                    if (!manager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_NORMAL)) {
                         if (cont.isActive) cont.resume(null)
                     }
                 }

@@ -41,6 +41,7 @@ import ai.nova.app.ui.components.SecondaryButton
 import ai.nova.core.auth.AuthException
 import ai.nova.core.auth.SignUpResult
 import kotlinx.coroutines.launch
+import ai.nova.app.ui.components.bodySecondaryStyle
 
 /** Вход и регистрация по email/паролю через Supabase Auth. Пароль в приложении не хранится. */
 @Composable
@@ -73,7 +74,7 @@ fun AuthScreen(c: AppContainer, onClose: (() -> Unit)?, onDone: () -> Unit) {
         Text(if (register) "Создать аккаунт" else "Вход", style = MaterialTheme.typography.headlineMedium)
         Text(
             "Аккаунт нужен только для синхронизации между устройствами и резервной копии в облаке. Без него всё работает на телефоне.",
-            textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center, style = bodySecondaryStyle(),
         )
         if (!configured) {
             Text(

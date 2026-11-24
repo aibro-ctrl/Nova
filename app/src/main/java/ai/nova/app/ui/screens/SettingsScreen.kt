@@ -124,6 +124,8 @@ import ai.nova.core.sync.SyncStatus
 import kotlinx.coroutines.launch
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import ai.nova.app.ui.components.captionStyle
+import ai.nova.app.ui.components.bodySecondaryStyle
 
 enum class SettingsPage(val route: String, val title: String, val subtitle: String, val icon: ImageVector, val main: Boolean = true) {
     VOICE("settings/voice", "Голос и речь", "Кто говорит, характер голоса и громкость", Icons.Rounded.RecordVoiceOver),
@@ -389,7 +391,7 @@ private fun AppearancePage(c: AppContainer, onBack: () -> Unit) {
                     }
                     Text(
                         if (s.dynamicColor) "Сейчас цвет берётся из обоев" else s.accent.title,
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = bodySecondaryStyle(),
                         modifier = Modifier.padding(top = 6.dp),
                     )
                 }
@@ -888,11 +890,20 @@ fun AssistantGuideDialog(name: String, onDismiss: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<String?>(null) }
     var poll by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    var isAssistant by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var installed by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var running by remember { androidx.compose.runtime.mutableStateOf(false) }
     // Shizuku могут запустить, пока открыт диалог: тихо перепроверяем состояние.
+    // Три этих вызова — обращение к другому процессу; в композиции они подвешивали кадр, поэтому в фоне.
+    LaunchedEffect(tick, poll, result) {
+        val state = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            Triple(access.isAssistant(), access.shizukuInstalled(), access.shizukuRunning())
+        }
+        isAssistant = state.first
+        installed = state.second
+        running = state.third
+    }
     LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(1500); poll++ } }
-    val isAssistant = remember(tick, poll, result) { access.isAssistant() }
-    val installed = remember(tick, poll) { access.shizukuInstalled() }
-    val running = remember(tick, poll) { access.shizukuRunning() }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
@@ -911,7 +922,7 @@ fun AssistantGuideDialog(name: String, onDismiss: () -> Unit) {
                 }
                 Text(
                     "Сервисы Google продолжат работать — меняется только то, что открывается долгим нажатием «Домой» или кнопки питания.",
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = bodySecondaryStyle(),
                 )
                 Text("Способ 1 — в настройках телефона", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
                 assistantSteps(name).forEachIndexed { i, step ->
@@ -949,7 +960,7 @@ fun AssistantGuideDialog(name: String, onDismiss: () -> Unit) {
                 Text(
                     "Заодно $name включит свои кнопки громкости и работу поверх приложений. Shizuku после этого можно закрыть; " +
                         "после перезагрузки телефона настройки сохраняются.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = captionStyle(),
                 )
 
                 Text("Способ 3 — с компьютера", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
@@ -970,7 +981,7 @@ fun AssistantGuideDialog(name: String, onDismiss: () -> Unit) {
                 }) { Text("Скопировать команды") }
                 Text(
                     "Пока ассистент не выбран, $name всё равно вызывается: слово «$name», кнопки громкости, плитка в шторке, виджет.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = captionStyle(),
                 )
             }
         },

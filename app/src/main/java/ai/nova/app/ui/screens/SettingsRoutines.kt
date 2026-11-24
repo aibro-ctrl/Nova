@@ -37,6 +37,7 @@ import ai.nova.app.ui.components.RowItem
 import ai.nova.app.ui.components.SectionLabel
 import ai.nova.app.ui.components.SwitchItem
 import kotlinx.coroutines.launch
+import ai.nova.app.ui.components.captionStyle
 
 /**
  * «Сценарии»: фраза, за которой идёт несколько команд, и всё про то, как Нова разговаривает —
@@ -167,6 +168,21 @@ internal fun RoutinesPage(c: AppContainer, onBack: () -> Unit) {
                 }
             }
         }
+        item(key = "search-engine") {
+            // Android не даёт узнать поисковик браузера: без выбора «найди в интернете» открывало пустую страницу.
+            SectionLabel("Где искать в интернете")
+            Group {
+                val picked = ai.nova.core.assistant.SearchEngine.fromId(s.searchEngine)
+                ai.nova.core.assistant.SearchEngine.entries.forEachIndexed { i, engine ->
+                    if (i > 0) GroupDivider(inset = 66.dp)
+                    RadioRow(
+                        engine.title,
+                        "Открываю результаты поиска в браузере по умолчанию",
+                        picked == engine,
+                    ) { scope.launch { c.settings.setSearchEngine(engine.id) } }
+                }
+            }
+        }
         item(key = "maps") {
             // Маршрут можно вести и в конкретных картах: «построй маршрут в 2ГИС до вокзала» — главнее настройки.
             SectionLabel("Карты для маршрутов")
@@ -290,7 +306,7 @@ internal fun RoutineEditorDialog(c: AppContainer, editing: ai.nova.core.model.Ro
                 NovaField(trigger, { trigger = it.take(60) }, "Когда сказать")
                 Text(
                     "Скажите эту фразу — Нова выполнит всё отмеченное ниже. По расписанию сценарий запускается как напоминание.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = captionStyle(),
                     modifier = Modifier.padding(top = 6.dp, bottom = 10.dp),
                 )
                 ai.nova.core.assistant.RoutineBlocks.ALL.forEach { b ->
@@ -324,7 +340,7 @@ internal fun RoutineEditorDialog(c: AppContainer, editing: ai.nova.core.model.Ro
                 ) { Text("Добавить команду") }
                 Text(
                     if (commands.isEmpty()) "Пока ничего не отмечено — сценарий пустой." else "Прозвучит: " + commands.joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = captionStyle(),
                 )
             }
         },
@@ -376,7 +392,7 @@ internal fun BriefTimeDialog(initial: java.time.LocalTime, onDismiss: () -> Unit
                 androidx.compose.material3.TimeInput(state = state)
                 Text(
                     "Сводка придёт в это время. Если уведомления выключены, ничего не приходит.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = captionStyle(),
                 )
             }
         },
