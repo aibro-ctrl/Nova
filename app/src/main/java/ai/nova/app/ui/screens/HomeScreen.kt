@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -63,7 +62,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -77,6 +75,11 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -230,10 +233,10 @@ fun HomeScreen(
         )
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val viewport = maxHeight
+            // Сфера занимает середину экрана и сама подбирает размер под высоту окна:
+            // в обычном состоянии прокрутка не нужна, а если появились предупреждения — список листается.
             Column(
-                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = viewport)
-                    .padding(bottom = NovaSpace.l),
-                // Сфера стоит по центру свободного места, как раньше: экран не «висит» сверху.
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = viewport),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
@@ -252,19 +255,18 @@ fun HomeScreen(
                     onTap = { if (ui.active) vm.stop() else onMic() },
                     onClearError = { vm.clearError() },
                 )
-                Spacer(Modifier.height(NovaSpace.l))
-                SuggestionRow { vm.send(it); openChat(false) }
-                TodaySection(
-                    summary = summary,
-                    onExpenses = openExpenses,
-                    onTasks = { openPlans(0) },
-                    onReminders = { openPlans(1) },
-                    onExample = { openChat(true) },
-                )
-                if (history.isNotEmpty()) {
-                    ConversationTeaser(history, settings.assistantName, onOpen = { openChat(false) })
-                }
             }
+        }
+        // Примеры фраз и сводка — по одной строке, чтобы не отнимать высоту у сферы.
+        SuggestionRow { vm.send(it); openChat(false) }
+        SummaryStrip(
+            summary = summary,
+            onExpenses = openExpenses,
+            onTasks = { openPlans(0) },
+            onReminders = { openPlans(1) },
+        )
+        history.lastOrNull()?.let { last ->
+            LastExchangeLine(last, settings.assistantName, onOpen = { openChat(false) })
         }
         if (reply?.awaitingConfirmation == true) {
             ConfirmPrompt(onConfirm = { vm.confirm(it) })
@@ -311,8 +313,10 @@ private fun HomeHeader(
 }
 
 /**
- * Голосовой блок главной — та же сфера, что и раньше: нажатие слушает или останавливает,
- * состояние подписано словами. Под сферой появляется то, что Нова услышала.
+ * Сфера главной — та же, что была: нажатие слушает или останавливает.
+ *
+ * Подпись показываем только когда есть что сказать (слушаю, думаю, отвечаю, ошибка).
+ * В покое экран молчит: подсказок и так хватает в примерах фраз.
  */
 @Composable
 private fun OrbPanel(
@@ -324,52 +328,46 @@ private fun OrbPanel(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val mode = when (ui.stage) {
-        VoiceStage.IDLE -> ai.nova.app.ui.components.OrbMode.IDLE
-        VoiceStage.LISTENING, VoiceStage.RECOGNISING -> ai.nova.app.ui.components.OrbMode.LISTENING
-        VoiceStage.PROCESSING -> ai.nova.app.ui.components.OrbMode.THINKING
-        VoiceStage.ANSWERING -> ai.nova.app.ui.components.OrbMode.SPEAKING
-        VoiceStage.ERROR -> ai.nova.app.ui.components.OrbMode.ERROR
+        VoiceStage.IDLE -> OrbMode.IDLE
+        VoiceStage.LISTENING, VoiceStage.RECOGNISING -> OrbMode.LISTENING
+        VoiceStage.PROCESSING -> OrbMode.THINKING
+        VoiceStage.ANSWERING -> OrbMode.SPEAKING
+        VoiceStage.ERROR -> OrbMode.ERROR
     }
     Column(
-        Modifier.fillMaxWidth().padding(vertical = NovaSpace.m),
+        Modifier.fillMaxWidth().padding(vertical = NovaSpace.s),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
             Modifier.clip(CircleShape)
                 .clickable(interactionSource = interaction, indication = null, onClick = onTap)
-                .pressScale(interaction),
+                .pressScale(interaction)
+                .semantics { contentDescription = if (ui.active) "Остановить" else "Слушать" },
         ) {
-            // Сфера подстраивается под высоту экрана: на маленьких телефонах и с крупным шрифтом — меньше.
-            val full = (viewport * 0.40f).coerceIn(132.dp, 224.dp)
-            AssistantOrb(mode, ui.level, size = if (compact) (full * 0.72f).coerceAtLeast(112.dp) else full)
+            // Размер считается от свободной высоты: сфера никогда не выталкивает остальное за экран.
+            val full = (viewport * 0.74f).coerceIn(132.dp, 236.dp)
+            AssistantOrb(mode, ui.level, size = if (compact) (full * 0.66f).coerceAtLeast(112.dp) else full)
         }
-        Text(
-            ui.status,
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            color = if (ui.stage == VoiceStage.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = NovaSpace.xxl, end = NovaSpace.xxl, top = NovaSpace.m)
-                .clickable(enabled = ui.stage == VoiceStage.ERROR, onClick = onClearError),
-        )
+        if (ui.stage != VoiceStage.IDLE) {
+            Text(
+                ui.status,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                color = if (ui.stage == VoiceStage.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = NovaSpace.xl, end = NovaSpace.xl, top = NovaSpace.s)
+                    .clickable(enabled = ui.stage == VoiceStage.ERROR, onClick = onClearError),
+            )
+        }
         AnimatedVisibility(ui.heard.isNotBlank()) {
             Text(
                 ui.heard,
                 style = MaterialTheme.typography.titleMedium,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                maxLines = 3,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = NovaSpace.xxl, vertical = NovaSpace.xs),
-            )
-        }
-        // Пока Нова ждёт — один пример фразы вместо пустоты под сферой.
-        if (ui.stage == VoiceStage.IDLE) {
-            Text(
-                "Например: «Расход 500 ₽ на продукты»",
-                style = captionStyle(),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.padding(start = NovaSpace.xxl, end = NovaSpace.xxl, top = NovaSpace.xs),
+                modifier = Modifier.padding(horizontal = NovaSpace.xl, vertical = NovaSpace.xs),
             )
         }
     }
@@ -387,150 +385,82 @@ private fun SuggestionRow(onSend: (String) -> Unit) {
 }
 
 /**
- * Сводка дня: деньги, задачи, напоминания — одной строкой цифр.
+ * Сводка дня одной строкой: деньги, задачи, напоминания.
  *
- * Пустое состояние — не заглушка, а живая подсказка из «Что умеет Нова», меняется каждые 15 секунд.
+ * Отдельного заголовка «Сегодня» больше нет, а без данных строки нет совсем — на экране
+ * и без неё хватает подсказок.
  */
 @Composable
-private fun TodaySection(
+private fun SummaryStrip(
     summary: HomeSummary,
     onExpenses: () -> Unit,
     onTasks: () -> Unit,
     onReminders: () -> Unit,
-    onExample: () -> Unit,
 ) {
-    val hints = remember { capabilityExamples.ifEmpty { allSuggestions } }
-    var hintIndex by remember { mutableIntStateOf(0) }
-    LaunchedEffect(hints.size) {
-        if (hints.size < 2) return@LaunchedEffect
-        while (true) {
-            delay(15_000)
-            hintIndex = (hintIndex + 1) % hints.size
-        }
+    val parts = buildList {
+        if (summary.todayExpensesMinor > 0) add(SummaryPart(Money.format(summary.todayExpensesMinor, "RUB"), onExpenses, accent = true))
+        if (summary.activeTasks > 0) add(SummaryPart(RuFormat.count(summary.activeTasks, "задача", "задачи", "задач"), onTasks))
+        if (summary.overdueTasks > 0) add(SummaryPart("просрочено ${summary.overdueTasks}", onTasks, warn = true))
+        if (summary.activeReminders > 0) add(SummaryPart(RuFormat.count(summary.activeReminders, "напоминание", "напоминания", "напоминаний"), onReminders))
     }
-    val empty = summary.todayExpensesMinor == 0L && summary.activeTasks == 0 && summary.activeReminders == 0
-    Text(
-        "Сегодня",
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = NovaSpace.screen, end = NovaSpace.screen, top = NovaSpace.xl, bottom = NovaSpace.s),
-    )
-    if (empty) {
-        Surface(
-            shape = RoundedCornerShape(NovaRadius.card),
-            color = groupColor(),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen).clickable(onClick = onExample),
-        ) {
-            Crossfade(hints[hintIndex % hints.size], animationSpec = tween(280), label = "hint") { hint ->
-                Text(
-                    "Скажите: «" + hint.removeSuffix("?") + "»",
-                    style = bodySecondaryStyle(),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(NovaSpace.l),
-                )
-            }
-        }
-        return
-    }
-    Surface(
-        shape = RoundedCornerShape(NovaRadius.card),
-        color = groupColor(),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen),
+    if (parts.isEmpty()) return
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = NovaSpace.screen),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column {
-            Row(Modifier.fillMaxWidth()) {
-                StatCell(
-                    caption = "Расходы",
-                    value = Money.format(summary.todayExpensesMinor, "RUB"),
-                    accent = summary.todayExpensesMinor > 0,
-                    onClick = onExpenses,
-                    modifier = Modifier.weight(1f),
-                )
-                StatCell("Задачи", summary.activeTasks.toString(), onTasks, Modifier.weight(1f))
-                StatCell("Напоминания", summary.activeReminders.toString(), onReminders, Modifier.weight(1f))
-            }
-            if (summary.monthExpensesMinor > 0 || summary.overdueTasks > 0) {
-                HorizontalDivider(thickness = 0.6.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                Row(Modifier.fillMaxWidth().padding(horizontal = NovaSpace.l, vertical = NovaSpace.m)) {
-                    if (summary.monthExpensesMinor > 0) {
-                        Text(
-                            "За месяц ${Money.format(summary.monthExpensesMinor, "RUB")}",
-                            style = bodySecondaryStyle(),
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                    if (summary.overdueTasks > 0) {
-                        Text(
-                            "Просрочено: ${summary.overdueTasks}",
-                            style = bodySecondaryStyle(),
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StatCell(caption: String, value: String, onClick: () -> Unit, modifier: Modifier = Modifier, accent: Boolean = false) {
-    Column(modifier.clickable(onClick = onClick).padding(horizontal = NovaSpace.l, vertical = NovaSpace.m)) {
-        Text(caption, style = captionStyle(), maxLines = 1)
-        Text(
-            value,
-            style = MaterialTheme.typography.titleLarge,
-            color = if (accent) amberColor() else MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 2.dp),
-        )
-    }
-}
-
-/** Последний обмен репликами: короткий вход в разговор, не занимая пол-экрана. */
-@Composable
-private fun ConversationTeaser(history: List<ai.nova.core.model.ConversationMessage>, name: String, onOpen: () -> Unit) {
-    Text(
-        "Разговор",
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = NovaSpace.screen, end = NovaSpace.screen, top = NovaSpace.xl, bottom = NovaSpace.s),
-    )
-    Surface(
-        shape = RoundedCornerShape(NovaRadius.card),
-        color = groupColor(),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen).clickable(onClick = onOpen),
-    ) {
-        Column(Modifier.padding(NovaSpace.l)) {
-            history.takeLast(2).forEach { m ->
-                val mine = m.role == MessageRole.USER
-                Row(Modifier.padding(bottom = NovaSpace.xs)) {
-                    Text(
-                        if (mine) "Вы" else name,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (mine) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.widthIn(min = 44.dp),
-                    )
-                    Text(
-                        messageText(m.content),
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).padding(start = NovaSpace.s),
-                    )
-                }
-            }
+        parts.forEachIndexed { i, part ->
+            if (i > 0) Text("·", style = bodySecondaryStyle(), modifier = Modifier.padding(horizontal = NovaSpace.s))
             Text(
-                "Открыть разговор",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(top = NovaSpace.xs),
+                part.text,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = when {
+                    part.warn -> MaterialTheme.colorScheme.error
+                    part.accent -> amberColor()
+                    else -> MaterialTheme.colorScheme.onSurface
+                },
+                modifier = Modifier.clickable(onClick = part.action).heightIn(min = 36.dp).padding(vertical = NovaSpace.s),
             )
         }
+    }
+}
+
+private data class SummaryPart(val text: String, val action: () -> Unit, val warn: Boolean = false, val accent: Boolean = false)
+
+/**
+ * Последняя реплика одной строкой — вход в разговор.
+ *
+ * Раньше здесь была карточка на две реплики: полезно, но она отнимала у сферы целый блок.
+ */
+@Composable
+private fun LastExchangeLine(last: ai.nova.core.model.ConversationMessage, name: String, onOpen: () -> Unit) {
+    val mine = last.role == MessageRole.USER
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onOpen)
+            .heightIn(min = 40.dp)
+            .padding(horizontal = NovaSpace.screen),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            if (mine) "Вы" else name,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (mine) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            messageText(last.content),
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f).padding(start = NovaSpace.s),
+        )
+        Icon(
+            Icons.Outlined.ChevronRight,
+            contentDescription = "Открыть разговор",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 
