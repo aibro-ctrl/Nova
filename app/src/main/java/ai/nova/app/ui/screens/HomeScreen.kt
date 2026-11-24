@@ -76,7 +76,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -255,6 +254,10 @@ fun HomeScreen(
                     onTap = { if (ui.active) vm.stop() else onMic() },
                     onClearError = { vm.clearError() },
                 )
+                // Разговор — заметный блок с заголовком и последними репликами: в чат заходят отсюда.
+                if (history.isNotEmpty()) {
+                    ConversationTeaser(history, settings.assistantName, onOpen = { openChat(false) })
+                }
             }
         }
         // Примеры фраз и сводка — по одной строке, чтобы не отнимать высоту у сферы.
@@ -265,9 +268,6 @@ fun HomeScreen(
             onTasks = { openPlans(0) },
             onReminders = { openPlans(1) },
         )
-        history.lastOrNull()?.let { last ->
-            LastExchangeLine(last, settings.assistantName, onOpen = { openChat(false) })
-        }
         if (reply?.awaitingConfirmation == true) {
             ConfirmPrompt(onConfirm = { vm.confirm(it) })
         }
@@ -345,7 +345,7 @@ private fun OrbPanel(
                 .semantics { contentDescription = if (ui.active) "Остановить" else "Слушать" },
         ) {
             // Размер считается от свободной высоты: сфера никогда не выталкивает остальное за экран.
-            val full = (viewport * 0.74f).coerceIn(132.dp, 236.dp)
+            val full = (viewport * 0.56f).coerceIn(150.dp, 264.dp)
             AssistantOrb(mode, ui.level, size = if (compact) (full * 0.66f).coerceAtLeast(112.dp) else full)
         }
         if (ui.stage != VoiceStage.IDLE) {
@@ -429,38 +429,50 @@ private fun SummaryStrip(
 private data class SummaryPart(val text: String, val action: () -> Unit, val warn: Boolean = false, val accent: Boolean = false)
 
 /**
- * Последняя реплика одной строкой — вход в разговор.
+ * Разговор: заголовок, две последние реплики и явный вход в чат.
  *
- * Раньше здесь была карточка на две реплики: полезно, но она отнимала у сферы целый блок.
+ * Это единственный путь в переписку с главной, поэтому блок заметный, а не строкой-подсказкой.
  */
 @Composable
-private fun LastExchangeLine(last: ai.nova.core.model.ConversationMessage, name: String, onOpen: () -> Unit) {
-    val mine = last.role == MessageRole.USER
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onOpen)
-            .heightIn(min = 40.dp)
-            .padding(horizontal = NovaSpace.screen),
-        verticalAlignment = Alignment.CenterVertically,
+private fun ConversationTeaser(history: List<ai.nova.core.model.ConversationMessage>, name: String, onOpen: () -> Unit) {
+    Text(
+        "Разговор",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(start = NovaSpace.screen, end = NovaSpace.screen, top = NovaSpace.m, bottom = NovaSpace.s),
+    )
+    Surface(
+        shape = RoundedCornerShape(NovaRadius.card),
+        color = groupColor(),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen).clickable(onClick = onOpen),
     ) {
-        Text(
-            if (mine) "Вы" else name,
-            style = MaterialTheme.typography.labelMedium,
-            color = if (mine) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
-        )
-        Text(
-            messageText(last.content),
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f).padding(start = NovaSpace.s),
-        )
-        Icon(
-            Icons.Outlined.ChevronRight,
-            contentDescription = "Открыть разговор",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(16.dp),
-        )
+        Column(Modifier.padding(NovaSpace.l)) {
+            history.takeLast(2).forEach { m ->
+                val mine = m.role == MessageRole.USER
+                Row(Modifier.padding(bottom = NovaSpace.xs)) {
+                    Text(
+                        if (mine) "Вы" else name,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (mine) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.widthIn(min = 44.dp),
+                    )
+                    Text(
+                        messageText(m.content),
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(start = NovaSpace.s),
+                    )
+                }
+            }
+            Text(
+                "Открыть разговор",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = NovaSpace.xs),
+            )
+        }
     }
 }
 
