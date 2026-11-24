@@ -141,8 +141,9 @@ class MainActivity : ComponentActivity() {
                 // в чате оставались чёрными и пропадали в ночной теме.
                 Surface(Modifier.fillMaxSize(), color = Color.Transparent, contentColor = MaterialTheme.colorScheme.onBackground) {
                     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
-                        // Фон всей программы: органические формы, подкрашенные выбранным цветом.
-                        ai.nova.app.ui.components.OrganicBackground()
+                        // Фон всей программы: тёплая подложка в тон выбранному цвету. Формы приглушены
+                        // до 0.6 — они дают глубину, но не спорят с содержимым экранов.
+                        ai.nova.app.ui.components.OrganicBackground(intensity = 0.6f)
                         NovaRoot(container, listenRequest, openSettingsRequest, openBackupRequest, quickRequest, openChatRequest)
                         ai.nova.app.ui.components.VoiceMemoOverlay(container)
                         ai.nova.app.ui.onboarding.FirstRunOnboarding(container)
