@@ -32,6 +32,19 @@ class FeaturesV17Test {
         assertEquals(1, env.store.shopping.all().size)
     }
 
+    @Test fun marketplaceLineStaysWhole() = runTest {
+        // Товар с площадки хранится одной строкой: цена и ссылка не должны разбираться как «количество».
+        val env = env()
+        val line = "Кеды Puma — 4\u00A0599 ₽, Wildberries, ★ 4,8 · 150 отзывов — https://www.wildberries.ru/catalog/1/detail.aspx"
+        val saved = env.store.shopping.addLine("Покупки", line, source = "marketplace")
+        assertTrue(saved != null)
+        assertEquals(listOf(line), env.store.shopping.all().map { it.text })
+        assertNull(env.store.shopping.all().single().quantity)
+        // Повторная просьба не создаёт вторую строку.
+        env.store.shopping.addLine("Покупки", line, source = "marketplace")
+        assertEquals(1, env.store.shopping.all().size)
+    }
+
     @Test fun boughtWithAmountIsExpense() = runTest {
         val env = env()
         env.engine.handle("добавь в покупки молоко")

@@ -249,6 +249,21 @@ class ShoppingTest {
     }
 
     @Test
+    fun `фотография товара остаётся в истории вместе с карточкой`() {
+        val withPhoto = product(id = "1", title = "Кеды Puma").copy(imageUrl = "https://basket.example/1.jpg")
+        val decoded = ShoppingCards.decode(ShoppingCards.append("Нашла вариант:", listOf(withPhoto)))
+        assertEquals("https://basket.example/1.jpg", decoded.products.single().imageUrl)
+        // Старая запись без фотографии читается как раньше — без картинки и без ошибок.
+        val sep = " \u00A6 "
+        val old = ShoppingCards.decode(
+            "#товар#" + sep + listOf("wb", "1", "4599", "4.8", "12", "%D0%9A%D0%B5%D0%B4%D1%8B", "https%3A%2F%2Fwww.wildberries.ru%2Fcatalog%2F1%2Fdetail.aspx")
+                .joinToString(sep),
+        )
+        assertEquals(1, old.products.size)
+        assertNull(old.products.single().imageUrl)
+    }
+
+    @Test
     fun `обычный текст не портится`() {
         val decoded = ShoppingCards.decode("Просто ответ без товаров.")
         assertEquals("Просто ответ без товаров.", decoded.text)

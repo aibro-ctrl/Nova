@@ -33,9 +33,6 @@ object Suggestions {
         if (data.tasksToday >= 3 && "tasks" !in shown) {
             return Suggestion("tasks", "На сегодня ${plural(data.tasksToday, "задача", "задачи", "задач")} — хотите, покажу, что осталось?")
         }
-        if (data.usualDaySpend > 0 && data.spentToday > data.usualDaySpend * 2 && "spend" !in shown) {
-            return Suggestion("spend", "Сегодня потрачено ${money(data.spentToday)} — больше обычного. Посмотреть, на что?")
-        }
         return null
     }
 
@@ -45,6 +42,4 @@ object Suggestions {
         n % 10 in 2..4 && n % 100 !in 12..14 -> few
         else -> many
     }
-
-    private fun money(rub: Long): String = String.format(java.util.Locale.ROOT, "%,d", rub).replace(',', ' ') + " ₽"
 }

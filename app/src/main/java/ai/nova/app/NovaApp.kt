@@ -30,6 +30,8 @@ class NovaApp : Application() {
         }
         Notifications.createChannels(this)
         container = AppContainer(this)
+        // Миниатюры товаров в чате качаются тем же клиентом, что и остальные запросы Нова.
+        ai.nova.app.ui.components.ProductImages.init(container.http)
         // Траты, которые не дошли до Финансового помощника в прошлый раз.
         container.appScope.launch { container.finance.flush() }
     }

@@ -31,6 +31,8 @@ import ai.nova.core.skills.SavedPlace
 import ai.nova.core.skills.SkillHost
 import ai.nova.core.util.Logger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
 
@@ -57,12 +59,22 @@ class AndroidSkillHost(
     private val http: io.ktor.client.HttpClient? = null,
     /** Маркетплейсы, выбранные в настройках «Действия»; пусто — все. */
     private val selectedMarketplaces: () -> Set<ai.nova.core.shopping.Marketplace> = { emptySet() },
+    /** Товар, который не удалось положить в корзину площадки, — в список покупок Нова. */
+    private val saveToShoppingList: suspend (String) -> Boolean = { false },
 ) : SkillHost {
     private val locator = Locator(context)
     private val players = ai.nova.app.media.OtherPlayers(context)
     private val mediaSearch = ai.nova.app.media.MediaSearch(context)
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private val shoppingSearch by lazy { ai.nova.core.shopping.ShoppingSearchService(http) }
+    /** Поиск через браузерный движок: нужен, когда каталог закрыт для обычных запросов. */
+    private val webCatalog by lazy { WebCatalog(context) }
+    /** Найденное на странице живёт недолго: повторная просьба не открывает сайт заново. */
+    private val webCache = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<Pair<ai.nova.core.shopping.Marketplace, String>, List<ai.nova.core.shopping.ShoppingProduct>>(8, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<ai.nova.core.shopping.Marketplace, String>, List<ai.nova.core.shopping.ShoppingProduct>>) = size > 4
+        },
+    )
 
     override suspend fun location(): GeoPoint? {
         if (!locator.hasCoarse() && !permissions.ensure(Manifest.permission.ACCESS_COARSE_LOCATION)) return null
@@ -343,34 +355,58 @@ class AndroidSkillHost(
 
     // ------------------------------------------------------------------ Покупки
 
-    override suspend fun searchProducts(query: ai.nova.core.shopping.ShoppingQuery): ai.nova.core.shopping.ShoppingSearchResult =
-        withContext(Dispatchers.IO) { shoppingSearch.search(query) }
+    /**
+     * Товары: сначала прямой запрос к каталогу (быстро, когда площадка его отдаёт), а если он
+     * закрыт — та же страница поиска в браузерном движке телефона (медленнее, зато работает).
+     */
+    override suspend fun searchProducts(query: ai.nova.core.shopping.ShoppingQuery): ai.nova.core.shopping.ShoppingSearchResult {
+        val direct = withContext(Dispatchers.IO) { shoppingSearch.search(query) }
+        if (direct.products.isNotEmpty()) return direct
+        val wanted = query.marketplaces.ifEmpty { ai.nova.core.shopping.Marketplace.entries.toSet() }
+        val keys = wanted.map { it to query.searchText() }
+        val cached = keys.mapNotNull { (m, text) -> webCache[m to text]?.let { m to it } }.toMap()
+        val need = wanted - cached.keys
+        val fromWeb = java.util.concurrent.ConcurrentHashMap<ai.nova.core.shopping.Marketplace, List<ai.nova.core.shopping.ShoppingProduct>>(cached)
+        // Площадки ищем одновременно: у каждой свой WebView, и ждать их по очереди вдвое дольше.
+        val encoded = java.net.URLEncoder.encode(query.searchText(), "UTF-8")
+        coroutineScope {
+            need.forEach { marketplace ->
+                launch {
+                    val found = webCatalog.search(marketplace, marketplace.searchUrl(encoded), WEB_PER_MARKET)
+                    if (found.isNotEmpty()) {
+                        fromWeb[marketplace] = found
+                        webCache[marketplace to query.searchText()] = found
+                    }
+                }
+            }
+        }
+        if (fromWeb.isEmpty()) return direct
+        // Что нашлось на странице — то и показываем: прямые ответы идут первыми, страница их дополняет.
+        val results = wanted.map { marketplace ->
+            val web = fromWeb[marketplace].orEmpty()
+            val known = direct.results.firstOrNull { it.marketplace == marketplace }
+            ai.nova.core.shopping.MarketplaceResult(
+                marketplace = marketplace,
+                products = known?.products.orEmpty() + web,
+                // Со страницы товары пришли — значит площадка ответила, и ошибку про закрытый каталог не показываем.
+                error = if (web.isNotEmpty()) null else known?.error,
+                status = known?.status ?: ai.nova.core.shopping.IntegrationStatus.SEARCH_ONLY,
+            )
+        }
+        val merged = ai.nova.core.shopping.ShoppingSearchResult(
+            query = query,
+            results = results,
+            products = results.flatMap { it.products },
+        )
+        return if (merged.products.isEmpty()) direct else merged
+    }
+
+    override suspend fun addToShoppingList(text: String): Boolean = runCatching { saveToShoppingList(text) }.getOrDefault(false)
 
     override fun shoppingMarketplaces(): Set<ai.nova.core.shopping.Marketplace> = selectedMarketplaces()
 
-    /**
-     * Корзина. Ни Ozon, ни Wildberries не дают другому приложению положить товар в корзину — такого
-     * публичного способа нет. Поэтому открываем карточку и честно говорим, что нажать нужно самому;
-     * «добавила в корзину» без подтверждения площадки было бы обманом.
-     */
-    override suspend fun addToCart(
-        product: ai.nova.core.shopping.ShoppingProduct,
-        size: String?,
-        quantity: Int,
-    ): ai.nova.core.shopping.CartResult? {
-        if (quantity <= 0) return null
-        val opened = openShoppingUrl(product.url)
-        return if (opened) {
-            ai.nova.core.shopping.CartResult.Manual(
-                product,
-                "Открыла «${product.title}» на ${product.marketplace.title}" +
-                    (size?.let { " (размер $it)" } ?: "") +
-                    ": добавьте в корзину сами — я не оформляю покупки.",
-            )
-        } else {
-            ai.nova.core.shopping.CartResult.Failed(product, "не получилось открыть карточку")
-        }
-    }
+    // Корзины у площадок для приложения нет: addToCart не переопределяем — навык сам положит товар
+    // в список покупок Нова и оставит ссылку. Открывать браузер за человеком без просьбы нельзя.
 
     /** Страница товара или поиска: сначала в приложении площадки, иначе в браузере. */
     override suspend fun openShoppingUrl(url: String): Boolean {
@@ -389,6 +425,9 @@ class AndroidSkillHost(
     private companion object {
         /** Сколько ждём, пока плеер отрисует результаты поиска. */
         const val TAP_RESULT_DELAY_MS = 2_500L
+
+        /** Сколько карточек читаем со страницы поиска — больше десяти всё равно не показываем. */
+        const val WEB_PER_MARKET = 20
 
     }
 }

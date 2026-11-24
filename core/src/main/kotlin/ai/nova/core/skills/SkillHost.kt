@@ -127,6 +127,12 @@ interface SkillHost {
 
     /** Площадки, которые человек выбрал в настройках; пусто — обе доступные. */
     fun shoppingMarketplaces(): Set<ai.nova.core.shopping.Marketplace> = emptySet()
+
+    /**
+     * Положить товар в список покупок Нова. В корзину площадки приложение положить не может,
+     * поэтому выбранное остаётся списком со ссылкой: человек откроет и купит сам.
+     */
+    suspend fun addToShoppingList(text: String): Boolean = false
 }
 
 object NoSkillHost : SkillHost

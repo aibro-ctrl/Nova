@@ -164,7 +164,8 @@ fun messageLink(text: String): String? =
     ai.nova.core.assistant.MessageLinks.url(text) ?: BARE_LINK.find(text)?.value
 
 /** Текст сообщения без служебной разметки ссылки — для списков и озвучки. */
-fun messageText(text: String): String = ai.nova.core.assistant.MessageLinks.strip(text)
+fun messageText(text: String): String =
+    ai.nova.core.assistant.MessageLinks.strip(ai.nova.core.shopping.ShoppingCards.decode(text).text)
 
 /** Разметка ссылок: `[подпись](адрес)` показываем подписью, голый адрес — как есть, но нажимаемым. */
 private fun linkify(text: String, styles: TextLinkStyles): AnnotatedString = buildAnnotatedString {

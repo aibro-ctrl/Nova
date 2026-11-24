@@ -926,6 +926,11 @@ private fun ProductCards(products: List<ai.nova.core.shopping.ShoppingProduct>) 
                     style = captionStyle(),
                     modifier = Modifier.width(20.dp),
                 )
+                ai.nova.app.ui.components.ProductThumb(
+                    url = product.imageUrl,
+                    contentDescription = product.title,
+                )
+                Spacer(Modifier.width(NovaSpace.s))
                 Column(Modifier.weight(1f)) {
                     Text(
                         product.title,

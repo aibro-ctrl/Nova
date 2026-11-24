@@ -24,6 +24,8 @@ class ShoppingSkillTest {
         val queries = ArrayList<ShoppingQuery>()
         val opened = ArrayList<String>()
         val cart = ArrayList<Pair<String, String?>>()
+        /** Что ушло в список покупок, когда корзина площадки недоступна. */
+        val saved = ArrayList<String>()
         var result: List<ShoppingProduct> = listOf(
             ShoppingProduct(
                 id = "1", marketplace = Marketplace.WB, title = "Кеды Puma Rebound",
@@ -45,6 +47,11 @@ class ShoppingSkillTest {
         override suspend fun addToCart(product: ShoppingProduct, size: String?, quantity: Int): CartResult {
             cart += product.title to size
             return CartResult.Manual(product, "Открыла карточку — добавьте в корзину сами")
+        }
+
+        override suspend fun addToShoppingList(text: String): Boolean {
+            saved += text
+            return true
         }
 
         override suspend fun openShoppingUrl(url: String): Boolean {
@@ -87,13 +94,20 @@ class ShoppingSkillTest {
     }
 
     @Test
-    fun `корзина открывает карточку, а не оплачивает`() = runTest {
+    fun `корзина площадки недоступна — товар уходит в список покупок`() = runTest {
         val host = Host()
         val (e, skills) = env(host)
         skills.handle("хочу кеды Puma 46 размер до 10 тысяч", e.settings, null)
         val out = assertIs<SkillOutcome.Say>(skills.handle("положи первый в корзину", e.settings, null))
         assertEquals("Кеды Puma Rebound" to "46", host.cart.single())
-        assertTrue(out.text.contains("сами") || out.text.contains("корзину"))
+        // Браузер сами не открываем: товар со ссылкой и ценой остаётся в списке покупок.
+        assertTrue(host.opened.isEmpty())
+        val line = host.saved.single()
+        assertTrue(line.contains("Кеды Puma Rebound"))
+        assertTrue(line.contains("4\u00A0599"))
+        assertTrue(line.contains("wildberries.ru"))
+        assertTrue(out.text.contains("список покупок"))
+        assertEquals("https://www.wildberries.ru/catalog/1/detail.aspx", out.link)
     }
 
     @Test
@@ -107,12 +121,15 @@ class ShoppingSkillTest {
     }
 
     @Test
-    fun `без товаров открывает поиск на площадке`() = runTest {
+    fun `без товаров оставляет ссылку на поиск, а не открывает браузер`() = runTest {
         val host = Host().apply { result = emptyList() }
         val (e, skills) = env(host)
         val out = assertIs<SkillOutcome.Say>(skills.handle("найди корм для кошки до 1000", e.settings, null))
-        assertTrue(host.opened.single().contains("wildberries.ru"))
+        assertTrue(host.opened.isEmpty())
         assertTrue(out.products.isEmpty())
+        // Ссылка остаётся в истории: человек откроет её сам, когда захочет.
+        assertTrue(out.link!!.contains("wildberries.ru"))
+        assertTrue(out.text.contains("по ссылке"))
     }
 
     @Test
@@ -161,8 +178,9 @@ class ShoppingSkillTest {
         val (e, skills) = env(host)
         val out = assertIs<SkillOutcome.Say>(skills.handle("хочу кеды Puma 46 размер до 10 тысяч", e.settings, null))
         assertTrue(out.products.isEmpty())
-        assertTrue(out.text.contains("не ответил") || out.text.contains("поиск"))
-        assertTrue(host.opened.single().contains("wildberries.ru"))
+        assertTrue(out.text.contains("не открылся") || out.text.contains("по ссылке"))
+        assertTrue(host.opened.isEmpty())
+        assertTrue(out.link!!.contains("wildberries.ru"))
     }
 
     @Test

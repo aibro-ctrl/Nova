@@ -70,6 +70,38 @@ class SqlShoppingRepository(
     }
 
     /**
+     * Готовая строка как есть: товар с площадки («Кеды Puma — 4 599 ₽, Wildberries, ★ 4,8 — ссылка»).
+     * Разбирать её на название и количество нельзя — цена и ссылка должны остаться целыми.
+     */
+    suspend fun addLine(listName: String, text: String, source: String? = null): ShoppingItem? {
+        val line = text.trim()
+        if (line.isEmpty()) return null
+        val now = nowMs()
+        val itemRow = io {
+            val existing = q.selectActive().executeAsList()
+                .firstOrNull { it.list_name.equals(listName, true) && it.text.equals(line, true) }
+            val row = existing?.copy(done = 0, updated_at = now, dirty = 1) ?: ItemRow(
+                id = Ids.newId(),
+                list_name = listName,
+                text = line,
+                done = 0,
+                created_at = now,
+                updated_at = now,
+                deleted = 0,
+                dirty = 1,
+                synced_updated_at = null,
+                quantity = null,
+                unit = null,
+                source = source,
+            )
+            q.upsert(row)
+            row
+        }
+        changed()
+        return itemRow.toDomain()
+    }
+
+    /**
      * Слияние с уже имеющимся пунктом: одинаковые единицы складываются, разные — остаётся прежний текст
      * (второй вариант не теряется: он попадает в заметку пункта нельзя, поэтому просто не дублируем строку).
      */

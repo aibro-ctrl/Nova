@@ -150,26 +150,22 @@ class ShoppingSkills(
     }
 
     /**
-     * Показывать нечего. Причина у каждой площадки своя, и человеку нужна именно она:
-     * «каталог закрыт» и «под ваши условия ничего нет» — разные вещи. В обоих случаях открываем
-     * поиск на площадке, чтобы просьба не закончилась пустым ответом.
+     * Показывать нечего. Причина у каждой площадки своя: «каталог молчит» и «под ваши условия ничего
+     * нет» — разные вещи, и человеку нужна именно она. Браузер сами не открываем: ссылка на поиск
+     * остаётся в ответе и в истории, открывает её человек, когда захочет.
      */
     private suspend fun nothingFound(query: ShoppingQuery, result: ShoppingSearchResult): SkillOutcome.Say {
         session = ShoppingSession(query = query, question = null, at = time.now())
-        val target = firstMarketplace(query)
-        val catalogsDown = result.results.isEmpty() || result.products.isEmpty() && result.results.all { !it.ok }
-        val url = searchUrl(query)
-        val opened = runCatching { host.openShoppingUrl(url) }.getOrDefault(false)
+        val failed = result.problems.map { it.marketplace }
         val reason = when {
-            !catalogsDown -> "Под ваши условия ничего не нашлось."
-            query.marketplaces.singleOrNull() == Marketplace.OZON || target == Marketplace.OZON ->
-                "Ozon не отдаёт каталог другим приложениям."
-            else -> "Каталог ${target.title} не ответил."
+            result.products.isNotEmpty() -> "Под ваши условия ничего не нашлось."
+            failed.isNotEmpty() -> "${failed.joinToString(" и ") { it.title }} сейчас не открыл" +
+                (if (failed.size == 1) "ся." else "ись.")
+            else -> "Каталог не открылся."
         }
-        // Обещать «открыла», не открыв, нельзя: говорим ровно то, что произошло.
-        val tail = if (opened) " Открыла поиск «${query.searchText()}» на ${target.title}."
-        else " Поиск «${query.searchText()}» на ${target.title} — по ссылке."
-        return SkillOutcome.Say(reason + tail, link = url)
+        val target = firstMarketplace(query)
+        val text = "$reason Поиск «${query.searchText()}» на ${target.title} — по ссылке."
+        return SkillOutcome.Say(text, link = searchUrl(query))
     }
 
     /** Страница поиска на площадке: её же оставляем ссылкой в истории. */
@@ -212,7 +208,7 @@ class ShoppingSkills(
             .takeIf { it.isNotEmpty() && it.size < query.marketplaces.size }
             ?.let { " ${it.joinToString(" и ")} не ответил${if (it.size == 1) "" else "и"}." }
             .orEmpty()
-        val tail = " Скажите «положи первый в корзину», и я открою карточку — оформляете вы."
+        val tail = " Скажите «положи первый в корзину» — сохраню его в списке покупок со ссылкой."
         return head + pricePart + bestPart + failedPart + tail
     }
 
@@ -230,20 +226,34 @@ class ShoppingSkills(
             is CartResult.Added -> SkillOutcome.Say(
                 "Положила ${product.title} в корзину ${product.marketplace.title}" +
                     (if (result.quantity > 1) ", ${result.quantity} шт." else "") + ". Оформление и оплату — только вы.",
+                link = product.url,
             )
             is CartResult.NeedsVariant -> SkillOutcome.Say("Выберите ${result.kind}: ${result.options.take(8).joinToString(", ")}.", followUp = true)
-            is CartResult.Manual -> SkillOutcome.Say(result.reason, followUp = false, products = listOf(product))
-            is CartResult.Failed -> SkillOutcome.Say("Не получилось добавить: ${result.reason}. Открываю карточку.")
-                .also { runCatching { host.openShoppingUrl(product.url) } }
-            null -> {
-                runCatching { host.openShoppingUrl(product.url) }
-                SkillOutcome.Say(
-                    "Открыла карточку «${product.title}» на ${product.marketplace.title}: добавьте в корзину сами, " +
-                        "я не оформляю покупки за вас.",
-                    products = listOf(product),
-                )
-            }
+            // Корзина площадки приложению недоступна — кладём товар в список покупок Нова, со всеми данными и ссылкой.
+            is CartResult.Manual -> keepInList(product, reason = null)
+            is CartResult.Failed -> keepInList(product, reason = result.reason)
+            null -> keepInList(product, reason = null)
         }
+    }
+
+    /** Товар в список покупок: карточку не открываем, человек откроет ссылку из списка или из истории. */
+    private suspend fun keepInList(product: ShoppingProduct, reason: String?): SkillOutcome.Say {
+        val line = cartLine(product)
+        val saved = runCatching { host.addToShoppingList(line) }.getOrDefault(false)
+        val what = "«${product.title}» (${product.marketplace.title})"
+        val text = when {
+            saved && reason != null -> "В корзину не вышло: ${reason.lowercase().trimEnd('.')}. Добавила $what в список покупок — там цена и ссылка."
+            saved -> "Корзиной площадки я не управляю, поэтому добавила $what в список покупок — там цена и ссылка."
+            reason != null -> "В корзину не вышло: ${reason.lowercase().trimEnd('.')}. $what — вот данные: $line"
+            else -> "Корзиной площадки я не управляю. $what: $line"
+        }
+        return SkillOutcome.Say(text, followUp = false, products = listOf(product), link = product.url)
+    }
+
+    /** Одна строка списка покупок: название, цена, площадка, рейтинг и ссылка на карточку. */
+    private fun cartLine(product: ShoppingProduct): String {
+        val rating = product.ratingLabel?.let { ", $it" }.orEmpty()
+        return "${product.title} — ${product.priceLabel}, ${product.marketplace.title}$rating — ${product.url}"
     }
 
     /** «первый», «второй», «третий», по номеру и «последний» — из показанного списка. */
@@ -313,7 +323,7 @@ class ShoppingSkills(
         const val TAG = "Shopping"
         val TTL: Duration = Duration.ofMinutes(20)
         /** Сколько ждём каталог площадки, прежде чем сказать «не ответил». */
-        const val SEARCH_TIMEOUT_MS = 15_000L
+        const val SEARCH_TIMEOUT_MS = 28_000L
     }
 }
 

@@ -133,30 +133,32 @@ internal fun ActionsPage(c: AppContainer, onBack: () -> Unit) {
         item(key = "shopping") {
             SectionLabel("Покупки")
             val chosen = settings.shoppingMarketplaces.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            // Пусто в настройках — включены обе площадки; так список и показываем.
+            val enabled = if (chosen.isEmpty()) ai.nova.core.shopping.Marketplace.entries.map { it.id } else chosen
+            var lastWarning by remember { mutableStateOf(false) }
             Group {
                 ai.nova.core.shopping.Marketplace.entries.forEachIndexed { i, marketplace ->
                     if (i > 0) GroupDivider(inset = 66.dp)
                     SwitchItem(
                         marketplace.title,
                         when (marketplace) {
-                            ai.nova.core.shopping.Marketplace.WB -> "Ищу товары и показываю цены"
-                            ai.nova.core.shopping.Marketplace.OZON -> "Открываю поиск — каталог Ozon закрыт для приложений"
+                            ai.nova.core.shopping.Marketplace.WB -> "Ищу товары, показываю цены и фото"
+                            ai.nova.core.shopping.Marketplace.OZON -> "Ищу товары, показываю цены и фото"
                         },
-                        checked = chosen.isEmpty() || marketplace.id in chosen,
+                        checked = marketplace.id in enabled,
                     ) { on ->
-                        val next = if (on && chosen.isEmpty()) {
-                            // Первое касание выключает площадку: значит, человек выбирает вручную.
-                            // Первое ручное включение: остальные площадки выключаются.
-                            ai.nova.core.shopping.Marketplace.entries.map { it.id }.filter { it != marketplace.id }
-                        } else if (on) {
-                            chosen + marketplace.id
-                        } else {
-                            chosen - marketplace.id
+                        // Последнюю площадку не выключаем: иначе искать будет негде.
+                        if (!on && enabled.size == 1) {
+                            lastWarning = true
+                            return@SwitchItem
                         }
+                        lastWarning = false
+                        val next = if (on) enabled + marketplace.id else enabled - marketplace.id
                         scope.launch { c.settings.setShoppingMarketplaces(next.joinToString(",")) }
                     }
                 }
             }
+            if (lastWarning) Hint("Одну площадку оставьте включённой — иначе искать товары негде.")
             SwitchItem(
                 "Помнить размеры и бренды",
                 "Размер обуви, одежды, вид питомца — чтобы не спрашивать каждый раз. Хранится в «Памяти», только на телефоне.",
@@ -181,7 +183,7 @@ internal fun ActionsPage(c: AppContainer, onBack: () -> Unit) {
                     }.getOrNull()
                     probe = when {
                         found == null -> "Проверить не удалось"
-                        found.products.isNotEmpty() -> "Каталог отвечает: нашлось ${found.products.size} товаров"
+                        found.products.isNotEmpty() -> "Каталог отвечает: товаров — ${found.products.size}"
                         found.problems.isNotEmpty() -> "Каталог не ответил: ${found.problems.first().error ?: "нет связи"}"
                         else -> "Каталог ответил, но товаров нет"
                     }
@@ -189,8 +191,9 @@ internal fun ActionsPage(c: AppContainer, onBack: () -> Unit) {
                 }
             }
             Hint(
-                "Нова ищет товары и кладёт выбранное в корзину только после вашего подтверждения. " +
-                    "Оформление и оплату она не делает — это всегда вы сами.",
+                "Нова ищет товары и показывает их списком с фото, ценой и ссылкой. В корзину площадки " +
+                    "приложение положить не может: выбранное сохраняется в «Списке покупок», а покупку и оплату " +
+                    "делаете вы сами.",
             )
         }
 

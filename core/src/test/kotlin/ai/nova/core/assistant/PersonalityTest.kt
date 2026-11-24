@@ -76,10 +76,8 @@ class PersonalityTest {
         assertEquals("11 минут", Suggestions.plural(11, "минуту", "минуты", "минут"))
         val reminder = Suggestions.caring(SuggestionData(reminderInMinutes = 40, reminderText = "позвонить маме"), emptySet())
         assertTrue(reminder!!.text.contains("через 40 минут"), reminder.text)
-        val spend = Suggestions.caring(SuggestionData(spentToday = 3000, usualDaySpend = 1000), emptySet())
-        assertTrue(spend!!.text.contains("3 000 ₽"), spend.text)
-        // Мелочь на фоне обычного дня — не повод встревать.
-        assertNull(Suggestions.caring(SuggestionData(spentToday = 1100, usualDaySpend = 1000), emptySet()))
+        // Про траты Нова не встревает: деньги человек спрашивает сам.
+        assertNull(Suggestions.caring(SuggestionData(spentToday = 3000, usualDaySpend = 1000), emptySet()))
     }
 
     @Test fun caringSuggestsOnceAndThenStaysQuiet() = runTest {

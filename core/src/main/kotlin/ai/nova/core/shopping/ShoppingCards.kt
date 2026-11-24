@@ -31,6 +31,8 @@ object ShoppingCards {
             // Название и адрес кодируются: в них бывают и разделитель, и перевод строки.
             java.net.URLEncoder.encode(p.title, "UTF-8"),
             java.net.URLEncoder.encode(p.url, "UTF-8"),
+            // Фотография — последней: записи без неё (из старых версий) читаются как раньше.
+            p.imageUrl?.let { java.net.URLEncoder.encode(it, "UTF-8") }.orEmpty(),
         ).joinToString(SEP)
     }
 
@@ -65,6 +67,7 @@ object ShoppingCards {
             rating = parts[4].toDoubleOrNull(),
             reviews = parts[5].toIntOrNull(),
             url = url,
+            imageUrl = parts.getOrNull(8)?.trim()?.takeIf { it.isNotEmpty() }?.let { unescape(it) },
         )
     }
 
