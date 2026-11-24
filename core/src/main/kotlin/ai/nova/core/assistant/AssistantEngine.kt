@@ -81,6 +81,11 @@ data class AssistantReply(
      * Вслух не читается — URL в озвучке бесполезен.
      */
     val link: String? = null,
+    /**
+     * Товары с площадок для показа карточками под ответом. Вслух не читаются:
+     * цены и названия человек читает глазами, а озвучка десятка карточек утомляет.
+     */
+    val products: List<ai.nova.core.shopping.ShoppingProduct> = emptyList(),
 )
 
 /** Последний сбой AI — для экрана настроек: что именно не так с подключением. */
@@ -1279,7 +1284,7 @@ class AssistantEngine(
         when (out) {
             is ai.nova.core.skills.SkillOutcome.Say -> AssistantReply(
                 out.text, expectFollowUp = out.followUp, awaitingAnswer = out.followUp, permission = out.permission, speakLanguage = out.speakLanguage,
-                sensitive = out.sensitive,
+                sensitive = out.sensitive, products = out.products,
             )
             is ai.nova.core.skills.SkillOutcome.Run -> execute(out.plan, usedAI = false, offline = false, name = cfg.assistantName)
             null -> null
@@ -1843,8 +1848,9 @@ class AssistantEngine(
         // Личное (сообщения, экран, контакты) остаётся в истории на телефоне, но не уходит AI в следующих запросах.
         context.addTurn(userText, if (reply.sensitive) "(личные данные — показаны пользователю, не пересказываю)" else reply.text)
         // Ссылку храним в истории, а не только показываем: «открой ещё раз» должно работать и через день.
+        val withCards = ai.nova.core.shopping.ShoppingCards.append(reply.text, reply.products)
         val stored = reply.link?.takeIf { it.isNotBlank() }
-            ?.let { reply.text + "\n" + "[Открыть снова]($it)" } ?: reply.text
+            ?.let { withCards + "\n" + "[Открыть снова]($it)" } ?: withCards
         runCatching {
             conversations.add(context.conversationId, MessageRole.USER, userText)
             if (stored.isNotBlank()) conversations.add(context.conversationId, MessageRole.ASSISTANT, stored)

@@ -5,6 +5,9 @@ import ai.nova.core.finance.FinanceAsk
 import ai.nova.core.nlp.RuNumbers
 import ai.nova.core.nlp.RuTokenizer
 import ai.nova.core.nlp.Rx
+import ai.nova.core.shopping.ShoppingCategory
+import ai.nova.core.shopping.ShoppingIntent
+import ai.nova.core.shopping.ShoppingQuery
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
@@ -54,6 +57,12 @@ sealed interface SkillCommand {
     data class Greet(val person: String, val occasion: String) : SkillCommand
     /** «Сколько можно тратить сегодня?», «хватит ли до зарплаты?» — по сводке Финансового помощника. */
     data class Finance(val ask: FinanceAsk, val subject: String? = null) : SkillCommand
+    /** Покупка на маркетплейсе: «хочу кеды puma до 10 тысяч». */
+    data class Shopping(val query: ShoppingQuery) : SkillCommand
+    /** «Положи второй в корзину», «убери из корзины» — без оформления и оплаты. */
+    data class ShoppingCart(val text: String) : SkillCommand
+    /** «Что ты помнишь о покупках», «забудь размер обуви». */
+    data class ShoppingMemory(val forget: String?) : SkillCommand
 }
 
 enum class AlmanacKind { HOLIDAY, NEXT_HOLIDAY, WHEN_HOLIDAY, NAME_DAY, NAME_DAY_OF, OMEN }
@@ -75,6 +84,7 @@ object SkillPhrases {
         if (t.isEmpty()) return null
         profile(t, text)?.let { return it }
         places(t, text)?.let { return it }
+        shopping(t, text)?.let { return it }
         find(t)?.let { return it }
         if (RECORD_VERB.containsMatchIn(t)) return null
         if (money) finance(t)?.let { return it }
@@ -646,6 +656,62 @@ object SkillPhrases {
             if (city.length in 2..40) return SkillCommand.SetCity(city.split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } })
         }
         return null
+    }
+
+    // ------------------------------------------------------------------ Покупки (Ozon, Wildberries)
+
+    /** «Что ты помнишь о покупках?» */
+    private val SHOPPING_MEMORY = rx("""^(?:а\s+)?(?:что|чего)\s+ты\s+(?:помнишь|знаешь|запомнила|помнишь\s+про)\s+(?:про|о|об)?\s*(?:покупк\w*|магазин\w*|размер\w*|одежд\w*|обув\w*|бренд\w*|питомц\w*)""")
+
+    /** «Забудь размер обуви», «удали из памяти покупок бренд». */
+    private val SHOPPING_FORGET = rx("""^(?:забудь|удали|сотри|убери)\s+(?:из\s+памяти\s+)?(?:про\s+|о\s+)?(?:покупк\w*|размер\w*|обув\w*|одежд\w*|бренд\w*|питомц\w*|животн\w*)""")
+
+    /** Просьба о поиске товара: без неё «кеды» — просто слово, а не команда. */
+    private val SHOPPING_VERB = rx("""^(?:а\s+)?(?:нова,?\s*)?(?:найди|поищи|посмотри|подбери|подобрать|выбери|купи|купить|закажи|заказать|хочу|хотел\w*|ищу|нужн\w*|надо|помоги\s+(?:выбрать|найти|купить))\b""")
+
+    /** Прошедшее время покупки — расход, а не просьба найти товар. */
+    private val PAST_PURCHASE = rx("""^(?:я\s+)?(?:купил|купила|купили|потратил|потратила|потратили|заплатил|заплатила|приобр[её]л|приобрела)\w*\b""")
+
+    /** «… ли …» — вопрос о необходимости, а не заказ. */
+    private val QUESTION_LI = rx("""(?:^|\s)ли(?:\s|$)""")
+
+    /** Статья, справка, рецепт, песня — это не покупка, даже если в словах есть «корм» или «телефон». */
+    private val NOT_SHOPPING = rx("""стать\w*|рецепт\w*|справк\w*|информаци\w*|википеди\w*|песн\w*|текст\w*|аккорд\w*|фильм\w*|сериал\w*|новост\w*|погод\w*|курс\w*|пробк\w*|афиш\w*|маршрут\w*|билет\w*|расписани\w*""")
+
+    /**
+     * Покупка на маркетплейсе: «хочу кеды puma 46 размер до 10 тысяч», «найди корм для неразлучников на озоне»,
+     * «положи второй в корзину», «что ты помнишь о покупках».
+     *
+     * Запускается до поиска статьи: «найди кеды» — это товар, а не энциклопедия. При этом обычные покупки
+     * из списка («купи хлеб») остаются списку покупок: продуктов без названия площадки и бюджета мало.
+     */
+    fun shopping(t: String, original: String): SkillCommand? {
+        if (SHOPPING_MEMORY.containsMatchIn(t)) return SkillCommand.ShoppingMemory(null)
+        if (SHOPPING_FORGET.containsMatchIn(t)) return SkillCommand.ShoppingMemory(t)
+        if (rx("""^(?:корзин\w*|в\s+корзину)\b|(?:положи|добавь|убери|удали)\s+(?:\S+\s+){0,3}в\s+корзин""").containsMatchIn(t)) {
+            return SkillCommand.ShoppingCart(original)
+        }
+        // Просьба оплатить или оформить заказ — сюда, чтобы ответить отказом, а не молчать.
+        if (rx("""(?:оплат\w*|оформ\w*|подтверд\w*)\s+(?:заказ\w*|покупк\w*|корзин\w*|товар\w*)""").containsMatchIn(t)) {
+            return SkillCommand.ShoppingCart(original)
+        }
+        if (isFindPhone(t) || NOT_SHOPPING.containsMatchIn(t)) return null
+        // «Купила кофе за 250» — это трата, её записывает Финансовый помощник, а не поиск товара.
+        if (PAST_PURCHASE.containsMatchIn(t)) return null
+        val marketplaces = ShoppingIntent.marketplaces(original)
+        val category = ShoppingIntent.category(t)
+        // «Нужна ли куртка?» — вопрос о погоде, а не о покупке.
+        if (marketplaces == null && QUESTION_LI.containsMatchIn(t)) return null
+        val verb = SHOPPING_VERB.containsMatchIn(t)
+        if (category == null) return null
+        // Продукты ищут на площадке только с названием магазина: «купи хлеб» — это список покупок.
+        if (category == ShoppingCategory.FOOD && marketplaces == null) return null
+        if (!verb && marketplaces == null) {
+            // «кеды puma 46 размер» без глагола — тоже просьба, но только если есть признак товара.
+            val hint = ShoppingIntent.size(t) != null || ShoppingIntent.brand(original) != null
+            if (!hint) return null
+        }
+        return SkillCommand.Shopping(ShoppingIntent.parse(original))
     }
 
     /** Число из фразы: «пять» → 5. */

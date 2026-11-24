@@ -193,6 +193,10 @@ data class AppSettings(
     val searchEngine: String = "",
     /** Где включать музыку: имя MusicApp; пусто — спросим один раз и запомним. */
     val musicApp: String = "",
+    /** Маркетплейсы для покупок: "wb", "ozon" через запятую; пусто — обе площадки. */
+    val shoppingMarketplaces: String = "",
+    /** Помнить размеры и любимые бренды для покупок — долгосрочная память Нова, только на телефоне. */
+    val shoppingMemory: Boolean = true,
     /** По воскресеньям в 19:00 — итоги недели (по умолчанию выключено). */
     val weeklyReview: Boolean = false,
     /** Шаги и сон брать с телефона (Health Connect или счётчик шагов) — только по согласию и только локально. */
@@ -254,6 +258,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val mapsApp = stringPreferencesKey("maps_app")
         val searchEngine = stringPreferencesKey("search_engine")
         val musicApp = stringPreferencesKey("music_app")
+        val shoppingMarketplaces = stringPreferencesKey("shopping_marketplaces")
+        val shoppingMemory = booleanPreferencesKey("shopping_memory")
         val weeklyReview = booleanPreferencesKey("weekly_review")
         val persona = stringPreferencesKey("persona")
         val quickInput = booleanPreferencesKey("quick_input")
@@ -358,6 +364,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             mapsApp = p[K.mapsApp].orEmpty(),
             searchEngine = p[K.searchEngine].orEmpty(),
             musicApp = p[K.musicApp].orEmpty(),
+            shoppingMarketplaces = p[K.shoppingMarketplaces].orEmpty(),
+            shoppingMemory = p[K.shoppingMemory] ?: true,
             weeklyReview = p[K.weeklyReview] ?: false,
             persona = p[K.persona] ?: "caring",
             quickInput = p[K.quickInput] ?: false,
@@ -457,6 +465,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setMapsApp(id: String) = store.edit { it[K.mapsApp] = id }
     suspend fun setSearchEngine(id: String) = store.edit { it[K.searchEngine] = id }
     suspend fun setMusicApp(id: String) = store.edit { it[K.musicApp] = id }
+    suspend fun setShoppingMarketplaces(v: String) = store.edit { it[K.shoppingMarketplaces] = v }
+    suspend fun setShoppingMemory(v: Boolean) = store.edit { it[K.shoppingMemory] = v }
     suspend fun setWeeklyReview(v: Boolean) = store.edit { it[K.weeklyReview] = v }
     suspend fun setPersona(v: String) = store.edit { it[K.persona] = v }
     suspend fun setQuickInput(v: Boolean) = store.edit { it[K.quickInput] = v }

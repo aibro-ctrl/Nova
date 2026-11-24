@@ -211,8 +211,20 @@ class AppContainer(private val context: Context) {
         // Музыкальное приложение — одна настройка на всё приложение: и голос, и экран «Действия».
         musicAppSetting = { ai.nova.core.skills.MusicApp.entries.firstOrNull { it.name == settings.settings.value.musicApp } },
         onMusicApp = { app -> appScope.launch { settings.setMusicApp(app.name) } },
+        http = http,
+        shoppingMarketplaces = { shoppingMarketplaces() },
     )
-    val skills: ai.nova.core.skills.Skills by lazy { ai.nova.core.skills.Skills(skillHost, http, time) }
+    /** Площадки для покупок: выбранные в настройках, иначе обе. */
+    fun shoppingMarketplaces(): Set<ai.nova.core.shopping.Marketplace> {
+        val ids = settings.settings.value.shoppingMarketplaces.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        if (ids.isEmpty()) return ai.nova.core.shopping.Marketplace.entries.toSet()
+        return ai.nova.core.shopping.Marketplace.entries.filter { it.id in ids }.toSet()
+    }
+    val skills: ai.nova.core.skills.Skills by lazy {
+        // Память покупок — общая память Нова (категория «покупки»), а не отдельное хранилище.
+        val memory = if (settings.settings.value.shoppingMemory) store.memories else null
+        ai.nova.core.skills.Skills(skillHost, http, time, memory)
+    }
     /** Каталог моделей Hugging Face: свежие Qwen без обновления приложения. */
     val modelCatalog = ai.nova.app.llm.ModelCatalog()
     /** Офлайн-модель для разговора (~1 ГБ, скачивается по кнопке). */

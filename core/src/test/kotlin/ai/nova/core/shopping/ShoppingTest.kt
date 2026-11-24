@@ -1,0 +1,307 @@
+package ai.nova.core.shopping
+
+import ai.nova.core.domain.MemoryRepository
+import ai.nova.core.model.MemoryItem
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.runTest
+import java.time.Instant
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/** Помощник по покупкам: разбор просьбы, отбор, память и границы корзины. */
+class ShoppingTest {
+
+    // ------------------------------------------------------------------ Разбор просьбы
+
+    @Test
+    fun `разбирает кеды с размером и бюджетом`() {
+        val q = ShoppingIntent.parse("хочу кеды Puma, 46 размер, до 10 тысяч")
+        assertEquals(ShoppingCategory.SHOES, q.category)
+        assertEquals("Puma", q.brand)
+        assertEquals("46", q.size)
+        assertEquals(10_000, q.priceTo)
+        assertFalse(q.text.contains("хочу"))
+        assertFalse(q.text.contains("размер"))
+        assertTrue(q.searchText().contains("Puma"))
+    }
+
+    @Test
+    fun `полкило и лимит цены для корма`() {
+        val q = ShoppingIntent.parse("найди корм для неразлучников, не меньше полукилограмма, до 1000")
+        assertEquals(ShoppingCategory.PET, q.category)
+        assertEquals("неразлучники", q.subject)
+        assertEquals("500 г", q.volume)
+        assertEquals(1000, q.priceTo)
+    }
+
+    @Test
+    fun `новый поиск меняет бренд и сохраняет бюджет`() {
+        val first = ShoppingIntent.parse("хочу кеды до 10 тысяч")
+        val next = ShoppingIntent.parse("теперь найди Nike", previous = first)
+        assertEquals("Nike", next.brand)
+        assertEquals(10_000, next.priceTo)
+        assertEquals(ShoppingCategory.SHOES, next.category)
+    }
+
+    @Test
+    fun `размер из памяти подставляется сам`() {
+        val q = ShoppingIntent.parse("хочу кроссовки", ShoppingFacts(shoeSize = "44"))
+        assertEquals("44", q.size)
+        assertTrue(q.questions(ShoppingFacts(shoeSize = "44")).none { it.kind == ShoppingQuestion.Kind.SIZE })
+    }
+
+    @Test
+    fun `без размера спрашиваем только размер`() {
+        val q = ShoppingIntent.parse("хочу кроссовки")
+        val questions = q.questions(ShoppingFacts())
+        assertEquals(listOf(ShoppingQuestion.Kind.SIZE), questions.map { it.kind })
+    }
+
+    @Test
+    fun `бюджет не спрашиваем`() {
+        val q = ShoppingQuery(text = "наушники", category = ShoppingCategory.TECH)
+        assertTrue(q.questions(ShoppingFacts()).isEmpty())
+    }
+
+    @Test
+    fun `про питомца спрашиваем отдельно`() {
+        val q = ShoppingQuery(text = "корм", category = ShoppingCategory.PET)
+        assertEquals(listOf(ShoppingQuestion.Kind.SUBJECT), q.questions(ShoppingFacts()).map { it.kind })
+    }
+
+    @Test
+    fun `ответ на вопрос уточняет, а не начинает заново`() {
+        val q = ShoppingIntent.parse("хочу кроссовки")
+        val answered = ShoppingIntent.answer("46", q.copy(priceTo = 5000))
+        assertNotNull(answered)
+        assertEquals("46", answered.size)
+        assertEquals("кроссовки", answered.text)
+    }
+
+    @Test
+    fun `пустой ответ не подменяет просьбу`() {
+        val q = ShoppingIntent.parse("хочу кроссовки")
+        assertNull(ShoppingIntent.answer("включи музыку", q))
+    }
+
+    // ------------------------------------------------------------------ Отбор
+
+    @Test
+    fun `пять из двух отзывов не обгоняет четыре восемь из тысячи`() {
+        val lucky = product(id = "1", title = "Кеды Puma", price = 4000, rating = 5.0, reviews = 2)
+        val solid = product(id = "2", title = "Кеды Puma", price = 4500, rating = 4.8, reviews = 1000)
+        val best = ShoppingRanking.best(listOf(lucky, solid), ShoppingQuery(text = "кеды puma"))
+        assertEquals("2", best.first().id)
+    }
+
+    @Test
+    fun `дороже бюджета не показываем`() {
+        val cheap = product(id = "1", price = 3000, title = "Кеды Puma")
+        val dear = product(id = "2", price = 30_000, title = "Кеды Puma")
+        val best = ShoppingRanking.best(listOf(cheap, dear), ShoppingQuery(text = "кеды", priceTo = 10_000))
+        assertEquals(listOf("1"), best.map { it.id })
+    }
+
+    @Test
+    fun `чужой размер отсекается, если площадка его сообщила`() {
+        val q = ShoppingQuery(text = "кеды", size = "46", category = ShoppingCategory.SHOES)
+        val wrong = product(id = "1", title = "Кеды", sizes = listOf("42", "43"))
+        val right = product(id = "2", title = "Кеды", sizes = listOf("46"))
+        assertEquals(listOf("2"), ShoppingRanking.best(listOf(wrong, right), q).map { it.id })
+    }
+
+    @Test
+    fun `корм не заменяется универсальным`() {
+        val q = ShoppingQuery(text = "корм", category = ShoppingCategory.PET, subject = "неразлучники")
+        val generic = product(id = "1", title = "Корм для всех птиц")
+        val exact = product(id = "2", title = "Корм для неразлучников")
+        assertEquals(listOf("2"), ShoppingRanking.best(listOf(generic, exact), q).map { it.id })
+    }
+
+    @Test
+    fun `список не добивается случайными товарами`() {
+        val items = (1..3).map { product(id = "$it", title = "Кеды", price = 1000 * it) }
+        assertEquals(3, ShoppingRanking.best(items, ShoppingQuery(text = "кеды")).size)
+    }
+
+    @Test
+    fun `один товар не показывается дважды`() {
+        val items = listOf(product(id = "1", title = "Кеды"), product(id = "1", title = "Кеды"))
+        assertEquals(1, ShoppingRanking.best(items, ShoppingQuery(text = "кеды")).size)
+    }
+
+    // ------------------------------------------------------------------ Корзина и оплата
+
+    @Test
+    fun `оплату и оформление Нова не делает`() {
+        assertTrue(ShoppingActionValidator.check("оплати заказ").blocked)
+        assertTrue(ShoppingActionValidator.check("оформи заказ").blocked)
+        assertTrue(ShoppingActionValidator.check("подтверди заказ и спиши деньги").blocked)
+        assertNotNull(ShoppingActionValidator.refusal("введи карту и оплати"))
+    }
+
+    @Test
+    fun `в корзину положить можно`() {
+        val verdict = ShoppingActionValidator.check("положи второй в корзину")
+        assertFalse(verdict.blocked)
+        assertEquals(ShoppingActionValidator.Action.ADD, verdict.action)
+    }
+
+    // ------------------------------------------------------------------ Площадки
+
+    @Test
+    fun `разбор каталога Wildberries`() {
+        val json = """
+            {"data":{"products":[
+              {"id":123456,"name":"Кеды Puma Rebound","brand":"Puma","salePriceU":459900,"priceU":659900,
+               "reviewRating":4.8,"feedbacks":1240,"sizes":[{"name":"46","origName":"46"}]},
+              {"id":222222,"name":"","brand":"Puma","salePriceU":100}
+            ]}}
+        """.trimIndent()
+        val products = WildberriesProvider(null).parse(json, limit = 10)
+        assertEquals(1, products.size)
+        val p = products.single()
+        assertEquals("Кеды Puma Rebound", p.title)
+        assertEquals(4599, p.price)
+        assertEquals(6599, p.oldPrice)
+        assertEquals(listOf("46"), p.sizes)
+        assertEquals("https://www.wildberries.ru/catalog/123456/detail.aspx", p.url)
+        assertTrue(p.imageUrl!!.startsWith("https://basket-"))
+    }
+
+    @Test
+    fun `цена из размера, когда общей нет`() {
+        val json = """{"products":[{"id":99,"name":"Куртка","sizes":[{"origName":"L","price":{"total":250000}}]}]}"""
+        val p = WildberriesProvider(null).parse(json, limit = 10).single()
+        assertEquals(2500, p.price)
+        assertEquals(listOf("L"), p.sizes)
+    }
+
+    @Test
+    fun `чужой ответ не роняет поиск`() {
+        assertEquals(emptyList(), WildberriesProvider(null).parse("<html>403</html>", limit = 10))
+        assertEquals(emptyList(), WildberriesProvider(null).parse("""{"data":{}}""", limit = 10))
+    }
+
+    @Test
+    fun `Ozon честно сообщает, что каталога нет`() = runTest {
+        val result = OzonProvider().search(ShoppingQuery(text = "кеды"), 10)
+        assertTrue(result.products.isEmpty())
+        assertEquals(IntegrationStatus.SEARCH_ONLY, result.status)
+        assertNotNull(result.error)
+    }
+
+    // ------------------------------------------------------------------ Память покупок
+
+    @Test
+    fun `постоянный факт запоминается, разовый нет`() = runTest {
+        val profile = ShoppingProfile(FakeMemory())
+        assertNotNull(profile.remember("shoe_size", "46"))
+        assertNull(profile.remember("price_to", "10000"))
+        val facts = profile.facts()
+        assertEquals("46", facts.shoeSize)
+    }
+
+    @Test
+    fun `повторный факт не дублируется`() = runTest {
+        val memory = FakeMemory()
+        val profile = ShoppingProfile(memory)
+        profile.remember("shoe_size", "46")
+        profile.remember("shoe_size", "46")
+        assertEquals(1, memory.items.size)
+    }
+
+    @Test
+    fun `человек может забыть факт`() = runTest {
+        val memory = FakeMemory()
+        val profile = ShoppingProfile(memory)
+        profile.remember("pet_kind", "кошка")
+        assertEquals(1, profile.forget("pet_kind"))
+        assertNull(profile.facts().petKind)
+        assertEquals(0, profile.forget("pet_kind"))
+    }
+
+    @Test
+    fun `факт из реплики`() {
+        val profile = ShoppingProfile(FakeMemory())
+        assertEquals("shoe_size" to "46", profile.factFrom("у меня 46 размер обуви", ShoppingCategory.SHOES))
+        assertEquals("clothes_size" to "48", profile.factFrom("мой размер 48", ShoppingCategory.CLOTHES))
+        assertEquals("pet_kind" to "кошка", profile.factFrom("у меня есть кошка", ShoppingCategory.PET))
+    }
+
+    // ------------------------------------------------------------------ Карточки в истории чата
+
+    @Test
+    fun `карточки сохраняются в истории и читаются обратно`() {
+        val items = listOf(product(id = "1", title = "Кеды | Puma ¦ 46", price = 4599, rating = 4.8, reviews = 1240))
+        val stored = ShoppingCards.append("Нашла 1 товар.", items)
+        val decoded = ShoppingCards.decode(stored)
+        assertEquals("Нашла 1 товар.", decoded.text)
+        assertEquals(1, decoded.products.size)
+        assertEquals("Кеды | Puma ¦ 46", decoded.products.single().title)
+        assertEquals(4599, decoded.products.single().price)
+        assertEquals(Marketplace.WB, decoded.products.single().marketplace)
+    }
+
+    @Test
+    fun `обычный текст не портится`() {
+        val decoded = ShoppingCards.decode("Просто ответ без товаров.")
+        assertEquals("Просто ответ без товаров.", decoded.text)
+        assertTrue(decoded.products.isEmpty())
+    }
+
+    // ------------------------------------------------------------------ Деньги в ответе
+
+    @Test
+    fun `цена читается человеком`() {
+        assertEquals("4\u00A0599 ₽", product(price = 4599).priceLabel)
+        assertEquals("1\u00A0200\u00A0000 ₽", product(price = 1_200_000).priceLabel)
+        assertEquals("отзыв", ShoppingProduct.reviewsWord(1))
+        assertEquals("отзыва", ShoppingProduct.reviewsWord(3))
+        assertEquals("отзывов", ShoppingProduct.reviewsWord(11))
+    }
+
+    private fun product(
+        id: String = "1",
+        title: String = "Кеды",
+        price: Int? = 1000,
+        rating: Double? = 4.5,
+        reviews: Int? = 100,
+        sizes: List<String> = emptyList(),
+    ) = ShoppingProduct(
+        id = id,
+        marketplace = Marketplace.WB,
+        title = title,
+        price = price,
+        rating = rating,
+        reviews = reviews,
+        url = "https://www.wildberries.ru/catalog/$id/detail.aspx",
+        sizes = sizes,
+    )
+
+    private class FakeMemory : MemoryRepository {
+        val items = ArrayList<MemoryItem>()
+        private var next = 0
+
+        override fun observe(): Flow<List<MemoryItem>> = flowOf(items)
+        override suspend fun all(): List<MemoryItem> = items.toList()
+        override suspend fun get(id: String): MemoryItem? = items.firstOrNull { it.id == id }
+        override suspend fun create(content: String, category: String): MemoryItem {
+            val item = MemoryItem("m${next++}", content, category, Instant.now(), Instant.now())
+            items += item
+            return item
+        }
+
+        override suspend fun update(item: MemoryItem): MemoryItem {
+            items.replaceAll { if (it.id == item.id) item else it }
+            return item
+        }
+
+        override suspend fun delete(id: String): Boolean = items.removeAll { it.id == id }
+    }
+}

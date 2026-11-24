@@ -107,6 +107,26 @@ interface SkillHost {
 
     /** Сохранить заметку (например, найденный рецепт). true — записала. */
     suspend fun saveNote(title: String, content: String): Boolean = false
+
+    /**
+     * Товары с площадок. Пустой результат с ошибкой — честный ответ «каталог не ответил»,
+     * а не выдуманные товары: цены и наличие нельзя сочинять.
+     */
+    suspend fun searchProducts(query: ai.nova.core.shopping.ShoppingQuery): ai.nova.core.shopping.ShoppingSearchResult =
+        ai.nova.core.shopping.ShoppingSearchResult(query = query, results = emptyList())
+
+    /** Положить товар в корзину. По умолчанию Нова не умеет: открываем карточку, нажимает человек. */
+    suspend fun addToCart(
+        product: ai.nova.core.shopping.ShoppingProduct,
+        size: String?,
+        quantity: Int,
+    ): ai.nova.core.shopping.CartResult? = null
+
+    /** Открыть страницу товара или поиск на площадке. */
+    suspend fun openShoppingUrl(url: String): Boolean = false
+
+    /** Площадки, которые человек выбрал в настройках; пусто — обе доступные. */
+    fun shoppingMarketplaces(): Set<ai.nova.core.shopping.Marketplace> = emptySet()
 }
 
 object NoSkillHost : SkillHost

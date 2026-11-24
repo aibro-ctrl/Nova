@@ -143,6 +143,8 @@ private val suggestionPool = listOf(
     "Что ты обо мне знаешь?",
     "Итоги недели",
     "Сколько я потратила в этом месяце",
+    "Найди кроссовки до 5000",
+    "Что ты помнишь о покупках?",
 )
 
 /** Два ряда по десять подсказок: набор каждый раз новый, но ряды всегда полные. */
@@ -881,17 +883,64 @@ private fun MessageBubble(text: String, mine: Boolean, time: String?, fresh: Boo
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                 )
             } else {
-                MarkdownText(
-                    text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.widthIn(max = 320.dp)
-                        .clip(RoundedCornerShape(NovaRadius.bubble, NovaRadius.bubble, NovaRadius.bubble, 6.dp))
-                        .background(groupColor())
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                )
+                // Карточки товаров лежат в истории служебными строками: показываем их отдельно, а из текста убираем.
+                val decoded = remember(text) { ai.nova.core.shopping.ShoppingCards.decode(text) }
+                Column(horizontalAlignment = Alignment.Start) {
+                    MarkdownText(
+                        decoded.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.widthIn(max = 320.dp)
+                            .clip(RoundedCornerShape(NovaRadius.bubble, NovaRadius.bubble, NovaRadius.bubble, 6.dp))
+                            .background(groupColor())
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                    if (decoded.products.isNotEmpty()) ProductCards(decoded.products)
+                }
             }
             time?.let {
                 Text(it, style = captionStyle(), modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Найденные товары под ответом: номер, название, цена, оценка и площадка.
+ * Номер нужен для голоса: «положи второй в корзину». Касание открывает карточку товара.
+ */
+@Composable
+private fun ProductCards(products: List<ai.nova.core.shopping.ShoppingProduct>) {
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    Column(Modifier.padding(top = NovaSpace.s).widthIn(max = 320.dp)) {
+        products.forEachIndexed { index, product ->
+            Row(
+                Modifier.fillMaxWidth()
+                    .padding(vertical = 3.dp)
+                    .clip(RoundedCornerShape(NovaRadius.card))
+                    .clickable { runCatching { uri.openUri(product.url) } }
+                    .padding(horizontal = NovaSpace.m, vertical = NovaSpace.s),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "${index + 1}",
+                    style = captionStyle(),
+                    modifier = Modifier.width(20.dp),
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        product.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(product.priceLabel, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        product.ratingLabel?.let {
+                            Text("  $it", style = captionStyle(), maxLines = 1)
+                        }
+                    }
+                }
+                Text(product.marketplace.title, style = captionStyle(), maxLines = 1)
             }
         }
     }

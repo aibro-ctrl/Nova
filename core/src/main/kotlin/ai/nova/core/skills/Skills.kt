@@ -31,6 +31,8 @@ sealed interface SkillOutcome {
         val speakLanguage: String? = null,
         /** Личное (сообщения, экран, контакты, календарь, места): не пересказывать AI. */
         val sensitive: Boolean = false,
+        /** Карточки товаров — показываются в чате под ответом, а не проговариваются. */
+        val products: List<ai.nova.core.shopping.ShoppingProduct> = emptyList(),
     ) : SkillOutcome
 
     /** Выполнить обычные действия (открыть ссылку, поиск в интернете). */
@@ -51,6 +53,7 @@ class Skills(
     private val host: SkillHost = NoSkillHost,
     http: HttpClient? = null,
     private val time: TimeSource,
+    memory: ai.nova.core.domain.MemoryRepository? = null,
 ) {
     private val weatherService = http?.let(::WeatherService)
     private val ratesService = http?.let(::RatesService)
@@ -59,6 +62,8 @@ class Skills(
     private val radioCatalog = RadioCatalog(http)
     private val musicSearch = MusicSearch(http)
     private val reverseGeo = http?.let(::ReverseGeoService)
+    /** Покупки на маркетплейсах: понимание просьбы, подборка и корзина. Память — общая, категория «покупки». */
+    private val shopping = ShoppingSkills(host, memory?.let { ai.nova.core.shopping.ShoppingProfile(it) }, time)
 
     /** Идёт игра — реплики уходят в неё. */
     var game: Game? = null
@@ -91,9 +96,11 @@ class Skills(
     /** Навык ждёт ответа — движок передаёт следующую фразу сюда. Ожидание не вечное: через 3 минуты молчания забываем. */
     val busy: Boolean get() {
         if (helpPlace?.let { Duration.between(it.at, time.now()) > PENDING_TTL } == true) helpPlace = null
-        val waiting = game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null || awaitMusicApp.isNotEmpty()
+        val waiting = game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null ||
+            awaitMusicApp.isNotEmpty() || shopping.awaiting
         if (waiting && Duration.between(lastTurn, time.now()) > PENDING_TTL) reset()
-        return game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null || awaitMusicApp.isNotEmpty() || awaitMusicQuery != null
+        return game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null ||
+            awaitMusicApp.isNotEmpty() || awaitMusicQuery != null || shopping.awaiting
     }
 
     /** Экран погас: забываем, кому отвечали, — игра и прочее остаются. */
@@ -103,6 +110,7 @@ class Skills(
         game = null; awaitGameChoice = false; awaitCity = null; replyTarget = null; awaitReply = false; helpPlace = null
         awaitMusicApp = emptyList()
         awaitMusicQuery = null
+        shopping.reset()
     }
 
     /**
@@ -274,6 +282,8 @@ class Skills(
             }
             if (g != null) return startGame(g)
         }
+        // «Какой размер?» / «На какую сумму?» — ответ уточняет поиск, а не начинает новый.
+        if (shopping.awaiting) shopping.answer(text)?.let { return it }
         awaitCity?.let { q ->
             awaitCity = null
             val t = SkillPhrases.norm(text)
@@ -372,6 +382,10 @@ class Skills(
         SkillCommand.WhereAmI -> SkillAccess.PRIVATE
         is SkillCommand.ReadMessages, is SkillCommand.ReplyMessage, is SkillCommand.Screen, is SkillCommand.ContactNumber,
         is SkillCommand.Calendar, SkillCommand.ListPlaces, is SkillCommand.SavePlace, is SkillCommand.Finance -> SkillAccess.PRIVATE
+        // Поиск товара — чтение чужого каталога; корзина меняет данные на площадке — как действие устройства.
+        is SkillCommand.Shopping -> SkillAccess.VIEW
+        is SkillCommand.ShoppingCart -> SkillAccess.DEVICE
+        is SkillCommand.ShoppingMemory -> SkillAccess.VIEW
     }
 
     private fun privateWhat(cmd: SkillCommand) = when (cmd) {
@@ -447,6 +461,9 @@ class Skills(
         // Поздравление пишет облачный AI; без него — готовые шаблоны (офлайн-модель думает долго).
         is SkillCommand.Greet -> greet(cmd, ai.takeIf { cfg.useAI })
         is SkillCommand.Finance -> finance(cmd, cfg)
+        is SkillCommand.Shopping -> shopping.search(cmd.query)
+        is SkillCommand.ShoppingCart -> shopping.cart(cmd.text)
+        is SkillCommand.ShoppingMemory -> shopping.memory(cmd.forget)
         is SkillCommand.FactOfDay -> SkillOutcome.Say(
             if (cmd.ofDay) "Факт дня: " + Trivia.FACTS[(time.today().toEpochDay() % Trivia.FACTS.size).toInt()]
             else Trivia.FACTS.filter { it != lastFact }.random().also { lastFact = it },

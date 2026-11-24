@@ -53,11 +53,16 @@ class AndroidSkillHost(
     /** Выбранное приложение для музыки — то же, что видно в настройках «Действия». */
     private val musicAppSetting: () -> MusicApp? = { null },
     private val onMusicApp: (MusicApp) -> Unit = {},
+    /** Клиент для каталога площадок (поиск товаров). */
+    private val http: io.ktor.client.HttpClient? = null,
+    /** Маркетплейсы, выбранные в настройках «Действия»; пусто — все. */
+    private val shoppingMarketplaces: () -> Set<ai.nova.core.shopping.Marketplace> = { emptySet() },
 ) : SkillHost {
     private val locator = Locator(context)
     private val players = ai.nova.app.media.OtherPlayers(context)
     private val mediaSearch = ai.nova.app.media.MediaSearch(context)
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val shoppingSearch by lazy { ai.nova.core.shopping.ShoppingSearchService(http) }
 
     override suspend fun location(): GeoPoint? {
         if (!locator.hasCoarse() && !permissions.ensure(Manifest.permission.ACCESS_COARSE_LOCATION)) return null
@@ -335,6 +340,51 @@ class AndroidSkillHost(
     override fun setCity(city: String?) = onCity(city)
 
     override suspend fun saveNote(title: String, content: String): Boolean = saveNoteTo(title, content)
+
+    // ------------------------------------------------------------------ Покупки
+
+    override suspend fun searchProducts(query: ai.nova.core.shopping.ShoppingQuery): ai.nova.core.shopping.ShoppingSearchResult =
+        withContext(Dispatchers.IO) { shoppingSearch.search(query) }
+
+    override fun shoppingMarketplaces(): Set<ai.nova.core.shopping.Marketplace> = shoppingMarketplaces()
+
+    /**
+     * Корзина. Ни Ozon, ни Wildberries не дают другому приложению положить товар в корзину — такого
+     * публичного способа нет. Поэтому открываем карточку и честно говорим, что нажать нужно самому;
+     * «добавила в корзину» без подтверждения площадки было бы обманом.
+     */
+    override suspend fun addToCart(
+        product: ai.nova.core.shopping.ShoppingProduct,
+        size: String?,
+        quantity: Int,
+    ): ai.nova.core.shopping.CartResult? {
+        if (quantity <= 0) return null
+        val opened = openShoppingUrl(product.url)
+        return if (opened) {
+            ai.nova.core.shopping.CartResult.Manual(
+                product,
+                "Открыла «${product.title}» на ${product.marketplace.title}" +
+                    (size?.let { " (размер $it)" } ?: "") +
+                    ": добавьте в корзину сами — я не оформляю покупки.",
+            )
+        } else {
+            ai.nova.core.shopping.CartResult.Failed(product, "не получилось открыть карточку")
+        }
+    }
+
+    /** Страница товара или поиска: сначала в приложении площадки, иначе в браузере. */
+    override suspend fun openShoppingUrl(url: String): Boolean {
+        val marketplace = ai.nova.core.shopping.Marketplace.byUrl(url)
+        val packages = when (marketplace) {
+            ai.nova.core.shopping.Marketplace.OZON -> listOf("ru.ozon.app.android")
+            ai.nova.core.shopping.Marketplace.WB -> listOf("com.wildberries.ru")
+            null -> emptyList()
+        }
+        val view = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        val target = packages.firstOrNull { installed(it) }?.let { pkg -> Intent(view).setPackage(pkg) }
+        if (target != null && target.resolveActivity(context.packageManager) != null && launcher.launch(target)) return true
+        return launcher.launch(view)
+    }
 
     private companion object {
         /** Сколько ждём, пока плеер отрисует результаты поиска. */

@@ -17,7 +17,9 @@ import ai.nova.app.ui.components.Group
 import ai.nova.app.ui.components.GroupDivider
 import ai.nova.app.ui.components.Hint
 import ai.nova.app.ui.components.NovaScreen
+import ai.nova.app.ui.components.RowItem
 import ai.nova.app.ui.components.SectionLabel
+import ai.nova.app.ui.components.SwitchItem
 import kotlinx.coroutines.launch
 
 /**
@@ -125,6 +127,70 @@ internal fun ActionsPage(c: AppContainer, onBack: () -> Unit) {
             Hint(
                 if (picked == null) "Пока не выбрано — спрошу в первый раз и запомню ответ здесь."
                 else "Видео ищу в «${picked.title}». Скажите «ищи видео в рутубе» — разово сделаю иначе.",
+            )
+        }
+
+        item(key = "shopping") {
+            SectionLabel("Покупки")
+            val chosen = settings.shoppingMarketplaces.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            Group {
+                ai.nova.core.shopping.Marketplace.entries.forEachIndexed { i, marketplace ->
+                    if (i > 0) GroupDivider(inset = 66.dp)
+                    SwitchItem(
+                        marketplace.title,
+                        when (marketplace) {
+                            ai.nova.core.shopping.Marketplace.WB -> "Ищу товары и показываю цены"
+                            ai.nova.core.shopping.Marketplace.OZON -> "Открываю поиск — каталог Ozon закрыт для приложений"
+                        },
+                        checked = chosen.isEmpty() || marketplace.id in chosen,
+                    ) { on ->
+                        val next = if (on && chosen.isEmpty()) {
+                            // Первое касание выключает площадку: значит, человек выбирает вручную.
+                            // Первое ручное включение: остальные площадки выключаются.
+                            ai.nova.core.shopping.Marketplace.entries.map { it.id }.filter { it != marketplace.id }
+                        } else if (on) {
+                            chosen + marketplace.id
+                        } else {
+                            chosen - marketplace.id
+                        }
+                        scope.launch { c.settings.setShoppingMarketplaces(next.joinToString(",")) }
+                    }
+                }
+            }
+            SwitchItem(
+                "Помнить размеры и бренды",
+                "Размер обуви, одежды, вид питомца — чтобы не спрашивать каждый раз. Хранится в «Памяти», только на телефоне.",
+                checked = settings.shoppingMemory,
+            ) { scope.launch { c.settings.setShoppingMemory(it) } }
+            // Каталог площадки может быть закрыт для этого региона или сети — проверка показывает это сразу,
+            // а не выясняется уже на просьбе «найди кеды».
+            var probe by remember { mutableStateOf<String?>(null) }
+            var testing by remember { mutableStateOf(false) }
+            GroupDivider(inset = 16.dp)
+            RowItem(
+                title = if (testing) "Проверяю каталог…" else "Проверить поиск товаров",
+                subtitle = probe ?: "Короткий запрос на площадке — видно, работает ли каталог",
+                chevron = !testing,
+            ) {
+                if (testing) return@RowItem
+                testing = true
+                probe = null
+                scope.launch {
+                    val found = runCatching {
+                        c.skillHost.searchProducts(ai.nova.core.shopping.ShoppingQuery(text = "кеды", marketplaces = ai.nova.core.shopping.Marketplace.entries.toSet()))
+                    }.getOrNull()
+                    probe = when {
+                        found == null -> "Проверить не удалось"
+                        found.products.isNotEmpty() -> "Каталог отвечает: нашлось ${found.products.size} товаров"
+                        found.problems.isNotEmpty() -> "Каталог не ответил: ${found.problems.first().error ?: "нет связи"}"
+                        else -> "Каталог ответил, но товаров нет"
+                    }
+                    testing = false
+                }
+            }
+            Hint(
+                "Нова ищет товары и кладёт выбранное в корзину только после вашего подтверждения. " +
+                    "Оформление и оплату она не делает — это всегда вы сами.",
             )
         }
 
