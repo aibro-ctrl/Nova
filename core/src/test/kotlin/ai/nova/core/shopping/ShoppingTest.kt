@@ -124,6 +124,18 @@ class ShoppingTest {
     }
 
     @Test
+    fun `второй магазин не пропадает из-за дешёвых карточек первого`() {
+        // Десять дешёвых карточек Wildberries не должны закрыть Ozon: сравнивать цены иначе не с чем.
+        val wb = (1..12).map { product(id = "wb$it", price = 1000 + it, title = "Кеды Puma") }
+        val ozon = product(id = "ozon1", price = 9000, title = "Кеды Puma Oz").copy(marketplace = Marketplace.OZON)
+        val best = ShoppingRanking.best(wb + ozon, ShoppingQuery(text = "кеды puma"))
+        assertEquals(ShoppingRanking.LIMIT, best.size)
+        assertTrue(best.any { it.marketplace == Marketplace.OZON }, best.map { it.marketplace }.toString())
+        // Второй магазин идёт сразу за лидером, а не в конце списка.
+        assertEquals(Marketplace.OZON, best[1].marketplace)
+    }
+
+    @Test
     fun `список не добивается случайными товарами`() {
         val items = (1..3).map { product(id = "$it", title = "Кеды", price = 1000 * it) }
         assertEquals(3, ShoppingRanking.best(items, ShoppingQuery(text = "кеды")).size)

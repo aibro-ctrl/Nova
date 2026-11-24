@@ -24,14 +24,17 @@ object ShoppingRanking {
             .distinctBy { it.marketplace to it.id }
         if (suitable.isEmpty()) return emptyList()
         val cheapest = suitable.mapNotNull { it.price }.minOrNull()
-        return suitable
+        val ranked = suitable
             .map { it to score(it, query, cheapest) }
             .sortedWith(
                 compareByDescending<Pair<ShoppingProduct, Double>> { it.second }
                     .thenBy { it.first.price ?: Int.MAX_VALUE },
             )
-            .take(limit)
             .map { it.first }
+        // По одному лучшему с каждой площадки — вперёд: иначе десяток дешёвых карточек одного магазина
+        // прячет второй магазин целиком, и сравнивать цены не с чем.
+        val head = ranked.distinctBy { it.marketplace }
+        return (head + ranked).distinctBy { it.marketplace to it.id }.take(limit)
     }
 
     /** Обязательные требования. Если площадка не сообщила данные, товар не отбрасываем, а помечаем. */
