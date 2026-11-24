@@ -2,6 +2,7 @@ package ai.nova.app.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -72,6 +73,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -575,6 +577,7 @@ fun ChatScreen(vm: HomeViewModel, onMic: () -> Unit, onBack: () -> Unit, keyboar
     val zone = remember { java.time.ZoneId.systemDefault() }
     // Разговоры по дням: над каждым днём — «Сегодня», «Вчера» или дата.
     val byDay = remember(history) { history.groupBy { it.createdAt.atZone(zone).toLocalDate() } }
+    val lastId = remember(history) { history.lastOrNull()?.id }
     // Последний ответ всегда внизу: список вырос, поднялась клавиатура, начали печатать.
     LaunchedEffect(listState) {
         snapshotFlow { listState.layoutInfo.totalItemsCount to listState.layoutInfo.viewportSize.height }
@@ -597,7 +600,7 @@ fun ChatScreen(vm: HomeViewModel, onMic: () -> Unit, onBack: () -> Unit, keyboar
                 items(messages, key = { it.id }) { m ->
                     val z = m.createdAt.atZone(zone)
                     val time = remember(m.id) { "%02d:%02d".format(z.hour, z.minute) }
-                    MessageBubble(m.content, m.role == MessageRole.USER, time)
+                    MessageBubble(m.content, m.role == MessageRole.USER, time, fresh = m.id == lastId)
                 }
             }
             if (ui.stage == VoiceStage.PROCESSING) {
@@ -857,14 +860,12 @@ private fun DayHeader(day: java.time.LocalDate) {
  * Ответ Новы разбирается как Markdown, поэтому списки и ссылки приходят читаемыми.
  */
 @Composable
-private fun MessageBubble(text: String, mine: Boolean, time: String?) {
-    var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { shown = true }
-    AnimatedVisibility(
-        visible = shown,
-        enter = fadeIn(tween(180)) + slideInVertically(tween(180)) { it / 6 },
-        exit = fadeOut(),
-    ) {
+private fun MessageBubble(text: String, mine: Boolean, time: String?, fresh: Boolean = false) {
+    // Появление — только прозрачностью и сдвигом: AnimatedVisibility начинает элемент с нулевой высоты,
+    // и LazyColumn теряет высоту всего разговора — список не прокручивается к последнему сообщению.
+    val appear = remember { Animatable(if (fresh) 0f else 1f) }
+    LaunchedEffect(Unit) { if (appear.value < 1f) appear.animateTo(1f, tween(200)) }
+    Box(Modifier.graphicsLayer { alpha = appear.value; translationY = (1f - appear.value) * 24f }) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen, vertical = NovaSpace.xs),
             horizontalAlignment = if (mine) Alignment.End else Alignment.Start,

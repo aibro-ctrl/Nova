@@ -51,16 +51,35 @@ class NovaAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Нажать первую строку с треком в чужом плеере — на странице поиска «Звука» это единственный способ
+     * Нажать строку с треком в чужом плеере — на странице поиска «Звука» это единственный способ
      * начать воспроизведение: приложение не реагирует ни на клавишу «играть», ни на запрос «включи по поиску»,
      * пока не открыт трек. Строку узнаём по подписи вида «Трек · Исполнитель».
+     *
+     * [wanted] — что искать: ждём, пока подгрузятся результаты поиска, и жмём строку с этим названием,
+     * а не первую попавшуюся (иначе включается чужая песня с главного экрана плеера).
      */
-    fun tapFirstTrack(): Boolean {
+    fun tapTrack(wanted: String? = null, attempts: Int = 6) {
+        val words = wordsOf(wanted)
+        val handler = Handler(Looper.getMainLooper())
+        fun attempt(left: Int) {
+            if (pressTrack(words)) return
+            if (left > 1) handler.postDelayed({ attempt(left - 1) }, RETRY_PAUSE_MS)
+        }
+        attempt(attempts)
+    }
+
+    /** Слова названия песни, по которым узнаём строку результата: «Кино — Группа крови». */
+    private fun wordsOf(wanted: String?): List<String> = wanted.orEmpty().lowercase()
+        .split(' ', ',', '—', '-', '.', '!', '?', '(', ')')
+        .map { it.trim() }
+        .filter { it.length >= 3 }
+
+    private fun pressTrack(words: List<String>): Boolean {
         // Окно Новы (ассистент) может быть сверху — тогда строку ищем в окне под ним.
         val roots = listOfNotNull(rootInActiveWindow) + windows.mapNotNull { it.root }
         for (root in roots) {
             if (root.packageName?.toString() == packageName) continue
-            val hit = findTrackRow(root, 0) ?: continue
+            val hit = findTrackRow(root, 0, words) ?: continue
             return hit.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
         }
         return false
@@ -69,23 +88,41 @@ class NovaAccessibilityService : AccessibilityService() {
     private fun findTrackRow(
         node: android.view.accessibility.AccessibilityNodeInfo?,
         depth: Int,
+        words: List<String>,
     ): android.view.accessibility.AccessibilityNodeInfo? {
         if (node == null || depth > 40) return null
         if (node.isVisibleToUser) {
-            if (node.isClickable && hasTrackCaption(node, 0)) return node
-            for (i in 0 until node.childCount) findTrackRow(node.getChild(i), depth + 1)?.let { return it }
+            if (node.isClickable && hasTrackCaption(node, 0) && (words.isEmpty() || matchesWords(node, words, 0))) {
+                return node
+            }
+            for (i in 0 until node.childCount) findTrackRow(node.getChild(i), depth + 1, words)?.let { return it }
         }
         return null
     }
 
+    /** Подпись строки похожа на трек: «Трек · Группа крови» у «Звука», «Песня · …» у других плееров. */
     private fun hasTrackCaption(node: android.view.accessibility.AccessibilityNodeInfo, depth: Int): Boolean {
         if (depth > 6) return false
         val text = (node.text ?: node.contentDescription)?.toString()?.trim().orEmpty()
-        // «Трек · Stopban» у «Звука»; у других плееров подпись может начинаться с «Песня».
         if (TRACK_CAPTION.containsMatchIn(text)) return true
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             if (hasTrackCaption(child, depth + 1)) return true
+        }
+        return false
+    }
+
+    /** В подписи строки есть название песни или исполнителя. */
+    private fun matchesWords(
+        node: android.view.accessibility.AccessibilityNodeInfo,
+        words: List<String>,
+        depth: Int,
+    ): Boolean {
+        if (depth > 6) return false
+        val text = (node.text ?: node.contentDescription)?.toString()?.lowercase().orEmpty()
+        if (words.any { text.contains(it) }) return true
+        for (i in 0 until node.childCount) {
+            if (matchesWords(node.getChild(i) ?: continue, words, depth + 1)) return true
         }
         return false
     }
@@ -211,6 +248,8 @@ class NovaAccessibilityService : AccessibilityService() {
     companion object {
         /** Подпись строки результата в плеере: «Трек · Stopban» у «Звука», «Песня — …» у других. */
         private val TRACK_CAPTION = Regex("""^(?:Трек|Песня)\s*[·•\-—]""")
+        /** Пауза между попытками нажать строку: страница поиска подгружается не сразу. */
+        private const val RETRY_PAUSE_MS = 900L
 
         private const val HOLD_MS = 550L
         private const val DOUBLE_MS = 350L

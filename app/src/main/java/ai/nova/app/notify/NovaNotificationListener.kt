@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit
 class NovaNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         connected = true
+        service = this
         // После переподключения старые записи могли устареть (уведомления смахнули, пока нас не было).
         synchronized(entries) { entries.clear() }
         // Список действующих уведомлений — отдельный запрос к системе, он тоже бывает небыстрым.
@@ -39,6 +40,7 @@ class NovaNotificationListener : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         connected = false
+        service = null
         // Пока нас не слушает система, актуальность сообщений неизвестна: старые не отдаём.
         synchronized(entries) { entries.clear() }
     }
@@ -113,6 +115,8 @@ class NovaNotificationListener : NotificationListenerService() {
         private const val TAG = "Messages"
         private val entries = ArrayDeque<Entry>()
         @Volatile private var connected = false
+        /** Последний подключённый экземпляр: через него читаем медиа-уведомления («что играет»). */
+        @Volatile private var service: NovaNotificationListener? = null
         /** Новое сообщение пришло (для режима «за рулём»). */
         @Volatile var onNewMessage: ((IncomingMessage) -> Unit)? = null
 
@@ -141,6 +145,25 @@ class NovaNotificationListener : NotificationListenerService() {
             NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 
         fun messages(): List<IncomingMessage> = synchronized(entries) { entries.map { it.message } }
+
+        /**
+         * Что играет приложение — из его медиа-уведомления: «25/17 — Чернотроп».
+         * Плееры вроде «Звука» не отдают название через медиа-сессию, а в уведомлении оно есть.
+         * null — уведомления нет или доступ к ним выключен.
+         */
+        fun playingTitle(pkg: String): String? = runCatching {
+            val list = service?.activeNotifications ?: return null
+            val sbn = list.firstOrNull {
+                it.packageName == pkg &&
+                    (it.notification?.flags ?: 0) and Notification.FLAG_ONGOING_EVENT != 0
+            } ?: return null
+            val extras = sbn.notification?.extras ?: return null
+            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+            val text = (extras.getCharSequence(Notification.EXTRA_TEXT)
+                ?: extras.getCharSequence(Notification.EXTRA_SUB_TEXT))?.toString().orEmpty()
+            listOf(title, text).map { it.trim() }.filter { it.isNotEmpty() }
+                .joinToString(" — ").takeIf { it.isNotEmpty() }
+        }.getOrNull()
 
         /** Ответ в чат через «Ответить» уведомления. */
         fun reply(context: Context, key: String, text: String): Boolean {

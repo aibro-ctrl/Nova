@@ -40,22 +40,35 @@ class StreetPlaces(private val http: HttpClient) {
     suspend fun search(query: String, city: String?, here: Pair<Double, Double>?, limit: Int = DEFAULT_LIMIT): List<PlaceCandidate> {
         val q = clean(query)
         if (q.isBlank()) return emptyList()
+        val kind = Places.kind(query)
         val at = here?.let { round(it.first) to round(it.second) }
         val key = "$q|${city.orEmpty().lowercase()}|${at?.first ?: ""},${at?.second ?: ""}"
         // Лимит берём с запасом: тег OSM отсекает лишнее, и чистыми остаются не все 20.
         val pool = (limit * POOL_MULTIPLE).coerceAtLeast(POOL_MIN)
         cache[key]?.takeIf { System.currentTimeMillis() - it.at < TTL_MS }?.let { return it.list }
-        val list = runCatching { request(q, city, here, pool) }.getOrElse {
-            if (it is kotlinx.coroutines.CancellationException) throw it
-            Logger.w(TAG, "Поиск места «$q» не удался", it)
-            emptyList()
+        // Справочник не понимает падежи («до торгового центра Галерея»), поэтому пробуем варианты:
+        // сначала название с городом («Галерея Новосибирск»), потом фразу целиком.
+        var list = emptyList<PlaceCandidate>()
+        for (variant in Places.searchQueries(q, city)) {
+            list = runCatching { request(variant, city, here, pool, kind) }.getOrElse {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                Logger.w(TAG, "Поиск места «$variant» не удался", it)
+                emptyList()
+            }
+            if (list.isNotEmpty()) break
         }
         if (list.isNotEmpty()) cache[key] = Hit(System.currentTimeMillis(), list)
         if (cache.size > 40) cache.entries.removeIf { System.currentTimeMillis() - it.value.at > TTL_MS }
         return list
     }
 
-    private suspend fun request(query: String, city: String?, here: Pair<Double, Double>?, limit: Int): List<PlaceCandidate> {
+    private suspend fun request(
+        query: String,
+        city: String?,
+        here: Pair<Double, Double>?,
+        limit: Int,
+        kind: PlaceKind? = null,
+    ): List<PlaceCandidate> {
         val text = if (city != null && !query.contains(city, ignoreCase = true)) "$query, $city" else query
         val url = buildString {
             append("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&accept-language=ru")
@@ -78,7 +91,9 @@ class StreetPlaces(private val http: HttpClient) {
             header("User-Agent", AGENT)
             header("Accept", "application/json")
         }.bodyAsText()
-        return Nominatim.places(body, Places.kind(query), here, limit)
+        // Вид места берём из того, как человек назвал его сам: «Галерея» без слова «торговый центр»
+        // вид не подскажет, а поиск уже идёт по торговым центрам.
+        return Nominatim.places(body, kind ?: Places.kind(query), here, limit)
     }
 
     private fun clean(text: String) = text.lowercase().replace('ё', 'е').replace(Regex("""[^\p{L}\p{N}\s\-.,]"""), " ")

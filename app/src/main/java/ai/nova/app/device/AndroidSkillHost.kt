@@ -182,6 +182,9 @@ class AndroidSkillHost(
 
     override suspend fun playInMusicApp(query: String, app: MusicApp): Boolean {
         val pkg = app.packages.firstOrNull { installed(it) }
+        // Свою музыку выключаем: иначе поверх играет прошлый трек Новы, а новая песня так и остаётся
+        // на экране поиска — человек слышит старое и думает, что ничего не включилось.
+        runCatching { RadioService.stop(context) }
         return try {
             if (query.isBlank()) {
                 // Без названия песни: открываем приложение и просим его играть (у большинства
@@ -192,38 +195,53 @@ class AndroidSkillHost(
                 ensurePlaying(pkg)
                 return true
             }
-            // Плеерная служба приложения сама находит трек по названию и включает его — так же, как часы
-            // и Android Auto. Это единственный путь, который работает у «Звука»: его страница поиска
-            // воспроизведение не запускает, и клавиша «играть» на ней уходит в никуда.
-            if (pkg != null && !app.tapsFirstResult && mediaSearch.play(pkg, query) && started(pkg)) return true
-            // Если служба не ответила — стандартный запрос «включи по поиску»: Яндекс Музыка и Spotify
-            // по нему реально начинают играть. «Звуку» он не подходит: там сначала нужна страница поиска.
+            // Играть может и прошлый трек: плеер отвечает «принято», а очередь остаётся прежней.
+            // Поэтому каждый путь заканчивается проверкой, что заиграла именно названная песня.
+            val before = pkg?.let { ai.nova.app.media.PlaybackCheck.track(context, it) }
+            suspend fun heard(): Boolean? =
+                pkg?.let { ai.nova.app.media.PlaybackCheck.waitTrack(context, it, before, query) }
+
+            // 1. Служба плеера приложения: сама находит трек по названию — так же, как часы и Android Auto.
+            if (pkg != null && mediaSearch.play(pkg, query)) {
+                val ok = heard()
+                Logger.d("Music", "служба плеера ${app.title}: ${ok ?: "не проверить"}")
+                if (ok != false) return true
+            }
+            // 2. Стандартный запрос «включи по поиску»: по нему начинают играть Яндекс Музыка и Spotify.
+            //    «Звуку» он не подходит — там сначала нужна страница поиска.
             val play = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
                 .putExtra(SearchManager.QUERY, query)
                 .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
             if (pkg != null) play.setPackage(pkg)
             if (!app.tapsFirstResult && play.resolveActivity(context.packageManager) != null && launcher.launch(play)) {
-                // Часть плееров (в том числе «Звук») понимает такой запрос только как поиск: песню
-                // они показывают, но не запускают — дожимаем клавишей «играть», если тишина.
                 ensurePlaying(pkg)
-                return started(pkg)
+                val ok = heard()
+                Logger.d("Music", "запрос воспроизведения ${app.title}: ${ok ?: "не проверить"}")
+                return ok ?: started(pkg)
             }
-            // Не вышло — открываем поиск в самом приложении, а без него в браузере.
+            // 3. Поиск внутри приложения. «Звук» включает песню только после нажатия строки в результатах —
+            //    это делают спецвозможности. Без них честно говорим, что нажать нужно самому.
             val web = app.webUrl(Uri.encode(query))
             val inApp = Intent(Intent.ACTION_VIEW, Uri.parse(web))
             if (pkg != null) inApp.setPackage(pkg)
             if (inApp.resolveActivity(context.packageManager) != null && launcher.launch(inApp)) {
-                // Страница поиска открыта; если плеер сам не начал играть — через пару секунд нажимаем
-                // первую строку с треком (спецвозможности) и дожимаем «играть».
                 if (app.tapsFirstResult) {
-                    main.postDelayed({ NovaAccessibilityService.current?.tapFirstTrack() }, TAP_RESULT_DELAY_MS)
+                    main.postDelayed({ NovaAccessibilityService.current?.tapTrack(query) }, TAP_RESULT_DELAY_MS)
                 }
                 ensurePlaying(pkg)
-                return started(pkg)
+                // Страница поиска и подгрузка результатов занимают несколько секунд.
+                val ok = pkg?.let {
+                    ai.nova.app.media.PlaybackCheck.waitTrack(context, it, before, query, attempts = 10)
+                }
+                Logger.d("Music", "поиск в ${app.title}: ${ok ?: "не проверить"}")
+                return ok ?: started(pkg)
             }
+            // 4. Совсем не вышло — открываем поиск в браузере. Включать там нечего, поэтому ответ будет
+            //    честным: песня не заиграла, нажать трек нужно самому.
             val browser = Intent(Intent.ACTION_VIEW, Uri.parse(web))
             if (browser.resolveActivity(context.packageManager) == null) return false
             launcher.launch(browser)
+            false
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {

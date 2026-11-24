@@ -152,6 +152,51 @@ object Places {
         return t.any { it.isLetter() }
     }
 
+    /** Слова-предлоги и уточнения: в названии места они лишние. */
+    private val FILLER = setOf(
+        "до", "к", "в", "во", "на", "у", "около", "возле", "рядом", "ближайший", "ближайшая",
+        "ближайшее", "ближайшую", "поблизости", "недалеко", "мне", "меня", "пожалуйста",
+    )
+
+    /** Слова-типы: они описывают, что это за место, а не как оно называется. */
+    private val GENERIC = listOf(
+        "торгов", "центр", "тц", "трц", "молл", "mall", "магазин", "аптек", "лекарств", "кафе",
+        "ресторан", "кофейн", "супермаркет", "гипермаркет", "продукт", "заправк", "бензин", "азс",
+        "азк", "банкомат", "банк", "кинотеатр", "кино", "гостиниц", "отел", "отель", "парковк",
+        "стоянк", "стоматолог", "зубн", "рынок", "базар", "одежд", "бутик", "обув", "шопинг", "шмот",
+    )
+
+    /**
+     * Название места без слов-типов: «до торгового центра Галерея» → «галерея».
+     * null — в названии одни типы («аптека», «ближайший торговый центр»), искать нечего.
+     */
+    fun name(text: String): String? {
+        val words = norm(text).split(' ').filter { it.isNotBlank() }
+        var i = 0
+        while (i < words.size && words[i] in FILLER) i++
+        while (i < words.size && GENERIC.any { k -> words[i].startsWith(k) && words[i].length - k.length <= 3 }) i++
+        // Остаток с предлога сразу — не название, а описание: «кафе в парке» это не «парке».
+        if (i == 0 || i >= words.size || words[i] in FILLER) return null
+        return words.drop(i).joinToString(" ")
+    }
+
+    /**
+     * Как искать место в справочнике. Справочник плохо понимает падежи: «до торгового центра галерея»
+     * не находит ничего, а «галерея Новосибирск» — сразу. Поэтому сначала пробуем название с городом,
+     * а потом — то, как сказали.
+     */
+    fun searchQueries(text: String, city: String?): List<String> {
+        val spoken = text.trim()
+        val place = name(spoken)
+        val town = city?.trim().orEmpty()
+        val first = when {
+            place == null -> null
+            town.isEmpty() || place.contains(town, ignoreCase = true) -> place
+            else -> "$place $town"
+        }
+        return listOfNotNull(first, spoken).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+    }
+
     /** Расстояние словами: «350 метров отсюда», «2,4 км отсюда»; пусто — расстояния не знаем. */
     fun distance(meters: Int?): String = when {
         meters == null || meters <= 0 -> ""

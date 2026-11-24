@@ -25,12 +25,19 @@ class MusicAppTest {
         }
     })
 
-    private class Host(private val installed: List<MusicApp>, private val paused: Boolean = false) : SkillHost {
+    private class Host(
+        private val installed: List<MusicApp>,
+        private val paused: Boolean = false,
+        private val plays: Boolean = true,
+    ) : SkillHost {
         val launched = ArrayList<Pair<String, MusicApp>>()
         val played = ArrayList<String>()
         var remembered: MusicApp? = null
         override fun hasMusicApp(app: MusicApp) = app in installed
-        override suspend fun playInMusicApp(query: String, app: MusicApp): Boolean { launched += query to app; return true }
+        override suspend fun playInMusicApp(query: String, app: MusicApp): Boolean {
+            launched += query to app
+            return plays
+        }
         override fun resumeMusic() = paused
         override fun musicApp() = remembered
         override fun rememberMusicApp(app: MusicApp) { remembered = app }
@@ -109,6 +116,25 @@ class MusicAppTest {
         assertEquals(MusicApp.YANDEX, host.launched.single().second)
         assertTrue(host.launched.single().first.equals("Многоточие", ignoreCase = true), host.launched.toString())
         assertTrue(reply.contains("Многоточие", ignoreCase = true), reply)
+    }
+
+    @Test fun `выбор в настройках главнее проверки установки`() = runTest {
+        // Название пакета у сборок разное, и проверка «установлено» может не узнать приложение.
+        // Человек уже выбрал — второй раз не спрашиваем.
+        val host = Host(emptyList())
+        host.remembered = MusicApp.ZVUK
+        val e = env(host)
+        val reply = e.engine.handle("включи песню кино — группа крови").text
+        assertEquals(listOf("кино — группа крови" to MusicApp.ZVUK), host.launched)
+        assertTrue(!reply.contains("В каком приложении"), "не спрашиваем: $reply")
+    }
+
+    @Test fun `выбор запоминается, даже если включить не удалось`() = runTest {
+        val host = Host(listOf(MusicApp.YANDEX), plays = false)
+        val e = env(host)
+        val reply = e.engine.handle("включи музыку").text
+        assertEquals(MusicApp.YANDEX, host.remembered, "ответ остаётся в настройках: $reply")
+        assertTrue(reply.contains("Не получилось"), reply)
     }
 
     @Test fun `нет музыкальных приложений - честно говорим`() = runTest {

@@ -2,6 +2,7 @@ package ai.nova.core.review
 
 import ai.nova.core.assistant.RuFormat
 import ai.nova.core.domain.ConversationRepository
+import ai.nova.core.model.ConversationMessage
 import ai.nova.core.model.MessageRole
 import ai.nova.core.nlp.RuTokenizer
 import ai.nova.core.nlp.Rx
@@ -20,19 +21,32 @@ class ChatSearch(private val conversations: ConversationRepository, private val 
      * О чём именно спрашивали: «какие маршруты я искал вчера». Тема узнаётся по словам в прошлых
      * просьбах — человеку не нужно помнить формулировку, а Нове не нужно его переспрашивать.
      */
-    enum class Topic(val phrase: String, private val markers: List<String>, private val subject: Regex?) {
-        ROUTES("маршруты", listOf("маршрут", "проложи", "добраться", "доехать", "как доехать", "навигац", "путь до"), Rx.of("""(?:до|в|во|к|на)\s+(.+)$""")),
-        RECIPES("рецепты", listOf("рецепт", "приготов", "сварить", "испечь"), Rx.of("""рецепт\S*\s+(.+)$""")),
-        MUSIC("песни", listOf("песн", "трек", "музык", "групп", "исполнител", "альбом"), Rx.of("""(?:песню|песни|трек|музыку|группу|исполнителя|альбом)\s+(.+)$""")),
-        VIDEO("видео", listOf("видео", "фильм", "сериал", "ютуб", "мультик"), Rx.of("""(?:видео|фильм|сериал|мультик)\s+(.+)$""")),
-        SEARCH("в интернете", listOf("в интернете", "загугли", "поиск", "нашла в"), Rx.of("""(?:в интернете|загугли|поищи|найди|поиск)\s+(.+)$""")),
-        WEATHER("погоду", listOf("погод"), null),
-        SHOPPING("покупки", listOf("покупк", "в список", "купить"), null),
-        SPENDINGS("расходы", listOf("расход", "потрат", "потратил", "траты"), null),
-        NOTES("заметки", listOf("заметк", "запиши"), null),
-        REMINDERS("напоминания", listOf("напомн"), null);
+    enum class Topic(
+        val phrase: String,
+        private val markers: List<String>,
+        private val subject: Regex?,
+        /** Как сказать о теме в сводке: «искали маршрут», «спрашивали про погоду». */
+        private val verb: String,
+    ) {
+        ROUTES("маршруты", listOf("маршрут", "проложи", "добраться", "доехать", "как доехать", "навигац", "путь до"), Rx.of("""(?:до|в|во|к|на)\s+(.+)$"""), "искали маршрут"),
+        RECIPES("рецепты", listOf("рецепт", "приготов", "сварить", "испечь"), Rx.of("""рецепт\S*\s+(.+)$"""), "интересовались рецептами"),
+        MUSIC("песни", listOf("песн", "трек", "музык", "групп", "исполнител", "альбом"), Rx.of("""(?:песню|песни|трек|музыку|группу|исполнителя|альбом)\s+(.+)$"""), "включали музыку"),
+        VIDEO("видео", listOf("видео", "фильм", "сериал", "ютуб", "мультик"), Rx.of("""(?:видео|фильм|сериал|мультик)\s+(.+)$"""), "смотрели видео"),
+        SEARCH("в интернете", listOf("в интернете", "загугли", "поиск", "нашла в"), Rx.of("""(?:в интернете|загугли|поищи|найди|поиск)\s+(.+)$"""), "искали в интернете"),
+        WEATHER("погоду", listOf("погод"), null, "спрашивали про погоду"),
+        SHOPPING("покупки", listOf("покупк", "в список", "купить"), null, "добавляли покупки"),
+        SPENDINGS("расходы", listOf("расход", "потрат", "потратил", "траты"), null, "записывали расходы"),
+        NOTES("заметки", listOf("заметк", "запиши"), null, "делали заметки"),
+        REMINDERS("напоминания", listOf("напомн"), null, "ставили напоминания");
 
         fun matches(normalized: String): Boolean = markers.any { normalized.contains(it) }
+
+        /** «искали маршрут дважды» — для сводки разговора: сколько раз и о чём. */
+        fun phrase(count: Int): String = when {
+            count <= 1 -> verb
+            count == 2 -> "$verb дважды"
+            else -> "$verb ${RuFormat.count(count, "раз", "раза", "раз")}"
+        }
 
         /** Что именно искали — «аптека» из «построй маршрут до аптеки»; иначе сама фраза. */
         fun what(normalized: String): String {
@@ -51,6 +65,11 @@ class ChatSearch(private val conversations: ConversationRepository, private val 
     }
 
     companion object {
+        /** Больше четырёх тем в сводке — уже не сводка. */
+        private const val TOPICS_LIMIT = 4
+        /** И не больше трёх цитат: остальное человек помнит сам. */
+        private const val QUOTES_LIMIT = 3
+
         private const val PERIOD = """(вчера|сегодня|позавчера|на\s+прошлой\s+неделе|на\s+этой\s+неделе|на\s+неделе|за\s+неделю|в\s+этом\s+месяце|в\s+прошлом\s+месяце|за\s+месяц|недавно)"""
         private val ABOUT = Rx.of("""^(?:а\s+)?(?:что|когда)\s+(?:я\s+)?(?:тебе\s+)?(?:говорил|говорила|говорили|рассказывал|рассказывала|спрашивал|спрашивала|писал|писала|упоминал|упоминала)\s+(?:тебе\s+)?(?:про|о|об|насчет|насчёт)\s+(.+?)(?:\s+$PERIOD)?$""")
         /** Период стоит между глаголом и темой: «о чём я говорил вчера насчёт здоровья». */
@@ -125,25 +144,88 @@ class ChatSearch(private val conversations: ConversationRepository, private val 
             else -> " с ${ask.from.dayOfMonth}.${"%02d".format(ask.from.monthValue)} по ${ask.to!!.dayOfMonth}.${"%02d".format(ask.to.monthValue)}"
         }
         ask.topic?.let { return digest(it, ask, all, zone, today, period) }
-        val hits = if (ask.query == null) all.sortedByDescending { it.createdAt }.take(8) else {
-            val want = TextAnalysis.stems(ask.query)
-            if (want.isEmpty()) return "Про что искать? Скажите, например: «что я говорила про ремонт»."
-            all.map { m ->
-                val have = TextAnalysis.stems(m.content)
-                m to want.count { w -> have.any { TextAnalysis.stemSimilarity(w, it) >= 0.75 } }
-            }.filter { it.second > 0 && (want.size == 1 || it.second * 2 >= want.size) }
-                .sortedWith(compareByDescending<Pair<ai.nova.core.model.ConversationMessage, Int>> { it.second }.thenByDescending { it.first.createdAt })
-                .map { it.first }.take(5)
-        }
-        if (hits.isEmpty()) {
-            return if (ask.query == null) "Разговоров$period не нашла." else "Не нашла в разговорах$period ничего про ${RuFormat.quote(ask.query)}."
-        }
-        val head = if (ask.query == null) "Вы говорили$period:" else "Про ${RuFormat.quote(ask.query)} вы говорили$period:"
-        return head + "\n" + hits.sortedBy { it.createdAt }.joinToString("\n") { m ->
+        val query = ask.query
+        // «О чём мы говорили сегодня» — короткая сводка: перечень реплик со временем слушать невозможно.
+        if (query == null) return overview(all, ask, today, period)
+        val want = TextAnalysis.stems(query)
+        if (want.isEmpty()) return "Про что искать? Скажите, например: «что я говорила про ремонт»."
+        val hits = all.map { m ->
+            val have = TextAnalysis.stems(m.content)
+            m to want.count { w -> have.any { TextAnalysis.stemSimilarity(w, it) >= 0.75 } }
+        }.filter { it.second > 0 && (want.size == 1 || it.second * 2 >= want.size) }
+            .sortedWith(compareByDescending<Pair<ConversationMessage, Int>> { it.second }.thenByDescending { it.first.createdAt })
+            .map { it.first }.take(5)
+        if (hits.isEmpty()) return "Не нашла в разговорах$period ничего про ${RuFormat.quote(query)}."
+        return "Про ${RuFormat.quote(query)} вы говорили$period:\n" + hits.sortedBy { it.createdAt }.joinToString("\n") { m ->
             val d = m.createdAt.atZone(zone)
             val day = RuFormat.date(d.toLocalDate(), today).removePrefix("в ")
             "• $day в ${RuFormat.time(d.toLocalTime())}: ${RuFormat.quote(m.content.take(120))}"
         }
+    }
+
+    /**
+     * Сводка разговора: «сегодня вы искали маршрут дважды, спрашивали про погоду и новости».
+     *
+     * Раньше Нова перечисляла каждую реплику со временем — восемь строк «сегодня в 14:30 ты искал
+     * маршрут» невозможно слушать, и человек так и не узнавал, чем занимался. Теперь темы
+     * складываются в одну фразу, а всё остальное — до трёх коротких цитат.
+     */
+    private fun overview(
+        all: List<ConversationMessage>,
+        ask: Ask,
+        today: LocalDate,
+        period: String,
+    ): String {
+        if (all.isEmpty()) return "Разговоров$period не нашла."
+        val counts = LinkedHashMap<Topic, Int>()
+        val others = ArrayList<ConversationMessage>()
+        all.sortedBy { it.createdAt }.forEach { m ->
+            val n = RuTokenizer.normalize(m.content)
+            val topic = Topic.entries.firstOrNull { it.matches(n) }
+            if (topic != null) counts[topic] = (counts[topic] ?: 0) + 1 else others += m
+        }
+        val topics = mergeVerbs(counts.entries.take(TOPICS_LIMIT).map { (topic, count) -> topic.phrase(count) })
+        val quotes = others.map { it.content.trim() }
+            .filter { it.isNotEmpty() }
+            .distinctBy { TextAnalysis.stems(it).joinToString(" ") }
+            .takeLast(QUOTES_LIMIT)
+            .map { RuFormat.quote(it.take(60)) }
+        val day = if (ask.from != null && ask.from == ask.to) {
+            RuFormat.date(ask.from, today).replaceFirstChar { it.uppercase() }
+        } else {
+            "За это время"
+        }
+        val summary = when {
+            topics.isEmpty() -> if (quotes.isEmpty()) "Разговоров$period не нашла." else "$day вы говорили о разном"
+            else -> "$day вы ${joinRu(topics)}"
+        }
+        return when {
+            quotes.isEmpty() -> summary + "."
+            topics.isEmpty() -> "$day вы говорили о разном: ${quotes.joinToString(", ")}."
+            else -> "$summary. Ещё: ${quotes.joinToString(", ")}."
+        }
+    }
+
+    /**
+     * «искали маршрут дважды и [искали] в интернете» — общий глагол не повторяем:
+     * «Сегодня вы искали маршрут дважды и в интернете дважды».
+     */
+    private fun mergeVerbs(parts: List<String>): List<String> {
+        val out = ArrayList<String>(parts.size)
+        var head: String? = null
+        for (part in parts) {
+            val first = part.substringBefore(' ')
+            out += if (head == first && part.contains(' ')) part.substringAfter(' ') else part
+            head = first
+        }
+        return out
+    }
+
+    /** «а, б и в» — как по-русски, а не «а, б, в». */
+    private fun joinRu(parts: List<String>): String = when (parts.size) {
+        0 -> ""
+        1 -> parts.single()
+        else -> parts.dropLast(1).joinToString(", ") + " и " + parts.last()
     }
 
     /**

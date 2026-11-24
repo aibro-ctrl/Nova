@@ -755,8 +755,8 @@ class Skills(
             }
             // Плеер мог открыться, но не начать играть (подписка, отказ службы воспроизведения) — не обещаем лишнего.
             return if (host.hasMusicApp(app)) SkillOutcome.Say(
-                "Не получилось включить ${if (query != null) "«${pretty(query)}» " else "музыку "}в ${app.title}." +
-                    " Откройте приложение и нажмите трек — или включите спецвозможности Нова, и я нажму сама.",
+                "Не получилось включить ${if (query != null) "«${pretty(query)}» " else "музыку "}в ${app.title} сама." +
+                    " Открыла поиск — нажмите трек. Включите спецвозможности Нова, и в следующий раз нажму за вас.",
             )
             else SkillOutcome.Say("На телефоне нет «${app.title}». Скажите «включи песню ${query.orEmpty()}» — найду её и включу сама.")
         }
@@ -787,9 +787,11 @@ class Skills(
 
     /** В каком приложении включать песню: выбранное раньше, иначе первое, что умеет включать по названию. */
     private fun playbackApp(): MusicApp? {
-        host.musicApp()?.takeIf { host.hasMusicApp(it) }?.let { return it }
+        // Выбор человека главнее проверки «установлено»: название пакета у сборок приложения бывает
+        // разным, и раньше из-за этого Нова спрашивала «в каком приложении включить» каждый раз,
+        // хотя в настройках всё было выбрано. Не установлено — так и скажем, но спрашивать не будем.
+        host.musicApp()?.let { return it }
         // Ничего не выбрано: если приложение одно — его и берём, иначе спросим (см. [musicPlay]).
-        // Раньше молча выбиралось первое подходящее, и выбор нельзя было ни увидеть, ни изменить.
         return MusicApp.PREFERRED.filter { host.hasMusicApp(it) }.singleOrNull()
     }
 
@@ -797,9 +799,11 @@ class Skills(
     private suspend fun playInChosen(app: MusicApp): SkillOutcome {
         val query = awaitMusicQuery
         awaitMusicQuery = null
+        // Выбор запоминаем сразу: даже если песня не заиграла (нет подписки, плеер не принял запрос),
+        // спрашивать «в каком приложении» второй раз нельзя — человек уже ответил.
+        host.rememberMusicApp(app)
         if (query.isNullOrBlank()) return openMusicApp(app)
         if (host.playInMusicApp(query, app)) {
-            host.rememberMusicApp(app)
             lastMusicQuery = query
             lastMusicAt = time.now()
             return SkillOutcome.Say("Включаю «$query» в ${app.title}.")
@@ -818,8 +822,7 @@ class Skills(
         if (installed.isEmpty()) {
             return SkillOutcome.Say("На телефоне нет музыкального приложения. Скажите «включи песню Кино — Группа крови» — сыграю её сама.")
         }
-        val remembered = host.musicApp()?.takeIf { it in installed }
-        val chosen = remembered ?: installed.singleOrNull()
+        val chosen = host.musicApp() ?: installed.singleOrNull()
         if (chosen == null) {
             awaitMusicQuery = null
             awaitMusicApp = installed
@@ -832,8 +835,9 @@ class Skills(
     }
 
     private suspend fun openMusicApp(app: MusicApp): SkillOutcome {
+        // Выбор запоминаем до попытки: если приложение не открылось, спрашивать второй раз всё равно нельзя.
+        host.rememberMusicApp(app)
         if (host.playInMusicApp("", app)) {
-            host.rememberMusicApp(app)
             return SkillOutcome.Say("Включаю музыку в ${app.title}.")
         }
         return SkillOutcome.Say("Не получилось открыть ${app.title}. Проверьте, что приложение работает, и скажите ещё раз.")

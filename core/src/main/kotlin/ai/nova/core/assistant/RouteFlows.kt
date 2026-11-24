@@ -130,8 +130,9 @@ internal class RouteFlows(
             emptyList()
         }
         if (found.isEmpty()) {
-            // Место не нашли (нет сети или места телефона) — пусть карты ищут сами: маршрут по названию.
-            val r = device.perform(DeviceCommand.Navigate(query, app))
+            // Место не нашли (нет сети или места телефона) — пусть карты ищут сами. Ищут по названию
+            // без слов-типов: «Галерея» вместо «до торгового центра Галерея» — так поиск карт находит.
+            val r = device.perform(DeviceCommand.Navigate(Places.name(query) ?: query, app))
             return Step(listOf(Outcome(r.text, if (r.ok) Outcome.Kind.QUERY else Outcome.Kind.ERROR)))
         }
         val place = found.first()
