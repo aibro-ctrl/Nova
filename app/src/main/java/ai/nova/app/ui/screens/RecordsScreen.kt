@@ -119,23 +119,22 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
             0, 1 -> {
                 if (segment == 0) item(key = "secret") { SecretNotesEntry(c) }
                 val list = if (segment == 0) notes else ideas
-                item(key = "list-label") {
+                // Заголовок секции нужен только вместе со списком: пустое состояние говорит само за себя.
+                if (list.isNotEmpty()) item(key = "list-label") {
                     SectionLabel(
-                        if (segment == 0) "Заметки" else "Идеи",
-                        trailing = if (list.isEmpty()) null else {
-                            {
-                                TextButton(onClick = {
-                                    val csv = ai.nova.core.export.CsvExport.notes(list, c.time.zone())
-                                    scope.launch {
-                                        c.device.perform(
-                                            ai.nova.core.assistant.DeviceCommand.ShareFile(
-                                                ai.nova.core.export.CsvExport.fileName(if (segment == 0) "notes" else "ideas", null, null),
-                                                "text/csv", csv,
-                                            ),
-                                        )
-                                    }
-                                }) { Text("Выгрузить", style = MaterialTheme.typography.labelLarge) }
-                            }
+                        if (segment == 0) "Заметки · ${list.size}" else "Идеи · ${list.size}",
+                        trailing = {
+                            TextButton(onClick = {
+                                val csv = ai.nova.core.export.CsvExport.notes(list, c.time.zone())
+                                scope.launch {
+                                    c.device.perform(
+                                        ai.nova.core.assistant.DeviceCommand.ShareFile(
+                                            ai.nova.core.export.CsvExport.fileName(if (segment == 0) "notes" else "ideas", null, null),
+                                            "text/csv", csv,
+                                        ),
+                                    )
+                                }
+                            }) { Text("Выгрузить", style = MaterialTheme.typography.labelLarge) }
                         },
                     )
                 }

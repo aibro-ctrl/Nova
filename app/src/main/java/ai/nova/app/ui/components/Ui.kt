@@ -270,7 +270,7 @@ fun NovaFab(icon: ImageVector, description: String, onClick: () -> Unit) {
         onClick = onClick,
         interactionSource = interaction,
         modifier = Modifier.graphicsLayer { scaleX = appear; scaleY = appear; alpha = appear }.pressScale(interaction),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(NovaRadius.card),
         containerColor = MaterialTheme.colorScheme.primary,
         contentColor = MaterialTheme.colorScheme.onPrimary,
         elevation = FloatingActionButtonDefaults.elevation(2.dp, 2.dp, 2.dp, 2.dp),
@@ -314,7 +314,7 @@ fun GroupDivider(inset: Dp = 16.dp) {
 @Composable
 fun IconTile(icon: ImageVector, tint: Color = MaterialTheme.colorScheme.primary, size: Dp = 36.dp) {
     Box(
-        Modifier.size(size).clip(RoundedCornerShape(11.dp)).background(tint.copy(alpha = 0.12f)),
+        Modifier.size(size).clip(RoundedCornerShape(NovaRadius.small)).background(tint.copy(alpha = 0.12f)),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(size * 0.56f)) }
 }
@@ -561,7 +561,7 @@ fun NovaField(
         supportingText = supporting?.let { { Text(it) } },
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         visualTransformation = visualTransformation,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(NovaRadius.field),
         modifier = modifier.fillMaxWidth(),
     )
 }
@@ -573,10 +573,14 @@ fun EditorSheet(title: String, onDismiss: () -> Unit, content: @Composable Colum
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(
-            Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(start = NovaSpace.xl, end = NovaSpace.xl, bottom = NovaSpace.xl),
+            verticalArrangement = Arrangement.spacedBy(NovaSpace.m),
         ) {
-            Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 4.dp))
+            Text(
+                title,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                modifier = Modifier.padding(bottom = NovaSpace.xs),
+            )
             content()
         }
     }
@@ -588,7 +592,7 @@ fun ConfirmDialog(title: String, text: String, confirm: String, onConfirm: () ->
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = { Text(text) },
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(NovaRadius.sheet),
         confirmButton = {
             TextButton(onClick = { onDismiss(); onConfirm() }) {
                 Text(confirm, color = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
@@ -601,7 +605,7 @@ fun ConfirmDialog(title: String, text: String, confirm: String, onConfirm: () ->
 /** Свёрнутый блок «Дополнительно»: редкие настройки не мешают обычному человеку. */
 @Composable
 fun MoreToggle(expanded: Boolean, onToggle: () -> Unit, title: String = "Дополнительно") {
-    Group(Modifier.padding(top = 16.dp)) {
+    Group(Modifier.padding(top = NovaSpace.l)) {
         RowItem(
             title = title,
             subtitle = if (expanded) "Скрыть" else "Для тех, кто хочет настроить всё сам",

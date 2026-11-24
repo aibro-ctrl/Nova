@@ -65,6 +65,7 @@ import java.time.LocalDate
 import ai.nova.app.ui.components.bodySecondaryStyle
 import ai.nova.app.ui.theme.NovaSpace
 import ai.nova.app.ui.theme.amountStyle
+import ai.nova.app.ui.theme.amberColor
 
 /**
  * Доли категорий в одной бирюзово-шалфейной гамме: цвет помогает различить категории,
@@ -93,6 +94,8 @@ fun ExpensesScreen(c: AppContainer, openActions: () -> Unit = {}) {
     val today = c.time.today()
     val range = ExpenseAnalytics.range(presets[presetIndex].first, today)
     val report = ExpenseAnalytics.report(all, range)
+    // «За текущий день» нужно видеть при любом выбранном периоде: это самая частая цифра.
+    val todayMinor = all.filter { it.occurredOn == today && it.currency == report.currency }.sumOf { it.amountMinor }
 
     NovaScreen(
         title = "Расходы",
@@ -117,6 +120,14 @@ fun ExpensesScreen(c: AppContainer, openActions: () -> Unit = {}) {
                         report.otherCurrencies.entries.joinToString("") { (cur, sum) -> " · + ${Money.format(sum, cur)}" },
                     style = bodySecondaryStyle(),
                 )
+                if (presets[presetIndex].first != PeriodPreset.TODAY && todayMinor > 0) {
+                    Text(
+                        "Сегодня ${Money.format(todayMinor, report.currency)}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = amberColor(),
+                        modifier = Modifier.padding(top = NovaSpace.xs),
+                    )
+                }
             }
         }
         item(key = "periods") { Pills(presets.map { it.second }, presetIndex, { presetIndex = it }, Modifier.padding(vertical = NovaSpace.l)) }
