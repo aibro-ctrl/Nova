@@ -90,7 +90,7 @@ class StreetPlaces(private val http: HttpClient) {
 
     private companion object {
         const val TAG = "Nova/Places"
-        const val AGENT = "Nova-Assistant/2.29.0 (Android; +https://github.com/aibro-ctrl/Nova)"
+        const val AGENT = "Nova-Assistant/3.0.0 (Android; +https://github.com/aibro-ctrl/Nova)"
         const val TTL_MS = 10 * 60_000L
         const val MIN_INTERVAL_MS = 1_100L
         const val MAX_RESULTS = 20
