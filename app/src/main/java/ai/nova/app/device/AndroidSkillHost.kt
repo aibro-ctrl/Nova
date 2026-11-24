@@ -56,7 +56,7 @@ class AndroidSkillHost(
     /** Клиент для каталога площадок (поиск товаров). */
     private val http: io.ktor.client.HttpClient? = null,
     /** Маркетплейсы, выбранные в настройках «Действия»; пусто — все. */
-    private val shoppingMarketplaces: () -> Set<ai.nova.core.shopping.Marketplace> = { emptySet() },
+    private val selectedMarketplaces: () -> Set<ai.nova.core.shopping.Marketplace> = { emptySet() },
 ) : SkillHost {
     private val locator = Locator(context)
     private val players = ai.nova.app.media.OtherPlayers(context)
@@ -346,7 +346,7 @@ class AndroidSkillHost(
     override suspend fun searchProducts(query: ai.nova.core.shopping.ShoppingQuery): ai.nova.core.shopping.ShoppingSearchResult =
         withContext(Dispatchers.IO) { shoppingSearch.search(query) }
 
-    override fun shoppingMarketplaces(): Set<ai.nova.core.shopping.Marketplace> = shoppingMarketplaces()
+    override fun shoppingMarketplaces(): Set<ai.nova.core.shopping.Marketplace> = selectedMarketplaces()
 
     /**
      * Корзина. Ни Ozon, ни Wildberries не дают другому приложению положить товар в корзину — такого

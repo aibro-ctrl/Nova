@@ -212,7 +212,7 @@ class AppContainer(private val context: Context) {
         musicAppSetting = { ai.nova.core.skills.MusicApp.entries.firstOrNull { it.name == settings.settings.value.musicApp } },
         onMusicApp = { app -> appScope.launch { settings.setMusicApp(app.name) } },
         http = http,
-        shoppingMarketplaces = { shoppingMarketplaces() },
+        selectedMarketplaces = { shoppingMarketplaces() },
     )
     /** Площадки для покупок: выбранные в настройках, иначе обе. */
     fun shoppingMarketplaces(): Set<ai.nova.core.shopping.Marketplace> {

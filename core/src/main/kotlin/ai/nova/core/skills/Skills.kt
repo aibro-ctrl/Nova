@@ -33,6 +33,8 @@ sealed interface SkillOutcome {
         val sensitive: Boolean = false,
         /** Карточки товаров — показываются в чате под ответом, а не проговариваются. */
         val products: List<ai.nova.core.shopping.ShoppingProduct> = emptyList(),
+        /** Страница, которую навык открыл: остаётся в истории ссылкой, чтобы вернуться к ней позже. */
+        val link: String? = null,
     ) : SkillOutcome
 
     /** Выполнить обычные действия (открыть ссылку, поиск в интернете). */

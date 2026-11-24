@@ -27,7 +27,7 @@ class ShoppingTest {
         assertEquals(10_000, q.priceTo)
         assertFalse(q.text.contains("хочу"))
         assertFalse(q.text.contains("размер"))
-        assertTrue(q.searchText().contains("Puma"))
+        assertTrue(q.searchText().contains("puma", ignoreCase = true))
     }
 
     @Test
@@ -283,6 +283,20 @@ class ShoppingTest {
         url = "https://www.wildberries.ru/catalog/$id/detail.aspx",
         sizes = sizes,
     )
+
+    @Test
+    fun `буквенный размер одежды не становится брендом`() {
+        val q = ShoppingIntent.parse("найди мне футболку puma xxl размера")
+        assertEquals("XXL", q.size)
+        assertEquals("Puma", q.brand)
+        assertEquals("футболку puma XXL", q.searchText())
+    }
+
+    @Test
+    fun `бренд не повторяется в запросе к площадке`() {
+        val q = ShoppingIntent.parse("хочу кеды puma 46 размер до 10 тысяч")
+        assertEquals("кеды puma 46 размер", q.searchText())
+    }
 
     private class FakeMemory : MemoryRepository {
         val items = ArrayList<MemoryItem>()

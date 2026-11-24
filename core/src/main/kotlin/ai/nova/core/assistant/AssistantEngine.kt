@@ -227,6 +227,11 @@ class AssistantEngine(
         } catch (e: Exception) {
             Logger.e(TAG, "Ошибка обработки команды", e)
             AssistantReply("Что-то пошло не так: ${e.message ?: "неизвестная ошибка"}. Попробуйте ещё раз.")
+        } catch (e: Throwable) {
+            // Сбой внутри навыка (например, исчерпание стека) не должен оставить «Думаю» на экране навсегда:
+            // человек получает ответ, а приложение продолжает работать.
+            Logger.e(TAG, "Сбой обработки команды", e)
+            AssistantReply("Сломалась на этой фразе. Попробуйте сказать иначе или чуть позже.")
         }
         if (!dialog.repeating) {
             // Найденное (рецепт, статья) запоминаем: «запиши его в заметки» в следующей фразе.
@@ -1284,7 +1289,7 @@ class AssistantEngine(
         when (out) {
             is ai.nova.core.skills.SkillOutcome.Say -> AssistantReply(
                 out.text, expectFollowUp = out.followUp, awaitingAnswer = out.followUp, permission = out.permission, speakLanguage = out.speakLanguage,
-                sensitive = out.sensitive, products = out.products,
+                sensitive = out.sensitive, products = out.products, link = out.link,
             )
             is ai.nova.core.skills.SkillOutcome.Run -> execute(out.plan, usedAI = false, offline = false, name = cfg.assistantName)
             null -> null

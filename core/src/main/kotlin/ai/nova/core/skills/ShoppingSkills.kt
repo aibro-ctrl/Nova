@@ -14,6 +14,7 @@ import ai.nova.core.shopping.ShoppingRanking
 import ai.nova.core.shopping.ShoppingSearchResult
 import ai.nova.core.util.Logger
 import ai.nova.core.util.TimeSource
+import kotlinx.coroutines.withTimeoutOrNull
 import java.net.URLEncoder
 import java.time.Duration
 import java.time.Instant
@@ -39,8 +40,9 @@ class ShoppingSkills(
     /** Поиск по разобранной просьбе. */
     suspend fun search(parsed: ShoppingQuery): SkillOutcome.Say {
         // Площадки: сказанные в просьбе, иначе выбранные в настройках, иначе обе.
+        val chosen = runCatching { host.shoppingMarketplaces() }.getOrDefault(emptySet())
         val query = if (parsed.marketplaces.isNotEmpty()) parsed
-        else parsed.copy(marketplaces = host.shoppingMarketplaces().ifEmpty { Marketplace.entries.toSet() })
+        else parsed.copy(marketplaces = chosen.ifEmpty { Marketplace.entries.toSet() })
         rememberFromQuery(query)
         return start(query)
     }
@@ -134,11 +136,12 @@ class ShoppingSkills(
             session = ShoppingSession(query = query, question = q.kind, at = time.now())
             return SkillOutcome.Say(needed + hint.orEmpty(), followUp = true)
         }
-        val result = runCatching { host.searchProducts(query) }
+        // Каталог может молчать: дольше таймаута не ждём — иначе «Думаю» висит, а человек не знает, что делать.
+        val result = runCatching { withTimeoutOrNull(SEARCH_TIMEOUT_MS) { host.searchProducts(query) } }
             .getOrElse { e ->
                 Logger.w(TAG, "Поиск товаров не удался", e)
-                ShoppingSearchResult(query = query, results = emptyList())
-            }
+                null
+            } ?: ShoppingSearchResult(query = query, results = emptyList())
         val ranked = ShoppingRanking.best(result.products, query)
         if (ranked.isEmpty()) return nothingFound(query, result)
 
@@ -155,20 +158,25 @@ class ShoppingSkills(
         session = ShoppingSession(query = query, question = null, at = time.now())
         val target = firstMarketplace(query)
         val catalogsDown = result.results.isEmpty() || result.products.isEmpty() && result.results.all { !it.ok }
-        val text = when {
-            !catalogsDown -> "Под ваши условия ничего не нашлось. Открыла поиск на ${target.title} — там можно посмотреть шире."
+        val url = searchUrl(query)
+        val opened = runCatching { host.openShoppingUrl(url) }.getOrDefault(false)
+        val reason = when {
+            !catalogsDown -> "Под ваши условия ничего не нашлось."
             query.marketplaces.singleOrNull() == Marketplace.OZON || target == Marketplace.OZON ->
-                "Ozon не отдаёт каталог другим приложениям — открываю его поиск, товары и цены увидите там."
-            else -> "Каталог ${target.title} не ответил. Открыла поиск «${query.searchText()}» — там всё видно."
+                "Ozon не отдаёт каталог другим приложениям."
+            else -> "Каталог ${target.title} не ответил."
         }
-        openSearchPage(query)
-        return SkillOutcome.Say(text)
+        // Обещать «открыла», не открыв, нельзя: говорим ровно то, что произошло.
+        val tail = if (opened) " Открыла поиск «${query.searchText()}» на ${target.title}."
+        else " Поиск «${query.searchText()}» на ${target.title} — по ссылке."
+        return SkillOutcome.Say(reason + tail, link = url)
     }
 
-    private suspend fun openSearchPage(query: ShoppingQuery) {
+    /** Страница поиска на площадке: её же оставляем ссылкой в истории. */
+    private fun searchUrl(query: ShoppingQuery): String {
         val marketplace = firstMarketplace(query)
         val encoded = runCatching { URLEncoder.encode(query.searchText(), "UTF-8") }.getOrDefault(query.searchText())
-        runCatching { host.openShoppingUrl(marketplace.searchUrl(encoded)) }
+        return marketplace.searchUrl(encoded)
     }
 
     /** Куда вести, если показывать нечего: туда, где каталог у нас открытый, — иначе на выбранную площадку. */
@@ -304,6 +312,8 @@ class ShoppingSkills(
     private companion object {
         const val TAG = "Shopping"
         val TTL: Duration = Duration.ofMinutes(20)
+        /** Сколько ждём каталог площадки, прежде чем сказать «не ответил». */
+        const val SEARCH_TIMEOUT_MS = 15_000L
     }
 }
 

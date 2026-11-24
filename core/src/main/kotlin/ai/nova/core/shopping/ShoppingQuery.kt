@@ -42,14 +42,24 @@ data class ShoppingQuery(
     val minRating: Double? = null,
 ) {
     /** Текст для площадки: «кеды puma 46». */
-    fun searchText(): String = listOfNotNull(
-        text.ifBlank { category.title },
-        brand,
-        size?.let { if (category == ShoppingCategory.SHOES) "$it размер" else it },
-        color,
-        volume,
-        subject,
-    ).joinToString(" ").trim()
+    fun searchText(): String {
+        val parts = ArrayList<String>(4)
+        // «кеды puma» + бренд Puma — площадке хватит одного упоминания.
+        fun add(value: String?) {
+            val v = value?.trim().orEmpty()
+            if (v.isEmpty()) return
+            val already = parts.joinToString(" ").lowercase()
+            if (already.contains(v.lowercase())) return
+            parts += v
+        }
+        add(text.ifBlank { category.title })
+        add(brand)
+        add(size?.let { if (category == ShoppingCategory.SHOES) "$it размер" else it })
+        add(color)
+        add(volume)
+        add(subject)
+        return parts.joinToString(" ").trim()
+    }
 
     /**
      * Вопросы, которые действительно нужно задать. Бюджет не спрашиваем: поиск работает и без него,

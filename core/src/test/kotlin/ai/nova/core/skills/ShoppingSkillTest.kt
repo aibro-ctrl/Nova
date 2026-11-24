@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
 /** Покупки голосом: уточнение, подборка в ответе и корзина без оплаты. */
 class ShoppingSkillTest {
 
-    private class Host : SkillHost {
+    private open class Host : SkillHost {
         val queries = ArrayList<ShoppingQuery>()
         val opened = ArrayList<String>()
         val cart = ArrayList<Pair<String, String?>>()
@@ -34,6 +34,8 @@ class ShoppingSkillTest {
                 price = 3899, rating = 4.6, reviews = 320, url = "https://www.wildberries.ru/catalog/2/detail.aspx",
             ),
         )
+
+        override fun shoppingMarketplaces(): Set<Marketplace> = Marketplace.entries.toSet()
 
         override suspend fun searchProducts(query: ShoppingQuery): ShoppingSearchResult {
             queries += query
@@ -136,6 +138,31 @@ class ShoppingSkillTest {
         val (e, skills) = env(host)
         skills.handle("сколько стоят кроссовки 42 размера", e.settings, null)
         assertEquals("кроссовки", host.queries.single().text)
+    }
+
+    @Test
+    fun `сбой настроек площадок не оставляет без ответа`() = runTest {
+        // Телефонный хост однажды уже падал на этом вызове: ответа не было вовсе.
+        val host = object : Host() {
+            override fun shoppingMarketplaces(): Set<Marketplace> = throw IllegalStateException("настройки недоступны")
+        }
+        val (e, skills) = env(host)
+        val out = assertIs<SkillOutcome.Say>(skills.handle("хочу кеды Puma 46 размер до 10 тысяч", e.settings, null))
+        assertEquals(2, out.products.size)
+    }
+
+    @Test
+    fun `молчащий каталог не держит разговор`() = runTest {
+        val host = object : Host() {
+            override suspend fun searchProducts(query: ShoppingQuery): ShoppingSearchResult {
+                kotlinx.coroutines.awaitCancellation()
+            }
+        }
+        val (e, skills) = env(host)
+        val out = assertIs<SkillOutcome.Say>(skills.handle("хочу кеды Puma 46 размер до 10 тысяч", e.settings, null))
+        assertTrue(out.products.isEmpty())
+        assertTrue(out.text.contains("не ответил") || out.text.contains("поиск"))
+        assertTrue(host.opened.single().contains("wildberries.ru"))
     }
 
     @Test

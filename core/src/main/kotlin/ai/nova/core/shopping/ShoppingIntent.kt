@@ -61,8 +61,16 @@ object ShoppingIntent {
     private val PRICE = Rx.of("""(?:до|не\s+дороже|максимум|бюджет|в\s+пределах|за)\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(тыс(?:яч\w*)?|к|тыща\w*|млн\w*|руб\w*|₽)?""")
     private val PRICE_FROM = Rx.of("""(?:от|начиная\s+с)\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(тыс(?:яч\w*)?|к|руб\w*|₽)?""")
 
-    private val SIZE = Rx.of("""(?:размер\w*|р-р)\s*(\d{2,3})(?:[.,]5)?""")
+    private val SIZE = Rx.of("""(?:размер\w*|р-р)\s*(\d{2,3}|[xsml]{1,4})(?:[.,]5)?""")
     private val SIZE_AFTER = Rx.of("""(\d{2,3})(?:[.,]5)?\s*(?:-?й\s*)?(?:размер\w*)""")
+    /** Буквенный размер одежды: «xxl», «m», «2xl» — это размер, а не бренд. */
+    private val LETTER_SIZE = Rx.of("""(?:^|[^\p{L}\p{N}])((?:[2-5]?x{0,3}[sml])|(?:[2-5]xl))(?:[^\p{L}\p{N}]|$)""")
+
+    /** Само слово «размер», когда цифры уже убраны отдельным правилом. */
+    private val SIZE_WORD = Rx.of("""(?:^|\s)(?:размер\w*|р-р)(?=\s|$)""")
+
+    /** Латинские слова, которые не бренд: служебные и размерные. */
+    private val NOT_BRAND = setOf("size", "the", "and", "for", "new", "sale", "xxl", "xl")
 
     private val VOLUME = Rx.of("""(\d+(?:[.,]\d+)?)\s*(кг|килограмм\w*|г|гр|грамм\w*|л|литр\w*|мл|миллилитр\w*)""")
     private val HALF_KILO = Rx.of("""пол(?:овина|у|)\s*кило\w*""")
@@ -153,8 +161,10 @@ object ShoppingIntent {
         val t = RuTokenizer.normalize(text)
         KNOWN_BRANDS.firstOrNull { Rx.of("""(?:^|[^\p{L}\p{N}])${Regex.escape(it)}(?:[^\p{L}\p{N}]|$)""").containsMatchIn(t) }
             ?.let { return it.replaceFirstChar { c -> c.uppercase() } }
-        // Незнакомый бренд пишут латиницей: «кеды sage» — так и ищем.
-        return Regex("""[a-z][a-z&'\-]{2,}""").find(t)?.value?.replaceFirstChar { it.uppercase() }
+        // Незнакомый бренд пишут латиницей: «кеды sage» — так и ищем. Размеры латиницей («xxl», «m») — не бренд.
+        return Regex("""[a-z][a-z&'\-]{2,}""").find(t)?.value
+            ?.takeIf { w -> !LETTER_SIZE.matches(w) && w !in NOT_BRAND }
+            ?.replaceFirstChar { it.uppercase() }
     }
 
     fun marketplaces(text: String): Set<Marketplace>? {
@@ -188,8 +198,9 @@ object ShoppingIntent {
 
     fun size(text: String): String? {
         val t = RuTokenizer.normalize(text)
-        SIZE.find(t)?.let { return it.groupValues[1] }
+        SIZE.find(t)?.let { return it.groupValues[1].uppercase() }
         SIZE_AFTER.find(t)?.let { return it.groupValues[1] }
+        LETTER_SIZE.find(t)?.let { return it.groupValues[1].uppercase() }
         return null
     }
 
@@ -240,14 +251,16 @@ object ShoppingIntent {
      */
     fun cleanText(source: String): String {
         var t = RuTokenizer.normalize(source)
-        t = FILLER.replace(t, " ")
+        // «найди мне футболку» — служебных слов может быть несколько подряд, убираем их все.
+        repeat(3) { t = FILLER.replace(t, " ") }
         t = PRICE.replace(t, " ")
         t = SIZE.replace(t, " ")
         t = SIZE_AFTER.replace(t, " ")
+        t = LETTER_SIZE.replace(t, " ")
         t = VOLUME.replace(t, " ")
         t = HALF_KILO.replace(t, " ")
         t = t.replace(Regex("""(?:^|\s)(?:на|в)\s+(?:озоне|озон|вайлдберриз\w*|wildberries|вб)(?=\s|$)"""), " ")
-        t = t.replace(Regex("""(?:^|\s)(?:размер\w*|р-р)(?=\s|$)"""), " ")
+        t = SIZE_WORD.replace(t, " ")
         // «Где купить», «сколько стоят» — вопрос человека, а не часть названия товара.
         t = t.replace(Regex("""(?:^|\s)(?:где\s+(?:купить|заказать|найти)|сколько\s+сто(?:ят|ит|имость)|купить|заказать|приобрести)(?=\s|$)"""), " ")
         t = t.replace(Regex("""[^\p{L}\p{N}\s&'\-]"""), " ")
