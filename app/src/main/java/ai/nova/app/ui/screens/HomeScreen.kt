@@ -86,6 +86,8 @@ import ai.nova.app.ui.components.PrimaryButton
 import ai.nova.app.ui.components.SecondaryButton
 import ai.nova.app.ui.components.UpdateCard
 import ai.nova.app.ui.components.SetupCard
+import ai.nova.app.ui.components.LinkText
+import ai.nova.app.ui.components.messageText
 import ai.nova.app.ui.components.groupColor
 import ai.nova.app.ui.components.organicPanel
 import ai.nova.app.ui.components.pressScale
@@ -305,7 +307,7 @@ private fun HomeBottomPanel(
                     last.forEach { m ->
                         val mine = m.role == MessageRole.USER
                         Text(
-                            (if (mine) "Вы: " else "$name: ") + m.content,
+                            (if (mine) "Вы: " else "$name: ") + messageText(m.content),
                             style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                             color = if (mine) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                         )
@@ -644,14 +646,15 @@ private fun Message(text: String, mine: Boolean, time: String? = null) {
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
     ) {
+        // Ссылки в сообщении нажимаются: найденное в интернете можно открыть ещё раз из истории.
         if (mine) {
-            Text(
+            LinkText(
                 text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp))
                     .background(MaterialTheme.colorScheme.primary).padding(horizontal = 14.dp, vertical = 10.dp),
             )
         } else {
-            Text(
+            LinkText(
                 text, style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.widthIn(max = 320.dp).clip(RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp))
                     .background(groupColor()).padding(horizontal = 14.dp, vertical = 10.dp),

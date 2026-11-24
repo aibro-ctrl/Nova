@@ -557,7 +557,7 @@ class Skills(
         if (article != null) return SkillOutcome.Say(article.extract)
         // С AI — пусть ответит он; без AI — откроем поиск.
         if (cfg.useAI) return null
-        return SkillOutcome.Run(AssistantPlan("", listOf(AssistantAction.Device(DeviceCommand.WebSearch(query))), preface = "В Википедии не нашла — ищу в интернете."))
+        return SkillOutcome.Run(AssistantPlan("", listOf(AssistantAction.Device(DeviceCommand.WebSearch(query)))))
     }
 
     /**
@@ -570,7 +570,7 @@ class Skills(
         if (article == null) {
             if (cmd.save) return SkillOutcome.Say("Не нашла «${cmd.query}» — сохранять нечего. Назовите точнее, например: «найди рецепт борща и запиши в заметки».")
             if (cfg.useAI) return null
-            return SkillOutcome.Run(AssistantPlan("", listOf(AssistantAction.Device(DeviceCommand.WebSearch(cmd.query))), preface = "В Википедии не нашла — ищу в интернете."))
+            return SkillOutcome.Run(AssistantPlan("", listOf(AssistantAction.Device(DeviceCommand.WebSearch(cmd.query)))))
         }
         if (!cmd.save) {
             val spoken = if (cmd.recipe) article.extract.take(1400) else WikiService.shorten(article.extract, 600)

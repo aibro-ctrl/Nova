@@ -27,8 +27,11 @@ data class PendingChoice(
 /**
  * Краткосрочный контекст диалога. Ограничен по числу реплик, объёму и времени бездействия,
  * чтобы история не росла бесконечно и старая тема не «прилипала» к новым командам.
+ *
+ * Разговорная пауза — 10 минут: человек отвлёкся, вернулся, и беседа продолжается, а не начинается
+ * заново с «не поняла команду». Долгая память (весь день) живёт в истории на устройстве.
  */
-private val DIALOG_IDLE: Duration = Duration.ofMinutes(3)
+private val DIALOG_IDLE: Duration = Duration.ofMinutes(10)
 
 class ConversationContext(
     private val time: TimeSource,

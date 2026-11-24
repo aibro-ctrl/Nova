@@ -1,7 +1,6 @@
 package ai.nova.app.ui.screens
 
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -19,7 +18,6 @@ import ai.nova.app.ui.components.GroupDivider
 import ai.nova.app.ui.components.Hint
 import ai.nova.app.ui.components.NovaScreen
 import ai.nova.app.ui.components.SectionLabel
-import ai.nova.app.ui.components.bodySecondaryStyle
 import kotlinx.coroutines.launch
 
 /**
@@ -141,16 +139,20 @@ internal fun ActionsPage(c: AppContainer, onBack: () -> Unit) {
                     }
                 }
             }
-            Text(
+            Hint(
                 "Банк присылает пуш «Покупка 850 ₽ · Пятёрочка» — Нова записывает трату в расходы. " +
                     "Данные остаются на телефоне, в банк приложение не входит.",
-                style = bodySecondaryStyle(),
-                modifier = Modifier.padding(top = 8.dp),
             )
             if (bankPush != BankPushMode.OFF && !ai.nova.app.notify.NovaNotificationListener.enabled(context)) {
                 Hint("Чтобы это работало, разрешите Нова доступ к уведомлениям — кнопка появится ниже.")
             }
-            Hint("Поддерживаются банки: " + ai.nova.core.finance.BankPushParser.supportedBanks.joinToString(", ") + ".")
+            // Тридцать банков одной строкой не помещались и наезжали на соседние подсказки — перечисляем коротко.
+            val banks = ai.nova.core.finance.BankPushParser.supportedBanks
+            val more = banks.size - 4
+            Hint(
+                "Поддерживаются банки: ${banks.take(4).joinToString(", ")}" +
+                    if (more > 0) " и ещё ${ai.nova.core.assistant.RuFormat.count(more, "банк", "банка", "банков")}." else ".",
+            )
         }
     }
 }

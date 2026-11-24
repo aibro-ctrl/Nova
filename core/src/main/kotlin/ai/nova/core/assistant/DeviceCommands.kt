@@ -74,7 +74,12 @@ enum class MediaAction { PLAY, PAUSE, NEXT, PREVIOUS }
 enum class VolumeChange { UP, DOWN, MUTE, UNMUTE, MAX, SET }
 enum class SettingsSection { WIFI, BLUETOOTH, SOUND, DISPLAY, BATTERY, LOCATION, APPS, MAIN, AIRPLANE, NFC, HOTSPOT, MOBILE_DATA, NOTIFICATIONS, SECURITY, ACCESSIBILITY, DATE_TIME, STORAGE }
 
-data class DeviceResult(val text: String, val ok: Boolean = true)
+data class DeviceResult(
+    val text: String,
+    val ok: Boolean = true,
+    /** Ссылка на то, что открыли: остаётся в истории чата, чтобы можно было нажать ещё раз. */
+    val link: String? = null,
+)
 
 /** Платформенная часть: Android выполняет команды через системные интенты и сервисы. */
 interface DeviceController {

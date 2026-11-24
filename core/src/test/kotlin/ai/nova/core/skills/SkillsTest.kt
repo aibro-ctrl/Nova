@@ -351,7 +351,8 @@ class SkillsTest {
         assertTrue(f.text.startsWith("Юрий Алексеевич Гагарин"), f.text)
         // Не найдено в Википедии и нет AI — поиск в интернете, а не «не поняла».
         val unknown = e.engine.handle("что такое абырвалг")
-        assertTrue(unknown.text.contains("ищу в интернете") || unknown.text.contains("На этом устройстве"), unknown.text)
+        // Мета-текста «не нашла в Википедии — ищу в интернете» больше нет: открываем поиск молча.
+        assertTrue(unknown.text.contains("На этом устройстве") || requested.any { it.contains("search") }, unknown.text)
         // Записи по-прежнему записываются, а не уходят в навыки.
         e.engine.handle("напомни завтра в 9 взять зонт")
         assertEquals("Взять зонт", e.store.reminders.all().single().text)

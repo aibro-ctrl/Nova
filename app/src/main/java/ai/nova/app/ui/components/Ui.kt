@@ -64,6 +64,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
+import androidx.compose.runtime.remember
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -76,12 +85,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -116,6 +123,65 @@ fun captionStyle(): TextStyle =
 @Composable
 fun bodySecondaryStyle(): TextStyle =
     MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+/** Ссылка в тексте сообщения: `[подпись](адрес)` — так Нова хранит найденное в истории чата. */
+private val MD_LINK = Regex("""\[([^\]]+)]\((https?://[^\s)]+)\)""")
+
+/** Голый адрес в тексте — тоже делаем нажимаемым. */
+private val BARE_LINK = Regex("""https?://[^\s)]+""")
+
+/** Цвет и подчёркивание ссылки внутри сообщения. */
+@Composable
+private fun linkStyles(): TextLinkStyles = TextLinkStyles(
+    style = SpanStyle(color = MaterialTheme.colorScheme.primary, textDecoration = TextDecoration.Underline),
+)
+
+/**
+ * Текст с нажимаемыми ссылками. Понимает и `[Открыть снова](https://…)`, и просто адрес:
+ * найденное в интернете остаётся в истории чата, и его можно открыть ещё раз в любой момент.
+ */
+@Composable
+fun LinkText(
+    text: String,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+) {
+    val styles = linkStyles()
+    val annotated = remember(text, styles) { linkify(text, styles) }
+    Text(annotated, style = style, color = color, modifier = modifier, maxLines = maxLines, overflow = overflow)
+}
+
+/** Ссылка, сохранённая в сообщении (`[Открыть снова](адрес)` или голый адрес); null — ссылки нет. */
+fun messageLink(text: String): String? =
+    ai.nova.core.assistant.MessageLinks.url(text) ?: BARE_LINK.find(text)?.value
+
+/** Текст сообщения без служебной разметки ссылки — для списков и озвучки. */
+fun messageText(text: String): String = ai.nova.core.assistant.MessageLinks.strip(text)
+
+/** Разметка ссылок: `[подпись](адрес)` показываем подписью, голый адрес — как есть, но нажимаемым. */
+private fun linkify(text: String, styles: TextLinkStyles): AnnotatedString = buildAnnotatedString {
+    var at = 0
+    for (m in MD_LINK.findAll(text)) {
+        if (m.range.first > at) appendPlain(text.substring(at, m.range.first), styles)
+        withLink(LinkAnnotation.Url(m.groupValues[2], styles)) { append(m.groupValues[1]) }
+        at = m.range.last + 1
+    }
+    if (at < text.length) appendPlain(text.substring(at), styles)
+}
+
+/** Обычный кусок текста: в нём тоже могут быть просто адреса. */
+private fun AnnotatedString.Builder.appendPlain(part: String, styles: TextLinkStyles) {
+    var at = 0
+    for (m in BARE_LINK.findAll(part)) {
+        if (m.range.first > at) append(part.substring(at, m.range.first))
+        withLink(LinkAnnotation.Url(m.value, styles)) { append(m.value) }
+        at = m.range.last + 1
+    }
+    if (at < part.length) append(part.substring(at))
+}
 
 /** Цвет карточек-групп: белые на светлой теме, чуть светлее фона на тёмной. */
 @Composable

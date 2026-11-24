@@ -243,7 +243,8 @@ class AndroidDeviceController(
                 val url = engine.searchUrl(c.query)
                 open(
                     Intent(Intent.ACTION_VIEW, Uri.parse(url)),
-                    "Ищу «${c.query}» в ${engine.title}. Открыла результаты в браузере.",
+                    // Ничего не объясняем про источники: человеку важен результат, а не где его не нашлось.
+                    "Открыла поиск «${c.query}» в ${engine.title}.",
                     "Поиск: ${c.query}",
                 )
             }
@@ -588,7 +589,7 @@ class AndroidDeviceController(
      */
     private fun open(intent: Intent, done: String, title: String): DeviceResult {
         if (launcher.canLaunch()) {
-            return if (launcher.launch(intent)) DeviceResult(done) else DeviceResult("На телефоне нет приложения для этого.", ok = false)
+            return if (launcher.launch(intent)) DeviceResult(done, link = webLink(intent)) else DeviceResult("На телефоне нет приложения для этого.", ok = false)
         }
         if (!Notifications.canPost(context)) return DeviceResult("Разрешите Нова «Поверх других приложений» (Настройки → Разрешения), чтобы открывать приложения из фона.", ok = false)
         val pi = PendingIntent.getActivity(
@@ -603,8 +604,18 @@ class AndroidDeviceController(
             .setAutoCancel(true)
             .build()
         Notifications.notifySafely(context, ACTION_NOTIFICATION_ID, n)
-        return DeviceResult("Нажмите на уведомление — открою. Чтобы открывала сразу, разрешите «Поверх других приложений» в настройках Нова.")
+        return DeviceResult(
+            "Нажмите на уведомление — открою. Чтобы открывала сразу, разрешите «Поверх других приложений» в настройках Нова.",
+            link = webLink(intent),
+        )
     }
+
+    /**
+     * Ссылка, которую можно нажать ещё раз из истории чата. Только http(s): схемы приложений
+     * (geo:, yandexmaps:, youtube:) в чате не откроются, поэтому их не показываем.
+     */
+    private fun webLink(intent: Intent): String? =
+        intent.dataString?.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
 
     private fun startOwnTimer(t: ai.nova.app.reminders.NovaTimers, c: DeviceCommand.Timer, what: String): DeviceResult {
         t.start(c.seconds, c.label)

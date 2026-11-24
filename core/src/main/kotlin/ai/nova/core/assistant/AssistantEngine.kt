@@ -76,6 +76,11 @@ data class AssistantReply(
     val sensitive: Boolean = false,
     /** Найденное по ходу ответа (рецепт, статья, песня) — на это ссылается «запиши его в заметки». */
     val entity: ai.nova.core.agent.AgentEntity? = null,
+    /**
+     * Что открыли (поиск, маршрут, рецепт): ссылка остаётся в истории чата и нажимается ещё раз.
+     * Вслух не читается — URL в озвучке бесполезен.
+     */
+    val link: String? = null,
 )
 
 /** Последний сбой AI — для экрана настроек: что именно не так с подключением. */
@@ -221,7 +226,7 @@ class AssistantEngine(
         if (!dialog.repeating) {
             // Найденное (рецепт, статья) запоминаем: «запиши его в заметки» в следующей фразе.
             reply.entity?.let { runCatching { agent?.remember(it) } }
-            record(text, reply.text, reply.sensitive)
+            record(text, reply)
             dialog.rememberReply(text, reply, time.now())
         }
         dialog.finishChunkSink()
@@ -409,6 +414,33 @@ class AssistantEngine(
         }
     }
 
+    /**
+     * История для модели на телефоне: не только последние реплики, но и весь сегодняшний разговор.
+     *
+     * Встроенная модель работает на устройстве, поэтому ей можно отдать историю из локальной базы —
+     * наружу ничего не уходит. Облачный AI по-прежнему видит только короткий контекст в памяти.
+     * Раньше после перезапуска или пятнадцати минут молчания Нова забывала, о чём шла речь.
+     */
+    private suspend fun localHistory(limit: Int = 12): List<ChatMessage> {
+        val day = time.today()
+        val zone = time.zone()
+        val fromDevice = runCatching {
+            conversations.recent(limit * 10)
+                .filter { it.content.isNotBlank() && it.createdAt.atZone(zone).toLocalDate() == day }
+                .takeLast(limit)
+                .map {
+                    ChatMessage(
+                        if (it.role == MessageRole.USER) ChatMessage.Role.USER else ChatMessage.Role.ASSISTANT,
+                        MessageLinks.strip(it.content),
+                    )
+                }
+                .filter { it.content.isNotBlank() }
+        }.getOrDefault(emptyList())
+        val history = fromDevice.ifEmpty { context.messages.takeLast(limit) }
+        // Модель должна начинать с реплики человека — иначе она отвечает «за ассистента».
+        return history.dropWhile { it.role != ChatMessage.Role.USER }
+    }
+
     /** Встроенная модель, если она скачана и сейчас может отвечать (в фоне Android её душит). */
     private fun localModel(): ai.nova.core.ai.LocalChat? =
         localChat?.takeIf { it.available && it.canAnswerNow }
@@ -448,7 +480,7 @@ class AssistantEngine(
             "Модель на телефоне без экрана отвечает слишком медленно. Включите экран или спросите в приложении — отвечу сразу.",
             offline = cfg.useAI,
         )
-        val history = (if (cfg.locked) emptyList() else context.messages.takeLast(6)) + ChatMessage(ChatMessage.Role.USER, text)
+        val history = (if (cfg.locked) emptyList() else localHistory()) + ChatMessage(ChatMessage.Role.USER, text)
         val out = try {
             lc.reply(
                 ai.nova.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName, cfg.persona.personality.skillStyle),
@@ -1265,7 +1297,11 @@ class AssistantEngine(
         // 0. Ждём ответ «YouTube, VK Видео или Rutube?» — выбор запоминается, поиск идёт сразу.
         if (executor.awaitingVideo()) {
             executor.answerVideo(text)?.let { result ->
-                return AssistantReply(result.outcomes.joinToString("\n") { it.text }, outcomes = result.outcomes)
+                return AssistantReply(
+                    result.outcomes.joinToString("\n") { it.text },
+                    outcomes = result.outcomes,
+                    link = result.outcomes.firstNotNullOfOrNull { it.link },
+                )
             }
         }
         // 0.1. Маршрут ждёт уточнения: «посидеть или перекусить?» → ответ, «ещё» → следующее место рядом.
@@ -1277,6 +1313,7 @@ class AssistantEngine(
                     outcomes = result.outcomes,
                     awaitingAnswer = result.needsAnswer,
                     expectFollowUp = result.needsAnswer,
+                    link = result.outcomes.firstNotNullOfOrNull { it.link },
                 )
             }
         }
@@ -1745,6 +1782,7 @@ class AssistantEngine(
             usedAI = usedAI,
             offline = offline,
             changedData = changed,
+            link = result.outcomes.firstNotNullOfOrNull { it.link },
         )
         // Журнал: только реально выполненные действия (не уточнения и не разговор).
         if (plan.actions.isNotEmpty() && result.outcomes.any { it.kind != Outcome.Kind.ERROR }) {
@@ -1801,18 +1839,21 @@ class AssistantEngine(
         else -> action
     }
 
-    private suspend fun record(userText: String, reply: String, sensitive: Boolean = false) {
+    private suspend fun record(userText: String, reply: AssistantReply) {
         // Личное (сообщения, экран, контакты) остаётся в истории на телефоне, но не уходит AI в следующих запросах.
-        context.addTurn(userText, if (sensitive) "(личные данные — показаны пользователю, не пересказываю)" else reply)
+        context.addTurn(userText, if (reply.sensitive) "(личные данные — показаны пользователю, не пересказываю)" else reply.text)
+        // Ссылку храним в истории, а не только показываем: «открой ещё раз» должно работать и через день.
+        val stored = reply.link?.takeIf { it.isNotBlank() }
+            ?.let { reply.text + "\n" + "[Открыть снова]($it)" } ?: reply.text
         runCatching {
             conversations.add(context.conversationId, MessageRole.USER, userText)
-            if (reply.isNotBlank()) conversations.add(context.conversationId, MessageRole.ASSISTANT, reply)
+            if (stored.isNotBlank()) conversations.add(context.conversationId, MessageRole.ASSISTANT, stored)
         }.onFailure { Logger.w(TAG, "Не удалось сохранить историю", it) }
     }
 
     companion object {
         private const val TAG = "Assistant"
-        private val DIALOG_TTL: java.time.Duration = java.time.Duration.ofMinutes(3)
+        private val DIALOG_TTL: java.time.Duration = java.time.Duration.ofMinutes(10)
         private val REPEAT = Regex("""^(?:повтори|повтори пожалуйста|повтори еще раз|повтори ещё раз|повтори последнее|повтори ответ|что ты сказала|что ты сказал|что ты говоришь|что ты там сказала|еще раз|ещё раз|скажи еще раз|скажи ещё раз|не расслышал|не расслышала|я не расслышал|я не расслышала|не поняла повтори|не понял повтори|что-что|что что|чего|а)$""")
         private val MORE = Regex("""^(?:а\s+)?(?:давай\s+)?(?:ещ[её]|еще)(?:\s+(?:одну|один|одно|разок|пожалуйста|давай|анекдот|шутку|факт|комплимент|цитату|тост|скороговорку|загадку))?$""")
         private val MOREABLE = Regex("""анекдот|шутк|пошути|смешное|факт|комплимент|цитат|тост|скороговорк|стих|монетк|кубик|случайное число|совет дня|мотивац""")

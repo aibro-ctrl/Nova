@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +53,8 @@ import ai.nova.app.ui.components.SecondaryButton
 import ai.nova.app.ui.components.SectionLabel
 import ai.nova.app.ui.components.Segmented
 import ai.nova.app.ui.components.groupColor
+import ai.nova.app.ui.components.messageLink
+import ai.nova.app.ui.components.messageText
 import ai.nova.app.ui.components.pressScale
 import ai.nova.core.model.MemoryItem
 import ai.nova.core.model.MessageRole
@@ -253,21 +256,44 @@ private fun MemoryEditor(initial: MemoryItem?, onDismiss: () -> Unit, onSave: (S
 
 @Composable
 fun HistoryScreen(c: AppContainer, onBack: () -> Unit) {
-    val messages by remember { c.store.conversations.observeRecent(300) }.collectAsStateWithLifecycle(emptyList())
+    val all by remember { c.store.conversations.observeRecent(300) }.collectAsStateWithLifecycle(emptyList())
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
     val name = c.settings.settings.collectAsStateWithLifecycle().value.assistantName
     val fmt = remember { DateTimeFormatter.ofPattern("d MMMM, HH:mm", Locale("ru")).withZone(ZoneId.systemDefault()) }
+    var query by rememberSaveable { mutableStateOf("") }
+    // Поиск по своим разговорам: «маршрут», «аптека», «ремонт» — в любом месте сообщения.
+    val messages = remember(all, query) {
+        val q = query.trim()
+        if (q.isEmpty()) all else all.filter { messageText(it.content).contains(q, ignoreCase = true) }
+    }
     NovaScreen(title = "История", subtitle = "Разговоры с ассистентом", onBack = onBack) {
+        item(key = "search") {
+            SearchBox(query, { query = it }, "Поиск по разговорам")
+            Spacer(Modifier.height(6.dp))
+        }
         if (messages.isEmpty()) {
-            item { EmptyState(Icons.Rounded.History, "История пуста", "Здесь появятся ваши разговоры с ассистентом") }
+            item {
+                if (query.isBlank()) EmptyState(Icons.Rounded.History, "История пуста", "Здесь появятся ваши разговоры с ассистентом")
+                else EmptyState(Icons.Rounded.Search, "Ничего не нашлось", "Попробуйте другое слово — искать можно по любому месту сообщения")
+            }
         } else {
             item {
                 Group {
                     messages.forEachIndexed { i, m ->
                         if (i > 0) GroupDivider()
+                        // Ссылку из ответа можно открыть ещё раз — она хранится вместе с сообщением.
+                        val link = if (m.role == MessageRole.USER) null else messageLink(m.content)
                         RowItem(
-                            title = m.content,
+                            title = messageText(m.content),
                             subtitle = (if (m.role == MessageRole.USER) "Вы" else name) + " · " + fmt.format(m.createdAt),
                             maxSubtitleLines = 1,
+                            trailing = link?.let { url ->
+                                {
+                                    androidx.compose.material3.TextButton(onClick = { uri.openUri(url) }) {
+                                        Text("Открыть", style = MaterialTheme.typography.labelLarge)
+                                    }
+                                }
+                            },
                         )
                     }
                 }

@@ -73,6 +73,38 @@ class Study29Test {
         assertTrue(e.engine.handle("о чём я говорила насчёт ремонта").text.contains("краску"))
     }
 
+    @Test fun chatSearchByTopic() = runTest {
+        val e = env()
+        val day = LocalDate.of(2026, 9, 25)
+        assertEquals(ChatSearch.Topic.ROUTES, ChatSearch.parse("какие маршруты я искал вчера", day)?.topic)
+        assertEquals(ChatSearch.Topic.MUSIC, ChatSearch.parse("какие песни я просила на этой неделе", day)?.topic)
+        // Незнакомое слово — ищем его как обычный текст, а не выдумываем тему.
+        assertNull(ChatSearch.parse("какие виджеты я искал вчера", day)?.topic)
+        assertNull(ChatSearch.parse("какие маршруты я искал вчера", day)?.query)
+
+        e.engine.handle("построй маршрут до аптеки")
+        e.engine.handle("построй маршрут до музея")
+        e.engine.handle("построй маршрут до аптеки")
+        e.engine.handle("включи песню кино группа крови")
+        e.time.advanceMillis(Duration.ofDays(1).toMillis())
+        e.engine.handle("построй маршрут до вокзала")
+
+        val today = e.engine.handle("какие маршруты я искал сегодня").text
+        assertTrue(today.startsWith("Вы искали маршруты") && today.contains("окзал"), today)
+        assertTrue(!today.contains("птек"), today)
+
+        val yesterday = e.engine.handle("какие маршруты я искал вчера").text
+        assertTrue(yesterday.contains("птек") && yesterday.contains("узе"), yesterday)
+        assertTrue(!yesterday.contains("окзал"), yesterday)
+        // Повтор схлопывается: две поездки в аптеку — одна строка с «2 раза».
+        assertTrue(yesterday.contains("2 раза"), yesterday)
+
+        val songs = e.engine.handle("какие песни я просила вчера").text
+        assertTrue(songs.contains("кино", ignoreCase = true), songs)
+        assertTrue(!songs.contains("птек"), songs)
+        assertTrue(e.engine.handle("какие рецепты я искал вчера").text.contains("ничего не нашла"))
+    }
+
     @Test fun csv() {
         assertEquals("'=1+1", CsvExport.cell("=1+1").trim('"'))
         assertEquals("\"а;б\"", CsvExport.cell("а;б"))

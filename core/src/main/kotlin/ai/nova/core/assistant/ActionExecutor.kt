@@ -17,7 +17,7 @@ import ai.nova.core.search.SearchService
 import ai.nova.core.util.TimeSource
 
 /** Итог выполнения одного действия. */
-data class Outcome(val text: String, val kind: Kind, val record: RecordRef? = null) {
+data class Outcome(val text: String, val kind: Kind, val record: RecordRef? = null, val link: String? = null) {
     enum class Kind { CHANGED, QUERY, QUESTION, ERROR }
 }
 
@@ -225,11 +225,11 @@ class ActionExecutor(
 
     private suspend fun performDevice(command: DeviceCommand): Step {
         val r = device.perform(command)
-        return if (r.ok) query(r.text) else error(r.text)
+        return if (r.ok) query(r.text, r.link) else error(r.text)
     }
 
     private fun changed(text: String, record: RecordRef? = null) = Step(listOf(Outcome(text, Outcome.Kind.CHANGED, record)), record)
-    private fun query(text: String) = Step(listOf(Outcome(text, Outcome.Kind.QUERY)))
+    private fun query(text: String, link: String? = null) = Step(listOf(Outcome(text, Outcome.Kind.QUERY, link = link)))
     private fun question(text: String) = Step(listOf(Outcome(text, Outcome.Kind.QUESTION)))
     private fun error(text: String) = Step(listOf(Outcome(text, Outcome.Kind.ERROR)))
 
