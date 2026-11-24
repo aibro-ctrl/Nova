@@ -238,22 +238,16 @@ class ShoppingSkills(
 
     /** Товар в список покупок: карточку не открываем, человек откроет ссылку из списка или из истории. */
     private suspend fun keepInList(product: ShoppingProduct, reason: String?): SkillOutcome.Say {
-        val line = cartLine(product)
-        val saved = runCatching { host.addToShoppingList(line) }.getOrDefault(false)
+        val saved = runCatching { host.addToShoppingList(product) }.getOrDefault(false)
         val what = "«${product.title}» (${product.marketplace.title})"
         val text = when {
-            saved && reason != null -> "В корзину не вышло: ${reason.lowercase().trimEnd('.')}. Добавила $what в список покупок — там цена и ссылка."
-            saved -> "Корзиной площадки я не управляю, поэтому добавила $what в список покупок — там цена и ссылка."
-            reason != null -> "В корзину не вышло: ${reason.lowercase().trimEnd('.')}. $what — вот данные: $line"
-            else -> "Корзиной площадки я не управляю. $what: $line"
+            saved && reason != null ->
+                "В корзину не вышло: ${reason.lowercase().trimEnd('.')}. Добавила $what в список покупок — там цена, фото и ссылка."
+            saved -> "Корзиной площадки я не управляю, поэтому добавила $what в список покупок — там цена, фото и ссылка."
+            reason != null -> "В корзину не вышло: ${reason.lowercase().trimEnd('.')}. $what — ${product.priceLabel}, ссылка ${product.url}"
+            else -> "Корзиной площадки я не управляю. $what — ${product.priceLabel}, ссылка ${product.url}"
         }
         return SkillOutcome.Say(text, followUp = false, products = listOf(product), link = product.url)
-    }
-
-    /** Одна строка списка покупок: название, цена, площадка, рейтинг и ссылка на карточку. */
-    private fun cartLine(product: ShoppingProduct): String {
-        val rating = product.ratingLabel?.let { ", $it" }.orEmpty()
-        return "${product.title} — ${product.priceLabel}, ${product.marketplace.title}$rating — ${product.url}"
     }
 
     /** «первый», «второй», «третий», по номеру и «последний» — из показанного списка. */

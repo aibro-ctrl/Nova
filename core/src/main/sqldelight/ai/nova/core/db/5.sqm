@@ -1,0 +1,7 @@
+-- 3.0.2: в покупках появились товары с площадок — со ссылкой, фотографией и ценой.
+ALTER TABLE shopping_item ADD COLUMN marketplace TEXT;
+ALTER TABLE shopping_item ADD COLUMN url TEXT;
+ALTER TABLE shopping_item ADD COLUMN image_url TEXT;
+ALTER TABLE shopping_item ADD COLUMN price INTEGER;
+ALTER TABLE shopping_item ADD COLUMN rating REAL;
+ALTER TABLE shopping_item ADD COLUMN reviews INTEGER;

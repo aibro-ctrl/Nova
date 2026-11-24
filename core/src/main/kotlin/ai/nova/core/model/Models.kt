@@ -127,7 +127,17 @@ data class ShoppingItem(
     val quantity: Double? = null,
     val unit: String? = null,
     val source: String? = null,
+    /** Товар с площадки: магазин, ссылка на карточку и то, что видно в списке. */
+    val marketplace: String? = null,
+    val url: String? = null,
+    val imageUrl: String? = null,
+    val price: Int? = null,
+    val rating: Double? = null,
+    val reviews: Int? = null,
 ) {
+    /** Это товар из магазина, а не строка списка: у него есть карточка и ссылка. */
+    val isProduct: Boolean get() = !url.isNullOrBlank()
+
     companion object { const val DEFAULT_LIST = "Покупки" }
 }
 

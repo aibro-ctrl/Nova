@@ -25,7 +25,7 @@ class ShoppingSkillTest {
         val opened = ArrayList<String>()
         val cart = ArrayList<Pair<String, String?>>()
         /** Что ушло в список покупок, когда корзина площадки недоступна. */
-        val saved = ArrayList<String>()
+        val saved = ArrayList<ai.nova.core.shopping.ShoppingProduct>()
         var result: List<ShoppingProduct> = listOf(
             ShoppingProduct(
                 id = "1", marketplace = Marketplace.WB, title = "Кеды Puma Rebound",
@@ -49,8 +49,8 @@ class ShoppingSkillTest {
             return CartResult.Manual(product, "Открыла карточку — добавьте в корзину сами")
         }
 
-        override suspend fun addToShoppingList(text: String): Boolean {
-            saved += text
+        override suspend fun addToShoppingList(product: ai.nova.core.shopping.ShoppingProduct): Boolean {
+            saved += product
             return true
         }
 
@@ -103,9 +103,10 @@ class ShoppingSkillTest {
         // Браузер сами не открываем: товар со ссылкой и ценой остаётся в списке покупок.
         assertTrue(host.opened.isEmpty())
         val line = host.saved.single()
-        assertTrue(line.contains("Кеды Puma Rebound"))
-        assertTrue(line.contains("4\u00A0599"))
-        assertTrue(line.contains("wildberries.ru"))
+        assertEquals("Кеды Puma Rebound", line.title)
+        assertEquals(4599, line.price)
+        assertEquals("https://www.wildberries.ru/catalog/1/detail.aspx", line.url)
+        assertEquals(ai.nova.core.shopping.Marketplace.WB, line.marketplace)
         assertTrue(out.text.contains("список покупок"))
         assertEquals("https://www.wildberries.ru/catalog/1/detail.aspx", out.link)
     }

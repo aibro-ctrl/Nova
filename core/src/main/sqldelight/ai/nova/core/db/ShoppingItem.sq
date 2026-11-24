@@ -1,5 +1,6 @@
 -- Списки покупок и чек-листы. list_name — название списка («Покупки», «В дорогу»).
 -- quantity/unit — количество и единица («500», «г»), source — откуда пункт (рецепт, голос).
+-- Если пункт — товар из магазина, заполнены marketplace/url/image_url/price/rating/reviews.
 CREATE TABLE shopping_item (
     id TEXT NOT NULL PRIMARY KEY,
     list_name TEXT NOT NULL,
@@ -12,7 +13,14 @@ CREATE TABLE shopping_item (
     synced_updated_at INTEGER,
     quantity REAL,
     unit TEXT,
-    source TEXT
+    source TEXT,
+    -- Товар с площадки: ссылка, фотография и то, что видно на карточке.
+    marketplace TEXT,
+    url TEXT,
+    image_url TEXT,
+    price INTEGER,
+    rating REAL,
+    reviews INTEGER
 );
 
 CREATE INDEX shopping_item_list_idx ON shopping_item(deleted, list_name, done);

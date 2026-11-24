@@ -130,9 +130,9 @@ interface SkillHost {
 
     /**
      * Положить товар в список покупок Нова. В корзину площадки приложение положить не может,
-     * поэтому выбранное остаётся списком со ссылкой: человек откроет и купит сам.
+     * поэтому выбранное остаётся карточкой со ценой, фотографией и ссылкой: человек откроет и купит сам.
      */
-    suspend fun addToShoppingList(text: String): Boolean = false
+    suspend fun addToShoppingList(product: ai.nova.core.shopping.ShoppingProduct): Boolean = false
 }
 
 object NoSkillHost : SkillHost

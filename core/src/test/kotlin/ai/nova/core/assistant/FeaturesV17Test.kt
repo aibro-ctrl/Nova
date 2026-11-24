@@ -32,16 +32,25 @@ class FeaturesV17Test {
         assertEquals(1, env.store.shopping.all().size)
     }
 
-    @Test fun marketplaceLineStaysWhole() = runTest {
-        // Товар с площадки хранится одной строкой: цена и ссылка не должны разбираться как «количество».
+    @Test fun marketplaceProductKeepsDetails() = runTest {
+        // Товар с площадки хранится карточкой: цена, магазин и ссылка отдельными полями.
         val env = env()
-        val line = "Кеды Puma — 4\u00A0599 ₽, Wildberries, ★ 4,8 · 150 отзывов — https://www.wildberries.ru/catalog/1/detail.aspx"
-        val saved = env.store.shopping.addLine("Покупки", line, source = "marketplace")
+        val product = ai.nova.core.shopping.ShoppingProduct(
+            id = "1", marketplace = ai.nova.core.shopping.Marketplace.WB, title = "Кеды Puma",
+            price = 4599, rating = 4.8, reviews = 150,
+            url = "https://www.wildberries.ru/catalog/1/detail.aspx",
+            imageUrl = "https://basket-01.wbbasket.ru/vol1/part1/1/images/big/1.webp",
+        )
+        val saved = env.store.shopping.addProduct("Покупки", product)
         assertTrue(saved != null)
-        assertEquals(listOf(line), env.store.shopping.all().map { it.text })
-        assertNull(env.store.shopping.all().single().quantity)
+        assertEquals("Кеды Puma", saved!!.text)
+        assertEquals(4599, saved.price)
+        assertEquals(ai.nova.core.shopping.Marketplace.WB.id, saved.marketplace)
+        assertEquals(product.url, saved.url)
+        assertEquals(product.imageUrl, saved.imageUrl)
+        assertTrue(saved.isProduct)
         // Повторная просьба не создаёт вторую строку.
-        env.store.shopping.addLine("Покупки", line, source = "marketplace")
+        env.store.shopping.addProduct("Покупки", product)
         assertEquals(1, env.store.shopping.all().size)
     }
 

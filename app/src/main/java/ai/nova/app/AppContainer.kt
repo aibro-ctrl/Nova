@@ -213,9 +213,9 @@ class AppContainer(private val context: Context) {
         onMusicApp = { app -> appScope.launch { settings.setMusicApp(app.name) } },
         http = http,
         selectedMarketplaces = { shoppingMarketplaces() },
-        saveToShoppingList = { text ->
+        saveToShoppingList = { product ->
             runCatching {
-                store.shopping.addLine(ai.nova.core.model.ShoppingItem.DEFAULT_LIST, text, source = "marketplace") != null
+                store.shopping.addProduct(ai.nova.core.model.ShoppingItem.DEFAULT_LIST, product) != null
             }.getOrDefault(false)
         },
     )

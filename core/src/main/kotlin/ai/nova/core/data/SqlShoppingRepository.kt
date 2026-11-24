@@ -60,6 +60,12 @@ class SqlShoppingRepository(
                     quantity = draft.quantity,
                     unit = draft.unit,
                     source = source,
+                    marketplace = null,
+                    url = null,
+                    image_url = null,
+                    price = null,
+                    rating = null,
+                    reviews = null,
                 )
                 q.upsert(row)
                 row.toDomain()
@@ -93,6 +99,61 @@ class SqlShoppingRepository(
                 quantity = null,
                 unit = null,
                 source = source,
+                marketplace = null,
+                url = null,
+                image_url = null,
+                price = null,
+                rating = null,
+                reviews = null,
+            )
+            q.upsert(row)
+            row
+        }
+        changed()
+        return itemRow.toDomain()
+    }
+
+    /**
+     * Товар с площадки: карточка остаётся карточкой — название, магазин, цена, оценка, фотография и ссылка.
+     * В списке он выглядит как товар, а не как строка текста, и открывается касанием.
+     */
+    suspend fun addProduct(listName: String, product: ai.nova.core.shopping.ShoppingProduct): ShoppingItem? {
+        val title = product.title.trim().ifEmpty { return null }
+        val now = nowMs()
+        val itemRow = io {
+            val existing = q.selectActive().executeAsList()
+                .firstOrNull { row ->
+                    row.list_name.equals(listName, true) &&
+                        row.marketplace == product.marketplace.id && row.url == product.url
+                }
+            val row = existing?.copy(
+                text = title,
+                price = product.price?.toLong(),
+                rating = product.rating,
+                reviews = product.reviews?.toLong(),
+                image_url = product.imageUrl,
+                done = 0,
+                updated_at = now,
+                dirty = 1,
+            ) ?: ItemRow(
+                id = Ids.newId(),
+                list_name = listName,
+                text = title,
+                done = 0,
+                created_at = now,
+                updated_at = now,
+                deleted = 0,
+                dirty = 1,
+                synced_updated_at = null,
+                quantity = null,
+                unit = null,
+                source = "marketplace",
+                marketplace = product.marketplace.id,
+                url = product.url,
+                image_url = product.imageUrl,
+                price = product.price?.toLong(),
+                rating = product.rating,
+                reviews = product.reviews?.toLong(),
             )
             q.upsert(row)
             row
@@ -184,6 +245,12 @@ class SqlShoppingRepository(
             quantity = payload.str("quantity")?.toDoubleOrNull(),
             unit = payload.str("unit"),
             source = payload.str("source"),
+            marketplace = payload.str("marketplace"),
+            url = payload.str("url"),
+            image_url = payload.str("image_url"),
+            price = payload.str("price")?.toLongOrNull(),
+            rating = payload.str("rating")?.toDoubleOrNull(),
+            reviews = payload.str("reviews")?.toLongOrNull(),
         )
         io {
             db.transaction {
@@ -196,6 +263,8 @@ class SqlShoppingRepository(
     private fun ItemRow.toDomain() = ShoppingItem(
         id, list_name, text, done == 1L, Instant.ofEpochMilli(created_at), Instant.ofEpochMilli(updated_at),
         quantity = quantity, unit = unit, source = source,
+        marketplace = marketplace, url = url, imageUrl = image_url,
+        price = price?.toInt(), rating = rating, reviews = reviews?.toInt(),
     )
 
     private fun ItemRow.toSyncRow() = SyncRow(
@@ -204,6 +273,8 @@ class SqlShoppingRepository(
             "id" to id, "list_name" to list_name, "text" to text, "done" to (done == 1L),
             "created_at" to Instant.ofEpochMilli(created_at), "updated_at" to Instant.ofEpochMilli(updated_at),
             "deleted" to (deleted == 1L), "quantity" to quantity, "unit" to unit, "source" to source,
+            "marketplace" to marketplace, "url" to url, "image_url" to image_url,
+            "price" to price, "rating" to rating, "reviews" to reviews,
         ),
     )
 }

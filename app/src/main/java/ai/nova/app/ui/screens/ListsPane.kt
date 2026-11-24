@@ -1,6 +1,7 @@
 package ai.nova.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -57,29 +58,74 @@ fun LazyListScope.listsPane(c: AppContainer, items: List<ShoppingItem>, name: St
             Group {
                 rows.sortedWith(compareBy({ it.done }, { it.createdAt })).forEachIndexed { i, it ->
                     if (i > 0) GroupDivider(inset = 60.dp)
-                    RowItem(
-                        title = it.text,
-                        titleColor = if (it.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                        onClick = { scope.launch { c.store.shopping.setDone(it.id, !it.done) } },
-                        leading = {
-                            Icon(
-                                if (it.done) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
-                                contentDescription = if (it.done) "Вернуть" else "Куплено",
-                                tint = if (it.done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(4.dp).size(24.dp),
-                            )
-                        },
-                        trailing = {
-                            IconButton(onClick = { scope.launch { c.store.shopping.delete(it.id) } }) {
-                                Icon(Icons.Rounded.Close, contentDescription = "Удалить", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        },
-                    )
+                    ShoppingRow(c, it, scope)
                 }
             }
         }
     }
 }
+
+/**
+ * Строка списка. Товар с площадки — это карточка: фотография, цена, магазин и оценка, а касание
+ * открывает страницу товара. Обычный пункт («молоко») остаётся строкой — галочка и удаление как раньше.
+ */
+@Composable
+private fun ShoppingRow(c: AppContainer, item: ShoppingItem, scope: CoroutineScope) {
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    val done = item.done
+    val open = item.url?.takeIf { it.isNotBlank() }
+    RowItem(
+        title = item.text,
+        subtitle = item.productSubtitle,
+        titleColor = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+        // Касание по товару открывает карточку: если ссылки нет, отмечаем купленным, как и раньше.
+        onClick = if (open != null) ({ runCatching { uri.openUri(open) } }) else ({ scope.launch { c.store.shopping.setDone(item.id, !done) } }),
+        leading = {
+            if (item.isProduct) {
+                ai.nova.app.ui.components.ProductThumb(url = item.imageUrl, size = 44, contentDescription = item.text)
+            } else {
+                Icon(
+                    if (done) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                    contentDescription = if (done) "Вернуть" else "Куплено",
+                    tint = if (done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(4.dp).size(24.dp),
+                )
+            }
+        },
+        trailing = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (item.isProduct) {
+                    // Отметить купленным — здесь же: по самой строке теперь открывается карточка.
+                    IconButton(onClick = { scope.launch { c.store.shopping.setDone(item.id, !done) } }) {
+                        Icon(
+                            if (done) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                            contentDescription = if (done) "Вернуть" else "Куплено",
+                            tint = if (done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                IconButton(onClick = { scope.launch { c.store.shopping.delete(item.id) } }) {
+                    Icon(Icons.Rounded.Close, contentDescription = "Удалить", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+    )
+}
+
+/** «2 889 ₽ · Wildberries · ★ 4,3 · 150 отзывов» — то, по чему товар узнают, без перехода на сайт. */
+private val ShoppingItem.productSubtitle: String?
+    get() {
+        if (!isProduct) return null
+        val parts = mutableListOf<String>()
+        price?.let { parts += ai.nova.core.shopping.ShoppingProduct.formatMoney(it) + " ₽" }
+        marketplace?.let { id -> ai.nova.core.shopping.Marketplace.entries.firstOrNull { it.id == id }?.title }?.let { parts += it }
+        rating?.let { r ->
+            val text = String.format(java.util.Locale.US, "%.1f", r).replace('.', ',')
+            val count = reviews?.takeIf { it > 0 }?.let { " · $it ${ai.nova.core.shopping.ShoppingProduct.reviewsWord(it)}" }.orEmpty()
+            parts += "★ $text$count"
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    }
 
 /** Добавление пунктов вручную: через запятую — сразу несколько. */
 @Composable

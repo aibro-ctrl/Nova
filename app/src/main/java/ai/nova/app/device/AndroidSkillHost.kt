@@ -60,7 +60,7 @@ class AndroidSkillHost(
     /** Маркетплейсы, выбранные в настройках «Действия»; пусто — все. */
     private val selectedMarketplaces: () -> Set<ai.nova.core.shopping.Marketplace> = { emptySet() },
     /** Товар, который не удалось положить в корзину площадки, — в список покупок Нова. */
-    private val saveToShoppingList: suspend (String) -> Boolean = { false },
+    private val saveToShoppingList: suspend (ai.nova.core.shopping.ShoppingProduct) -> Boolean = { false },
 ) : SkillHost {
     private val locator = Locator(context)
     private val players = ai.nova.app.media.OtherPlayers(context)
@@ -361,7 +361,10 @@ class AndroidSkillHost(
      */
     override suspend fun searchProducts(query: ai.nova.core.shopping.ShoppingQuery): ai.nova.core.shopping.ShoppingSearchResult {
         val direct = withContext(Dispatchers.IO) { shoppingSearch.search(query) }
-        if (direct.products.isNotEmpty()) return direct
+        if (direct.products.isNotEmpty()) {
+            Logger.i("Shopping", "поиск: каталог ответил, товаров ${direct.products.size}")
+            return direct
+        }
         val wanted = query.marketplaces.ifEmpty { ai.nova.core.shopping.Marketplace.entries.toSet() }
         val keys = wanted.map { it to query.searchText() }
         val cached = keys.mapNotNull { (m, text) -> webCache[m to text]?.let { m to it } }.toMap()
@@ -380,7 +383,10 @@ class AndroidSkillHost(
                 }
             }
         }
-        if (fromWeb.isEmpty()) return direct
+        if (fromWeb.isEmpty()) {
+            Logger.w("Shopping", "поиск: каталог и страницы площадок не ответили")
+            return direct
+        }
         // Что нашлось на странице — то и показываем: прямые ответы идут первыми, страница их дополняет.
         val results = wanted.map { marketplace ->
             val web = fromWeb[marketplace].orEmpty()
@@ -398,10 +404,16 @@ class AndroidSkillHost(
             results = results,
             products = results.flatMap { it.products },
         )
-        return if (merged.products.isEmpty()) direct else merged
+        if (merged.products.isEmpty()) return direct
+        Logger.i(
+            "Shopping",
+            "поиск: товаров ${merged.products.size}, с фото ${merged.products.count { !it.imageUrl.isNullOrBlank() }}",
+        )
+        return merged
     }
 
-    override suspend fun addToShoppingList(text: String): Boolean = runCatching { saveToShoppingList(text) }.getOrDefault(false)
+    override suspend fun addToShoppingList(product: ai.nova.core.shopping.ShoppingProduct): Boolean =
+        runCatching { saveToShoppingList(product) }.getOrDefault(false)
 
     override fun shoppingMarketplaces(): Set<ai.nova.core.shopping.Marketplace> = selectedMarketplaces()
 
