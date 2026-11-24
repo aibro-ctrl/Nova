@@ -672,6 +672,9 @@ object SkillPhrases {
     /** Прошедшее время покупки — расход, а не просьба найти товар. */
     private val PAST_PURCHASE = rx("""^(?:я\s+)?(?:купил|купила|купили|потратил|потратила|потратили|заплатил|заплатила|приобр[её]л|приобрела)\w*\b""")
 
+    /** «Сколько стоят кеды». */
+    private val PRICE_QUESTION = rx("""^сколько\s+сто(?:ят|ит)\b""")
+
     /** «… ли …» — вопрос о необходимости, а не заказ. */
     private val QUESTION_LI = rx("""(?:^|\s)ли(?:\s|$)""")
 
@@ -702,7 +705,8 @@ object SkillPhrases {
         val category = ShoppingIntent.category(t)
         // «Нужна ли куртка?» — вопрос о погоде, а не о покупке.
         if (marketplaces == null && QUESTION_LI.containsMatchIn(t)) return null
-        val verb = SHOPPING_VERB.containsMatchIn(t)
+        // «Сколько стоят кеды?» — тоже покупка: ответ с ценами полезнее статьи.
+        val verb = SHOPPING_VERB.containsMatchIn(t) || PRICE_QUESTION.containsMatchIn(t)
         if (category == null) return null
         // Продукты ищут на площадке только с названием магазина: «купи хлеб» — это список покупок.
         if (category == ShoppingCategory.FOOD && marketplaces == null) return null

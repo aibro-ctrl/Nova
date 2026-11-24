@@ -131,6 +131,14 @@ class ShoppingSkillTest {
     }
 
     @Test
+    fun `служебные слова не попадают в запрос к площадке`() = runTest {
+        val host = Host()
+        val (e, skills) = env(host)
+        skills.handle("сколько стоят кроссовки 42 размера", e.settings, null)
+        assertEquals("кроссовки", host.queries.single().text)
+    }
+
+    @Test
     fun `просьба о покупке не превращается в статью`() = runTest {
         val (e, _) = env()
         assertIs<SkillCommand.Shopping>(SkillPhrases.parse("найди кеды puma 46 размер", e.time.today()))
