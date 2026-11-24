@@ -96,9 +96,15 @@ class RoutesTest {
     }
 
     @Test fun foodMeansCafe() {
+        // Вид места не назван — сначала спросим «посидеть или перекусить», а не повезём в случайное кафе.
         for (phrase in listOf("поесть", "где поесть", "куда поесть", "хочу поесть", "пообедать", "перекусить", "сходим поесть")) {
-            assertEquals("кафе", destination(phrase), phrase)
+            val nav = navigate(phrase)
+            assertEquals("поесть", nav?.destination, phrase)
+            assertEquals(true, nav?.vague, phrase)
         }
+        // Вид места назвали прямо — спрашивать нечего.
+        assertEquals("кафе", navigate("построй маршрут до кафе")?.destination)
+        assertEquals(false, navigate("построй маршрут до кафе")?.vague)
     }
 
     @Test fun mapsAppFromSpeech() {

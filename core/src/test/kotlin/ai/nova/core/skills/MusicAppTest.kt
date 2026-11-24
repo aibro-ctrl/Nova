@@ -68,15 +68,33 @@ class MusicAppTest {
         assertEquals(MusicApp.YANDEX, host.remembered)
     }
 
-    @Test fun `подсказка включает ту же песню в названном приложении`() = runTest {
+    @Test fun `названную песню включает приложение, а не короткий фрагмент`() = runTest {
         val host = Host(listOf(MusicApp.YANDEX, MusicApp.SPOTIFY))
         val e = env(host)
-        val preview = e.engine.handle("включи песню кино — группа крови").text
-        assertTrue(host.played.isNotEmpty(), preview)
-
-        val reply = e.engine.handle("включи в яндекс музыке").text
-        assertTrue(reply.contains("группа крови", ignoreCase = true), reply)
+        val reply = e.engine.handle("включи песню кино — группа крови").text
+        // Полный трек играет приложение с лицензией: встроенный плеер умеет только 30 секунд.
         assertEquals(listOf("кино — группа крови" to MusicApp.YANDEX), host.launched)
+        assertTrue(host.played.isEmpty(), "фрагмент не нужен, если есть приложение: ${host.played}")
+        assertTrue(reply.contains("Яндекс Музыка"), reply)
+
+        val again = e.engine.handle("включи в яндекс музыке").text
+        assertTrue(again.contains("группа крови", ignoreCase = true), again)
+        assertEquals("кино — группа крови", host.launched.last().first)
+    }
+
+    @Test fun `без музыкальных приложений песня играет встроенным плеером`() = runTest {
+        val host = Host(emptyList())
+        val reply = env(host).engine.handle("включи песню кино — группа крови").text
+        assertTrue(host.launched.isEmpty(), "приложений нет — открывать нечего")
+        assertTrue(host.played.isNotEmpty(), reply)
+    }
+
+    @Test fun `исполнитель без названия песни тоже играет`() = runTest {
+        val host = Host(listOf(MusicApp.YANDEX))
+        val reply = env(host).engine.handle("включи мне Многоточие").text
+        assertEquals(MusicApp.YANDEX, host.launched.single().second)
+        assertTrue(host.launched.single().first.equals("Многоточие", ignoreCase = true), host.launched.toString())
+        assertTrue(reply.contains("Многоточие", ignoreCase = true), reply)
     }
 
     @Test fun `нет музыкальных приложений - честно говорим`() = runTest {

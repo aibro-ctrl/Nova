@@ -89,6 +89,55 @@ class ActionExecutor(
         val r = device.perform(DeviceCommand.Play(query, youtube = true, platform = platform))
         return ExecutionResult(listOf(Outcome(if (r.ok) "${platform.title}. ${r.text}" else r.text, if (r.ok) Outcome.Kind.QUERY else Outcome.Kind.ERROR)))
     }
+    /** Ждём ответ на «посидеть или перекусить?»: как только ответят — ищем и строим маршрут. */
+    private var pendingFood: FoodAsk? = null
+
+    /** Карты нужны и тогда, когда человек их не называл: поэтому ждём объект, а не «nullable app». */
+    private data class FoodAsk(val app: MapsApp?)
+
+    /** Маршрут уже построен: помним, что ещё нашлось рядом, чтобы «ещё» вело к следующему месту. */
+    private var nextPlace: PendingPlace? = null
+
+    private data class PendingPlace(
+        val kind: PlaceKind?,
+        val app: MapsApp?,
+        val rest: List<PlaceCandidate>,
+    )
+
+    /** Ждём уточнения по маршруту: «посидеть или перекусить?» или ответа «ещё» вместо прошлого места. */
+    fun awaitingPlace(): Boolean = pendingFood != null || nextPlace != null
+
+    /**
+     * Ответ по маршруту: вид еды («фастфуд», «суши», «посидеть») или «ещё» / «другое» / «не то».
+     * Не похоже на ответ — null, ожидание снимаем: человек передумал и говорит о другом.
+     */
+    suspend fun answerPlace(text: String): ExecutionResult? {
+        if (Places.isRefusal(text)) {
+            pendingFood = null
+            nextPlace = null
+            return ExecutionResult(listOf(Outcome("Хорошо, маршрут не строю.", Outcome.Kind.QUERY)))
+        }
+        pendingFood?.let { ask ->
+            val query = Places.refineFood(text)
+            if (query == null) {
+                pendingFood = null
+                return null
+            }
+            pendingFood = null
+            return ExecutionResult(placesStep(query, Places.kind(query), ask.app).outcomes)
+        }
+        val state = nextPlace ?: return null
+        if (!Places.isNext(text)) {
+            nextPlace = null
+            return null
+        }
+        val place = state.rest.firstOrNull()
+        // Мест больше нет: предложение остаётся открытым, чтобы «нет» и «хватит» звучали как отказ, а не «не поняла».
+        if (place == null) return ExecutionResult(listOf(Outcome("Больше мест рядом не нашла. Скажите иначе — например, «маршрут до аптеки на Ленина».", Outcome.Kind.QUERY)))
+        nextPlace = state.copy(rest = state.rest.drop(1))
+        return ExecutionResult(listOf(routeOutcome(place, state.kind, state.app, "Следующий вариант")))
+    }
+
     /**
      * Сценарий по расписанию выполняется сам, когда телефон обычно заблокирован. Его создал владелец на разблокированном
      * телефоне (создание сценариев на блокировке запрещено), поэтому на время запуска правила блокировки не действуют.
@@ -127,6 +176,9 @@ class ActionExecutor(
     suspend fun execute(actions: List<AssistantAction>, context: ConversationContext): ExecutionResult {
         // Человек сказал что-то другое — вопрос «где искать видео» больше не ждёт ответа.
         pendingVideo = null
+        // И про маршрут тоже: новая команда отменяет «посидеть или перекусить?» и предложение «ещё».
+        pendingFood = null
+        nextPlace = null
         val outcomes = ArrayList<Outcome>()
         val confirmOps = ArrayList<DestructiveOp>()
         val confirmQuestions = ArrayList<String>()
@@ -234,6 +286,89 @@ class ActionExecutor(
         return n
     }
 
+    /**
+     * Маршрут. Человек называет не адрес, а место («поесть», «аптека», «музей»): сначала находим
+     * ближайшее вокруг него, потом строим путь до точки — так приложение карт показывает маршрут,
+     * а не список результатов поиска. Не нашли — отдаём название картам, они ищут сами.
+     */
+    private suspend fun navigate(command: DeviceCommand.Navigate): Step {
+        nextPlace = null
+        pendingFood = null
+        val kind = Places.kind(command.destination)
+        // «Поесть» без уточнения: спрашиваем один раз, иначе можно привезти в фастфуд, когда человек хотел посидеть.
+        if (command.vague && kind == PlaceKind.FOOD) {
+            pendingFood = FoodAsk(command.app)
+            return question(PlaceKind.FOOD.question ?: "Где поесть: кафе, ресторан или быстро перекусить?")
+        }
+        // Адрес с номером дома — это уже точка: спрашивать «где именно» и предлагать «ещё» не нужно.
+        val address = Places.looksLikeAddress(command.destination)
+        val query = when {
+            address -> command.destination.trim()
+            Places.vague(command.destination) -> kind?.search ?: command.destination
+            else -> ai.nova.core.nlp.RuQuery.placeForm(command.destination)
+        }
+        return placesStep(query, kind, command.app, exact = address)
+    }
+
+    /** Ищем место рядом и строим маршрут до ближайшего; остальные запоминаем для «ещё». */
+    private suspend fun placesStep(query: String, kind: PlaceKind?, app: MapsApp?, exact: Boolean = false): Step {
+        val found = runCatching { device.findPlaces(query) }.getOrElse {
+            if (it is kotlinx.coroutines.CancellationException) throw it
+            emptyList()
+        }
+        if (found.isEmpty()) {
+            // Место не нашли (нет сети или места телефона) — пусть карты ищут сами: маршрут по названию.
+            val r = device.perform(DeviceCommand.Navigate(query, app))
+            return if (r.ok) query(r.text) else error(r.text)
+        }
+        val place = found.first()
+        val rest = found.drop(1)
+        // Для точного адреса «ещё» не предлагаем: человек назвал дом, а не «какое-нибудь место».
+        nextPlace = if (exact) null else PendingPlace(kind, app, rest)
+        // «Ближайший» — только если правда знаем, где телефон: иначе расстояние неизвестно.
+        val lead = when {
+            exact -> "Маршрут"
+            place.meters != null -> "Ближайший вариант"
+            else -> "Нашла вариант"
+        }
+        return Step(listOf(routeOutcome(place, kind, app, lead, hint = !exact && rest.isNotEmpty())))
+    }
+
+    private fun routeOutcome(
+        place: PlaceCandidate,
+        kind: PlaceKind?,
+        app: MapsApp?,
+        lead: String,
+        hint: Boolean = false,
+    ): Outcome {
+        val r = device.routeTo(place, app)
+        val head = buildString {
+            append(lead)
+            append(" — «")
+            append(place.title)
+            append('»')
+            val address = place.address.trim()
+            if (address.isNotEmpty() && !address.equals(place.title, ignoreCase = true)) {
+                append(", ")
+                append(address)
+            }
+            val distance = Places.distance(place.meters)
+            if (distance.isNotEmpty()) {
+                append(", ")
+                append(distance)
+            }
+            append(". ")
+        }
+        val tail = buildString {
+            append(r.text.trimEnd('.'))
+            // Место телефона неизвестно (геолокация выключена): карты попросят её включить — предупреждаем сразу.
+            if (r.ok && place.meters == null) append(". Геолокация выключена — карты попросят включить её, иначе не поймут, откуда ехать")
+            if (r.ok && hint) append(". Если не подходит — скажите «ещё»")
+            append('.')
+        }
+        return Outcome((head + tail).trim(), if (r.ok) Outcome.Kind.QUERY else Outcome.Kind.ERROR)
+    }
+
     private suspend fun performDevice(command: DeviceCommand): Step {
         val r = device.perform(command)
         return if (r.ok) query(r.text) else error(r.text)
@@ -241,6 +376,7 @@ class ActionExecutor(
 
     private fun changed(text: String, record: RecordRef? = null) = Step(listOf(Outcome(text, Outcome.Kind.CHANGED, record)), record)
     private fun query(text: String) = Step(listOf(Outcome(text, Outcome.Kind.QUERY)))
+    private fun question(text: String) = Step(listOf(Outcome(text, Outcome.Kind.QUESTION)))
     private fun error(text: String) = Step(listOf(Outcome(text, Outcome.Kind.ERROR)))
 
     private fun ambiguous(options: List<RecordRef>, verb: String, action: AssistantAction): Step {
@@ -539,6 +675,8 @@ class ActionExecutor(
 
             is AssistantAction.Device -> {
                 val command = action.command
+                // Маршрут — не поиск адреса: сначала находим место рядом и строим путь до точки.
+                if (command is DeviceCommand.Navigate) return navigate(command)
                 // Видео: платформу спрашиваем один раз и запоминаем; явное «на ютубе» в фразе главнее.
                 if (command is DeviceCommand.Play && command.youtube && command.platform == null) {
                     val chosen = videoPlatform()

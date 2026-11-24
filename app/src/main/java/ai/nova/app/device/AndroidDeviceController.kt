@@ -29,7 +29,9 @@ import ai.nova.core.assistant.DeviceController
 import ai.nova.core.assistant.DevicePhrases
 import ai.nova.core.assistant.DeviceResult
 import ai.nova.core.assistant.GlobalAction
+import ai.nova.core.assistant.MapsApp
 import ai.nova.core.assistant.MediaAction
+import ai.nova.core.assistant.PlaceCandidate
 import ai.nova.core.assistant.RuFormat
 import ai.nova.core.assistant.SettingsSection
 import ai.nova.core.assistant.VolumeChange
@@ -67,6 +69,10 @@ class AndroidDeviceController(
     private val city: () -> String? = { null },
     /** Сохранённые места («я дома», «это моя работа»): маршрут до них строится по координатам. */
     private val places: () -> List<ai.nova.core.skills.SavedPlace> = { emptyList() },
+    /** Поиск ближайших мест по названию: без точки карты показывают список, а не маршрут. */
+    private val streetPlaces: StreetPlaces? = null,
+    /** Где телефон сейчас — чтобы ближайшее место искать рядом, а не в другом городе. */
+    private val here: suspend () -> Pair<Double, Double>? = { null },
 ) : DeviceController {
 
     private val players = ai.nova.app.media.OtherPlayers(context)
@@ -229,37 +235,7 @@ class AndroidDeviceController(
                 val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(c.query)))
                 open(if (resolves(search)) search else web, "Ищу «${c.query}».", "Поиск: ${c.query}")
             }
-            is DeviceCommand.Navigate -> {
-                // Карты: выбранные голосом («в 2ГИС») важнее настроек, а настройки — важнее системного выбора.
-                val chosen = c.app ?: mapsApp()
-                // Сохранённые места («запомни, я дома») важнее названия, а «Мой город» из настроек —
-                // важнее последнего города, в котором открывали карты.
-                val target = ai.nova.core.assistant.RoutePlanner.target(c.destination, city(), places())
-                if (target == null) {
-                    return DeviceResult(
-                        "Не знаю, где ваш ${c.destination}. Скажите «запомни, я ${if (c.destination == "работа") "на работе" else "дома"}», " +
-                            "когда будете там — запомню место и буду строить туда маршрут.",
-                        ok = false,
-                    )
-                }
-                val saved = target.place
-                val query = target.query
-                val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(query)))
-                val installedApp = chosen?.takeIf { installed(it.pkg) }
-                val intent = when {
-                    installedApp != null -> geo.setPackage(installedApp.pkg)
-                    chosen != null -> Intent(Intent.ACTION_VIEW, Uri.parse(chosen.web + Uri.encode(query)))
-                    resolves(geo) -> geo
-                    else -> Intent(Intent.ACTION_VIEW, Uri.parse("https://yandex.ru/maps/?text=" + Uri.encode(query)))
-                }
-                val where = when {
-                    installedApp != null -> " в ${installedApp.title}"
-                    chosen != null -> " в ${chosen.title} (в браузере)"
-                    else -> ""
-                }
-                val what = if (saved != null) " к месту «${saved.name}»" else ": $query"
-                open(intent, "Строю маршрут$where$what.", "Маршрут")
-            }
+            is DeviceCommand.Navigate -> navigate(c)
             is DeviceCommand.OpenSettings -> {
                 val q = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
                 val action = when (c.section) {
@@ -493,6 +469,52 @@ class AndroidDeviceController(
     }
 
     // ------------------------------------------------------------------ Вспомогательное
+
+    /**
+     * Маршрут, а не поиск адреса: картам отдаём точку, и они строят путь от текущего места.
+     * Сохранённые места («дом», «работа») важнее названия, «Мой город» — важнее последнего города карт.
+     */
+    private suspend fun navigate(c: DeviceCommand.Navigate): DeviceResult {
+        val target = ai.nova.core.assistant.RoutePlanner.target(c.destination, city(), places())
+            ?: return DeviceResult(
+                "Не знаю, где ваш ${c.destination}. Скажите «запомни, я ${if (c.destination == "работа") "на работе" else "дома"}», " +
+                    "когда будете там — запомню место и буду строить туда маршрут.",
+                ok = false,
+            )
+        target.place?.let { place -> return route(place.name, place.lat, place.lon, c.app) }
+        return route(target.query, null, null, c.app)
+    }
+
+    /** Маршрут до точки в выбранных картах; если приложения нет — маршрут в браузере. */
+    private fun route(text: String, lat: Double?, lon: Double?, app: MapsApp?): DeviceResult {
+        val chosen = app ?: mapsApp() ?: defaultMaps()
+        val inApp = Intent(Intent.ACTION_VIEW, Uri.parse(chosen.routeTo(lat, lon, text))).setPackage(chosen.pkg)
+        if (installed(chosen.pkg) && resolves(inApp)) {
+            return open(inApp, "Строю маршрут в ${chosen.title}.", "Маршрут")
+        }
+        val web = Intent(Intent.ACTION_VIEW, Uri.parse(chosen.routeWeb(lat, lon, text)))
+        return open(web, "Строю маршрут в браузере — приложения «${chosen.title}» на телефоне нет.", "Маршрут")
+    }
+
+    /** Карты по умолчанию: те, что человек назначил системными для ссылок geo:, иначе первые установленные. */
+    private fun defaultMaps(): MapsApp {
+        val pkg = runCatching {
+            context.packageManager
+                .resolveActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=0,0")), PackageManager.MATCH_DEFAULT_ONLY)
+                ?.activityInfo?.packageName
+        }.getOrNull()
+        MapsApp.entries.firstOrNull { it.pkg == pkg }?.let { return it }
+        return MapsApp.entries.firstOrNull { installed(it.pkg) } ?: MapsApp.GOOGLE
+    }
+
+    /** Ближайшие места по названию — вокруг текущего места, с городом из настроек. */
+    override suspend fun findPlaces(query: String, limit: Int): List<PlaceCandidate> {
+        val searcher = streetPlaces ?: return emptyList()
+        val point = runCatching { here() }.getOrNull()
+        return searcher.search(query, city(), point, limit)
+    }
+
+    override fun routeTo(place: PlaceCandidate, app: MapsApp?): DeviceResult = route(place.title, place.lat, place.lon, app)
 
     private fun resolves(intent: Intent): Boolean = intent.resolveActivity(context.packageManager) != null
 

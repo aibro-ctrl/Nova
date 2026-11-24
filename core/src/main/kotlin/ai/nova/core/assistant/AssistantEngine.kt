@@ -1244,6 +1244,18 @@ class AssistantEngine(
                 return AssistantReply(result.outcomes.joinToString("\n") { it.text }, outcomes = result.outcomes)
             }
         }
+        // 0.1. Маршрут ждёт уточнения: «посидеть или перекусить?» → ответ, «ещё» → следующее место рядом.
+        // Раньше такой ответ уходил в навыки и модель, и Нова «не понимала» его.
+        if (executor.awaitingPlace()) {
+            executor.answerPlace(text)?.let { result ->
+                return AssistantReply(
+                    result.outcomes.joinToString("\n") { it.text },
+                    outcomes = result.outcomes,
+                    awaitingAnswer = result.needsAnswer,
+                    expectFollowUp = result.needsAnswer,
+                )
+            }
+        }
         // 0. Идёт игра или навык ждёт ответа («В каком городе?») — фраза для него, если это не новая команда.
         var skillsTried = false
         if (skills?.busy == true) {

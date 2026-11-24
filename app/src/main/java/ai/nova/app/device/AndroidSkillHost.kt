@@ -194,7 +194,7 @@ class AndroidSkillHost(
             // Плеерная служба приложения сама находит трек по названию и включает его — так же, как часы
             // и Android Auto. Это единственный путь, который работает у «Звука»: его страница поиска
             // воспроизведение не запускает, и клавиша «играть» на ней уходит в никуда.
-            if (pkg != null && !app.tapsFirstResult && mediaSearch.play(pkg, query)) return true
+            if (pkg != null && !app.tapsFirstResult && mediaSearch.play(pkg, query) && started(pkg)) return true
             // Если служба не ответила — стандартный запрос «включи по поиску»: Яндекс Музыка и Spotify
             // по нему реально начинают играть. «Звуку» он не подходит: там сначала нужна страница поиска.
             val play = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
@@ -205,7 +205,7 @@ class AndroidSkillHost(
                 // Часть плееров (в том числе «Звук») понимает такой запрос только как поиск: песню
                 // они показывают, но не запускают — дожимаем клавишей «играть», если тишина.
                 ensurePlaying(pkg)
-                return true
+                return started(pkg)
             }
             // Не вышло — открываем поиск в самом приложении, а без него в браузере.
             val web = app.webUrl(Uri.encode(query))
@@ -218,7 +218,7 @@ class AndroidSkillHost(
                     main.postDelayed({ NovaAccessibilityService.current?.tapFirstTrack() }, TAP_RESULT_DELAY_MS)
                 }
                 ensurePlaying(pkg)
-                return true
+                return started(pkg)
             }
             val browser = Intent(Intent.ACTION_VIEW, Uri.parse(web))
             if (browser.resolveActivity(context.packageManager) == null) return false
@@ -227,6 +227,16 @@ class AndroidSkillHost(
             Logger.w("Music", "Не удалось включить ${app.title}", e)
             false
         }
+    }
+
+    /**
+     * Проверяем, что песня правда заиграла: часть плееров (и подписка, и отказ службы) на запрос
+     * из другого приложения отвечает только экраном поиска. Где проверить нельзя — верим на слово.
+     */
+    private suspend fun started(pkg: String?): Boolean {
+        if (pkg == null) return true
+        // Спецвозможности нажимают трек с задержкой: проверяем их путь чуть позже.
+        return ai.nova.app.media.PlaybackCheck.waitPlaying(context, pkg) ?: true
     }
 
     /**

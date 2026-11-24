@@ -725,13 +725,16 @@ class Skills(
      * «Включи музыку» без названия — продолжаем нашу музыку или открываем музыкальное приложение.
      */
     private suspend fun musicPlay(cmd: SkillCommand.MusicPlay): SkillOutcome {
-        val app = cmd.app
         val query = cmd.query?.takeIf { it.isNotBlank() }
+        // Названную песню включает приложение с лицензией: встроенный плеер умеет только короткий фрагмент.
+        val app = cmd.app ?: if (query != null) playbackApp() else null
         if (app != null) {
             // Название песни не повторили («включи в Яндексе» после подсказки) — берём ту, что только что нашли.
             val wanted = query ?: lastMusicQuery?.takeIf { Duration.between(lastMusicAt, time.now()) < MUSIC_MEMORY }
             if (host.playInMusicApp(wanted.orEmpty(), app)) {
                 host.rememberMusicApp(app)
+                // «Включи в Яндексе» после песни — про ту же песню, а не про «что-нибудь».
+                query?.let { lastMusicQuery = it; lastMusicAt = time.now() }
                 // «Звук» включает песню только после нажатия строки в результатах поиска: без спецвозможностей
                 // Нова этого сделать не может и честно просит нажать трек.
                 val hint = if (app.tapsFirstResult && !host.accessibilityEnabled()) {
@@ -746,7 +749,11 @@ class Skills(
                     },
                 )
             }
-            return if (host.hasMusicApp(app)) SkillOutcome.Say("Не получилось открыть ${app.title}. Откройте приложение вручную и повторите.")
+            // Плеер мог открыться, но не начать играть (подписка, отказ службы воспроизведения) — не обещаем лишнего.
+            return if (host.hasMusicApp(app)) SkillOutcome.Say(
+                "Не получилось включить ${if (query != null) "«${pretty(query)}» " else "музыку "}в ${app.title}." +
+                    " Откройте приложение и нажмите трек — или включите спецвозможности Нова, и я нажму сама.",
+            )
             else SkillOutcome.Say("На телефоне нет «${app.title}». Скажите «включи песню ${query.orEmpty()}» — найду её и включу сама.")
         }
         if (query == null) return musicWithoutQuery()
@@ -758,6 +765,13 @@ class Skills(
         val suggested = MusicApp.PREFERRED.firstOrNull { host.hasMusicApp(it) }
         val hint = if (suggested != null) " Целиком — скажите «включи в ${suggested.spoken}»." else ""
         return SkillOutcome.Say("Включаю «${track.label}» — короткий фрагмент.$hint")
+    }
+
+    /** В каком приложении включать песню: выбранное раньше, иначе первое, что умеет включать по названию. */
+    private fun playbackApp(): MusicApp? {
+        host.musicApp()?.takeIf { host.hasMusicApp(it) }?.let { return it }
+        val installed = MusicApp.PREFERRED.filter { host.hasMusicApp(it) }
+        return installed.firstOrNull { !it.tapsFirstResult } ?: installed.singleOrNull()
     }
 
     /**

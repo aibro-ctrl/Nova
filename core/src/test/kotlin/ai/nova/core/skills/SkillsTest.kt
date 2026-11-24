@@ -165,7 +165,8 @@ class SkillsTest {
             "включи русское радио" to { it is SkillCommand.RadioPlay },
             "выключи радио" to { it == SkillCommand.RadioStop },
             "следующая станция" to { it == SkillCommand.RadioNext },
-            "включи queen" to { it == null },
+            // «Включи» без предмета телефона — это исполнитель: включаем его песни в приложении.
+            "включи queen" to { it is SkillCommand.MusicPlay },
             "где ты" to { it == SkillCommand.FindPhone },
             "найди мой телефон" to { it == SkillCommand.FindPhone },
             "где я" to { it == SkillCommand.WhereAmI },

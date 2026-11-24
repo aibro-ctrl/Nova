@@ -168,6 +168,11 @@ class AppContainer(private val context: Context) {
     /** Дыхание и медитация голосом; «я за рулём» — сообщения вслух. */
     val relaxation = ai.nova.app.health.Relaxation(appScope) { speech.speak(it) }
     val driving = ai.nova.app.health.DrivingMode(context, appScope) { speech.speak(it) }
+    /** Где телефон — для ближайших мест и геозон. */
+    private val locator = ai.nova.app.device.Locator(context)
+    /** Поиск ближайших мест по названию (OpenStreetMap): только чтобы отдать картам точку для маршрута. */
+    private val streetPlaces by lazy { ai.nova.app.device.StreetPlaces(http) }
+
     val device = AndroidDeviceController(context, launcher, appAccess, permissions, fallbackReminder = { text, at ->
         val r = store.reminders.create(text, at, null, time.zone().id)
         reminderScheduler.schedule(r)
@@ -177,7 +182,13 @@ class AppContainer(private val context: Context) {
         // «Мой город»: маршрут ищется в нём; пусто — как раньше, по последнему городу карт.
         city = { settings.settings.value.city.takeIf { it.isNotBlank() } },
         // «Я дома», «это моя работа»: маршрут до сохранённого места строится по координатам.
-        places = { geo.places() })
+        places = { geo.places() },
+        // Ближайшее место ищем сами: карты по слову показывают список, а маршрут строят по точке.
+        streetPlaces = streetPlaces,
+        here = {
+            val at = locator.current()
+            at?.let { it.latitude to it.longitude }
+        })
     /** Связь с «Финансовым помощником»: траты уходят туда, ответы о деньгах — оттуда. */
     val finance = ai.nova.app.device.FinanceBridge(context, appScope)
     /** Траты, которые заодно уходят в помощник. Сама Нова пишет их так же, как раньше. */

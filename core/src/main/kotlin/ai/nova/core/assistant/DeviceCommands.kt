@@ -27,7 +27,11 @@ sealed interface DeviceCommand {
     data class Volume(val change: VolumeChange, val percent: Int? = null) : DeviceCommand
     data class WebSearch(val query: String) : DeviceCommand
     /** Маршрут; [app] — карты, выбранные голосом («в 2ГИС»), иначе те, что выбраны в настройках. */
-    data class Navigate(val destination: String, val app: MapsApp? = null) : DeviceCommand
+    /**
+     * Маршрут до места. [vague] — человек сказал только «поесть»/«перекусить», без вида места:
+     * тогда сначала спросим, что именно нужно, а не повезём в случайное кафе.
+     */
+    data class Navigate(val destination: String, val app: MapsApp? = null, val vague: Boolean = false) : DeviceCommand
     data class OpenSettings(val section: SettingsSection) : DeviceCommand
     data object Stopwatch : DeviceCommand
     data object ShowAlarms : DeviceCommand
@@ -75,6 +79,16 @@ data class DeviceResult(val text: String, val ok: Boolean = true)
 /** Платформенная часть: Android выполняет команды через системные интенты и сервисы. */
 interface DeviceController {
     suspend fun perform(command: DeviceCommand): DeviceResult
+
+    /**
+     * Ближайшие места по запросу вокруг текущего места телефона, от ближнего к дальнему.
+     * Пусто — не нашли, нет сети или не известно, где телефон: тогда маршрут строим по названию.
+     */
+    suspend fun findPlaces(query: String, limit: Int = 6): List<PlaceCandidate> = emptyList()
+
+    /** Маршрут до найденного места: карты строят путь от текущего места до точки. */
+    fun routeTo(place: PlaceCandidate, app: MapsApp?): DeviceResult =
+        DeviceResult("Не получилось построить маршрут.", ok = false)
 }
 
 object UnsupportedDevice : DeviceController {
@@ -707,8 +721,9 @@ object DevicePhrases {
         if (words.any { it.any { c -> c.isDigit() } }) return null
         if (re("""\s(?:и|а|потом|затем|но|или)\s|,""").containsMatchIn(bare)) return null
         // «где поесть», «хочу поесть», «перекусить» → кафе: вопрос о еде решается картой, а не заметкой.
-        if (re("""^(?:где|куда|хочу|хотим|можно|надо|мне)?\s*(?:бы\s+)?(?:поесть|пообедать|перекусить|покушать|подкрепиться)$""").containsMatchIn(bare)) {
-            return DeviceCommand.Navigate("кафе", MapsApp.parse(bare))
+        if (FOOD_ONLY.containsMatchIn(bare)) {
+            // Вид места человек не назвал: спросим «посидеть или перекусить» и только потом поведём.
+            return DeviceCommand.Navigate("поесть", MapsApp.parse(bare), vague = true)
         }
         // Вся фраза должна состоять из места и уточнений: «ближайшая аптека», «музей поблизости».
         // «сходить в парикмахерскую», «схожу в спортзал» — задачи и планы, их не перехватываем.
@@ -718,6 +733,9 @@ object DevicePhrases {
         if (re("""(?:^|\s)(?:мо[йяею]|наш\w*|у\s+меня)(?:\s|$)""").containsMatchIn(bare)) return null
         return navigate(bare)
     }
+
+    /** «Где поесть», «хочу есть», «перекусить» — вид места не назван, спросим уточнение. */
+    private val FOOD_ONLY = re("""^(?:где|куда|хочу|хотим|можно|надо|мне|нам)?\s*(?:бы\s+)?(?:(?:хочу|хотим|можно|давай)\s+)?(?:поесть|пообедать|перекусить|покушать|подкрепиться|перекус|голоден|голодна|(?:хочу|хотим)\s+есть)$""")
 
     /**
      * Фразы, после которых место идёт без предлога: «маршрут музей», «поехали кино».
