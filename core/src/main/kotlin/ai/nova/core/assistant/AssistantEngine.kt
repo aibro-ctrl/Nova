@@ -1299,59 +1299,14 @@ class AssistantEngine(
         calendarTurn(text, cfg)?.let { return it }
         // 0.5. Живой диалог: «повтори», «ещё», «а завтра?», «продолжай».
         dialogTurn(text, cfg)?.let { return it }
-        // 1. Ожидаем подтверждение опасного действия.
-        context.pendingConfirmation?.let { pending ->
-            when {
-                LocalCommandParser.isYes(text) -> {
-                    context.pendingConfirmation = null
-                    // Пока ждали «да», телефон могли заблокировать: удаление — это изменение записей.
-                    if (cfg.lockPolicy?.edit == false) return AssistantReply("Разблокируйте телефон — удалять записи без разблокировки не разрешено.")
-                    val result = executor.applyConfirmed(pending, context)
-                    return AssistantReply(result.outcomes.joinToString(" ") { it.text }, result.outcomes, changedData = true)
-                }
-                LocalCommandParser.isNo(text) -> {
-                    context.pendingConfirmation = null
-                    context.pendingChoice = null
-                    return AssistantReply("Хорошо, ничего не удаляю.")
-                }
-                context.pendingChoice != null -> Unit // сначала ответ на «какую запись?», подтверждение ждёт
-                else -> context.pendingConfirmation = null // новая команда отменяет ожидание
-            }
-        }
-        // 2. Ожидаем выбор варианта.
-        context.pendingChoice?.let { choice ->
-            context.pendingChoice = null
-            if (LocalCommandParser.isNo(text)) { context.pendingConfirmation = null; return AssistantReply("Хорошо, отменила.") }
-            // Ответ на «какую?» — короткая фраза без новой команды: «вторую», «про склад».
-            val wordCount = text.trim().split(Regex("\\s+")).size
-            val looksLikeCommand = localParser.startsWithCommand(text)
-            val index = if (looksLikeCommand) null else {
-                (if (wordCount <= 3) LocalCommandParser.ordinal(text, choice.options.size) else null)
-                    ?: (if (wordCount <= 6) matchOptionByTitle(text, choice.options) else null)
-            }
-            if (index != null) {
-                val chosen = choice.options[index]
-                context.touchRecord(chosen)
-                val kept = context.pendingConfirmation
-                val actions = listOf(withTarget(choice.action, chosen.id)) + choice.remaining
-                return execute(AssistantPlan("", actions), usedAI = false, offline = false, carriedConfirmation = kept, name = cfg.assistantName, dialogAllowed = cfg.dialogMode)
-            }
-            context.pendingConfirmation = null
-        }
-        // 3. Дозаполнение недостающих данных («Сколько потратили?» → «500»).
-        context.pendingSlot?.let { slot ->
-            context.pendingSlot = null
-            if (LocalCommandParser.isNo(text) && slot !is SlotRequest.SaveAsNote && slot !is SlotRequest.RememberFact) return AssistantReply("Хорошо, отменила.")
-            localParser.fillSlot(slot, text, time.now(), time.zone())?.let { filled ->
-                return execute(filled, usedAI = false, offline = false, name = cfg.assistantName)
-            }
-        }
         // Уточнение к вопросу о расходах: «а на транспорт?»
         context.lastExpenseQuery?.let { prevQuery ->
             localParser.followUpExpenseQuery(text, prevQuery, time.now(), time.zone())?.let { q ->
                 return execute(AssistantPlan("", listOf(q)), usedAI = false, offline = false, name = cfg.assistantName)
             }
         }
+        // Ждём «да/нет» (опасное действие), «вторую» (выбор записи) или недостающие данные («500»).
+        routePending(text, cfg)?.let { return it }
         // 4. Завершение диалогового режима.
         if ((context.dialogMode || context.appendMode) && LocalCommandParser.isDialogEnd(text)) {
             return AssistantReply("Хорошо! Если что — зовите.", endsDialog = true)
@@ -1491,6 +1446,59 @@ class AssistantEngine(
                 "«напомни завтра в 10 утра…», «что у меня на сегодня». Скажите «что ты умеешь» — расскажу подробнее.",
             offline = cfg.useAI,
         )
+    }
+
+    /**
+     * Ожидание подтверждения, выбора и дозаполнения: «да/нет», «вторую», «500». Раньше это были
+     * три отдельных блока в [process] — вынесены, чтобы сам [process] читался сверху вниз.
+     * Возвращает запланированный ответ, null — ждать нечего, продолжаем дальше.
+     */
+    private suspend fun routePending(text: String, cfg: AssistantSettings): AssistantReply? {
+        context.pendingConfirmation?.let { pending ->
+            when {
+                LocalCommandParser.isYes(text) -> {
+                    context.pendingConfirmation = null
+                    // Пока ждали «да», телефон могли заблокировать: удаление — это изменение записей.
+                    if (cfg.lockPolicy?.edit == false) return AssistantReply("Разблокируйте телефон — удалять записи без разблокировки не разрешено.")
+                    val result = executor.applyConfirmed(pending, context)
+                    return AssistantReply(result.outcomes.joinToString(" ") { it.text }, result.outcomes, changedData = true)
+                }
+                LocalCommandParser.isNo(text) -> {
+                    context.pendingConfirmation = null
+                    context.pendingChoice = null
+                    return AssistantReply("Хорошо, ничего не удаляю.")
+                }
+                context.pendingChoice != null -> Unit // сначала ответ на «какую запись?», подтверждение ждёт
+                else -> context.pendingConfirmation = null // новая команда отменяет ожидание
+            }
+        }
+        context.pendingChoice?.let { choice ->
+            context.pendingChoice = null
+            if (LocalCommandParser.isNo(text)) { context.pendingConfirmation = null; return AssistantReply("Хорошо, отменила.") }
+            // Ответ на «какую?» — короткая фраза без новой команды: «вторую», «про склад».
+            val wordCount = text.trim().split(Regex("\\s+")).size
+            val looksLikeCommand = localParser.startsWithCommand(text)
+            val index = if (looksLikeCommand) null else {
+                (if (wordCount <= 3) LocalCommandParser.ordinal(text, choice.options.size) else null)
+                    ?: (if (wordCount <= 6) matchOptionByTitle(text, choice.options) else null)
+            }
+            if (index != null) {
+                val chosen = choice.options[index]
+                context.touchRecord(chosen)
+                val kept = context.pendingConfirmation
+                val actions = listOf(withTarget(choice.action, chosen.id)) + choice.remaining
+                return execute(AssistantPlan("", actions), usedAI = false, offline = false, carriedConfirmation = kept, name = cfg.assistantName, dialogAllowed = cfg.dialogMode)
+            }
+            context.pendingConfirmation = null
+        }
+        context.pendingSlot?.let { slot ->
+            context.pendingSlot = null
+            if (LocalCommandParser.isNo(text) && slot !is SlotRequest.SaveAsNote && slot !is SlotRequest.RememberFact) return AssistantReply("Хорошо, отменила.")
+            localParser.fillSlot(slot, text, time.now(), time.zone())?.let { filled ->
+                return execute(filled, usedAI = false, offline = false, name = cfg.assistantName)
+            }
+        }
+        return null
     }
 
     /** Сохраняет надиктованный текст заметкой: расставляет точки, заглавные буквы и абзацы. */
