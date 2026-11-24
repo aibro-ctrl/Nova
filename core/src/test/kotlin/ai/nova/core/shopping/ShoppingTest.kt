@@ -43,28 +43,27 @@ class ShoppingTest {
 
     @Test
     fun `товары из разных категорий распознаются`() {
-        // Просьба найти товар не должна упираться в узкий список категорий.
+        // Словарь категорий не должен упираться в одежду: товар ищут по просьбе о покупке.
         val cases = mapOf(
-            "найди молоток" to ShoppingCategory.HOME,
-            "найди шуруповерт" to ShoppingCategory.HOME,
-            "найди корм для кошек" to ShoppingCategory.PET,
-            "найди подгузники" to ShoppingCategory.KIDS,
-            "найди наушники беспроводные" to ShoppingCategory.TECH,
-            "найди сковороду" to ShoppingCategory.HOME,
-            "найди шоколад" to ShoppingCategory.FOOD,
-            "найди шампунь" to ShoppingCategory.BEAUTY,
-            "найди шины 205 55 16" to ShoppingCategory.AUTO,
-            "найди моторное масло" to ShoppingCategory.AUTO,
-            "найди гантели" to ShoppingCategory.SPORT,
-            "найди семена томатов" to ShoppingCategory.GARDEN,
-            "найди рюкзак" to ShoppingCategory.HOME,
-            "найди чемодан" to ShoppingCategory.HOME,
-            "найди зарядное устройство" to ShoppingCategory.TECH,
-            "найди постельное белье 2 спальное" to ShoppingCategory.HOME,
-            "найди смартфон" to ShoppingCategory.TECH,
-            "найди корм для кошек" to ShoppingCategory.PET,
-            "найди наполнитель для кошачьего туалета" to ShoppingCategory.PET,
-            "найди шариковую ручку" to ShoppingCategory.BOOKS,
+            "купи молоток" to ShoppingCategory.HOME,
+            "купи шуруповерт" to ShoppingCategory.HOME,
+            "купи корм для кошек" to ShoppingCategory.PET,
+            "купи подгузники" to ShoppingCategory.KIDS,
+            "купи наушники беспроводные" to ShoppingCategory.TECH,
+            "купи сковороду" to ShoppingCategory.HOME,
+            "найди для покупки шоколад" to ShoppingCategory.FOOD,
+            "купи шампунь" to ShoppingCategory.BEAUTY,
+            "купи шины 205 55 16" to ShoppingCategory.AUTO,
+            "купи моторное масло" to ShoppingCategory.AUTO,
+            "купи гантели" to ShoppingCategory.SPORT,
+            "купи семена томатов" to ShoppingCategory.GARDEN,
+            "купи рюкзак" to ShoppingCategory.HOME,
+            "купи чемодан" to ShoppingCategory.HOME,
+            "купи зарядное устройство" to ShoppingCategory.TECH,
+            "купи постельное белье 2 спальное" to ShoppingCategory.HOME,
+            "купи смартфон" to ShoppingCategory.TECH,
+            "купи наполнитель для кошачьего туалета" to ShoppingCategory.PET,
+            "купи шариковую ручку" to ShoppingCategory.BOOKS,
         )
         val today = java.time.LocalDate.of(2026, 9, 25)
         cases.forEach { (text, category) ->
@@ -76,11 +75,66 @@ class ShoppingTest {
     }
 
     @Test
+    fun `слово найди само по себе магазин не открывает`() {
+        // «Найди» слишком широкое: маршрут, аптека, видео и статья тоже начинаются с него.
+        val today = java.time.LocalDate.of(2026, 9, 25)
+        listOf(
+            "найди маршрут домой",
+            "найди аптеку",
+            "найди видео кота",
+            "найди фильм",
+            "найди часы работы аптеки",
+            "найди молоток",
+            "найди корм для кошек",
+            "найди рецепт борща",
+            "найди информацию о Гагарине",
+        ).forEach { text ->
+            val cmd = SkillPhrases.parse(text, today)
+            assertTrue(cmd !is SkillCommand.Shopping, "$text → $cmd")
+        }
+    }
+
+    @Test
+    fun `просьба о покупке и признаки товара магазин открывают`() {
+        val today = java.time.LocalDate.of(2026, 9, 25)
+        listOf(
+            "купи молоток",
+            "купить кроссовки",
+            "хочу купить кроссовки 42 размер",
+            "найди для покупки кеды 44 размер",
+            "закажи корм для кошки",
+            "подбери подарок для кошки",
+            "сколько стоят кеды",
+            "найди кеды 44 размер",
+            "найди кеды до 8000",
+            "хочу кеды puma 46 размер до 10 тысяч",
+        ).forEach { text ->
+            val cmd = SkillPhrases.parse(text, today)
+            assertTrue(cmd is SkillCommand.Shopping, "$text → $cmd")
+        }
+    }
+
+    @Test
     fun `животное из просьбы не спрашиваем повторно`() {
+        // Кому покупаем — уже сказано в самой просьбе: переспрашивать нечего.
         mapOf(
             "найди корм для кошек" to "кошка",
-            "найди наполнитель для кошачьего туалета" to "кошка",
+            "найди корм для кошки" to "кошка",
+            "найди корм для кота" to "кошка",
+            "найди корм для котёнка" to "кошка",
+            "кошачий корм" to "кошка",
+            "наполнитель для кошачьего туалета" to "кошка",
             "найди корм для собак" to "собака",
+            "найди корм для собаки" to "собака",
+            "собачий мяч" to "собака",
+            "найди корм для щенка" to "собака",
+            "найди корм для попугая" to "попугай",
+            "найди корм для птиц" to "птица",
+            "найди корм для рыбок" to "рыба",
+            "найди корм для хомяка" to "хомяк",
+            "найди корм для кролика" to "кролик",
+            "найди корм для черепахи" to "черепаха",
+            "найди наполнитель для грызунов" to "грызуны",
         ).forEach { (text, pet) ->
             val q = ShoppingIntent.parse(text)
             assertEquals(pet, q.subject, text)
@@ -101,7 +155,7 @@ class ShoppingTest {
     @Test
     fun `у игрушек и конструкторов размер не спрашивают`() {
         val today = java.time.LocalDate.of(2026, 9, 25)
-        val cmd = SkillPhrases.parse("найди конструктор лего", today)
+        val cmd = SkillPhrases.parse("купи конструктор лего", today)
         assertTrue(cmd is SkillCommand.Shopping, cmd.toString())
         val query = (cmd as SkillCommand.Shopping).query
         assertFalse(query.category.needsSize, query.category.title)
@@ -204,6 +258,31 @@ class ShoppingTest {
         val generic = product(id = "1", title = "Корм для всех птиц")
         val exact = product(id = "2", title = "Корм для неразлучников")
         assertEquals(listOf("2"), ShoppingRanking.best(listOf(generic, exact), q).map { it.id })
+    }
+
+    @Test
+    fun `корм для кошки находит кошачий и для кошек`() {
+        // «Для кошки» — это и «для кошек», и «кошачий»: формы слова в названии чужие.
+        val q = ShoppingQuery(text = "корм для кошки", category = ShoppingCategory.PET, subject = "кошка")
+        val forCats = product(id = "1", title = "Корм для кошек Hills")
+        val catFood = product(id = "2", title = "Кошачий корм Royal Canin")
+        val forDogs = product(id = "3", title = "Корм для собак Pedigree")
+        assertEquals(
+            setOf("1", "2"),
+            ShoppingRanking.best(listOf(forCats, catFood, forDogs), q).map { it.id }.toSet(),
+        )
+    }
+
+    @Test
+    fun `животное не повторяется в запросе к площадке`() {
+        // «корм для кошки кошка» площадка понимает хуже, а Нова так и искала.
+        assertEquals("корм для кошки", ShoppingIntent.parse("купи корм для кошки").searchText())
+        assertEquals("кошачий корм", ShoppingIntent.parse("купи кошачий корм").searchText())
+        assertEquals("корм для попугая", ShoppingIntent.parse("купи корм для попугая").searchText())
+        assertEquals(
+            "корм для неразлучников",
+            ShoppingIntent.parse("купи корм для неразлучников, до 1000").searchText().replace(" 1000", ""),
+        )
     }
 
     @Test

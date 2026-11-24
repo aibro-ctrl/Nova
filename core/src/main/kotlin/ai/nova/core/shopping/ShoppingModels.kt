@@ -34,6 +34,30 @@ enum class Marketplace(val id: String, val title: String, val host: String) {
     }
 }
 
+/**
+ * Корни слов «кому покупаем». Нужны в двух местах: чтобы не повторять животное в запросе к площадке
+ * («корм для кошки кошка») и чтобы узнать его в названии чужого товара («для кошек», «кошачий»).
+ */
+object ShoppingSubjects {
+    private val ROOTS = mapOf(
+        "кошка" to listOf("кошк", "кошек", "кошач", "кот"),
+        "собака" to listOf("собак", "собач", "щен", "пес"),
+        "попугай" to listOf("попуга"),
+        "птица" to listOf("птиц", "птич", "канарей"),
+        "рыба" to listOf("рыб"),
+        "хомяк" to listOf("хомя"),
+        "черепаха" to listOf("черепах"),
+        "кролик" to listOf("кролик", "крольч"),
+        "грызуны" to listOf("грызун", "мыш", "крыс", "свинк"),
+        "неразлучники" to listOf("неразлучник"),
+        "ёж" to listOf("еж"),
+        "лошадь" to listOf("лошад", "конь", "коня", "пони"),
+    )
+
+    fun roots(subject: String): List<String> =
+        ROOTS[subject] ?: listOf(subject.take(5))
+}
+
 /** Состояние интеграции с площадкой — то, что Нова показывает человеку без прикрас. */
 enum class IntegrationStatus(val text: String) {
     NOT_CONNECTED("не подключена"),

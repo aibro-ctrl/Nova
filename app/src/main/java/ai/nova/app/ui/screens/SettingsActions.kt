@@ -165,7 +165,7 @@ internal fun ActionsPage(c: AppContainer, onBack: () -> Unit) {
                 checked = settings.shoppingMemory,
             ) { scope.launch { c.settings.setShoppingMemory(it) } }
             // Каталог площадки может быть закрыт для этого региона или сети — проверка показывает это сразу,
-            // а не выясняется уже на просьбе «найди кеды».
+            // а не выясняется уже на просьбе «купи кеды».
             var probe by remember { mutableStateOf<String?>(null) }
             var testing by remember { mutableStateOf(false) }
             GroupDivider(inset = 16.dp)

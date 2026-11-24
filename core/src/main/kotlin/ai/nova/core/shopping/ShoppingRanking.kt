@@ -78,11 +78,13 @@ object ShoppingRanking {
         product.sizes.any { it.trim().replace(",", ".") == size.trim().replace(",", ".") } ||
             RuTokenizer.normalize(product.title).contains(size)
 
-    /** Корм для неразлучников не заменяем универсальным «для всех птиц». */
+    /**
+     * Корм для неразлучников не заменяем универсальным «для всех птиц». Сравниваем по корням:
+     * «корм для кошки» должен находить «для кошек» и «кошачий», а не только точную форму слова.
+     */
     private fun mentionsSubject(product: ShoppingProduct, subject: String): Boolean {
         val title = RuTokenizer.normalize(product.title + " " + (product.brand ?: ""))
-        val root = subject.take(5)
-        return title.contains(root)
+        return ShoppingSubjects.roots(subject).any { title.contains(it) }
     }
 
     private fun words(text: String): List<String> = RuTokenizer.normalize(text)

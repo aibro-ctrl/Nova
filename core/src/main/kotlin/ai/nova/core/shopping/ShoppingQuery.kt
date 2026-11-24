@@ -61,7 +61,9 @@ data class ShoppingQuery(
         add(size?.let { if (category == ShoppingCategory.SHOES) "$it размер" else it })
         add(color)
         add(volume)
-        add(subject)
+        // Животное часто названо прямо в просьбе («корм для кошки», «кошачий корм») — второй раз не добавляем.
+        val asked = text.lowercase()
+        add(subject?.takeUnless { s -> ShoppingSubjects.roots(s).any { it in asked } })
         return parts.joinToString(" ").trim()
     }
 

@@ -125,7 +125,7 @@ class ShoppingSkillTest {
     fun `без товаров оставляет ссылку на поиск, а не открывает браузер`() = runTest {
         val host = Host().apply { result = emptyList() }
         val (e, skills) = env(host)
-        val out = assertIs<SkillOutcome.Say>(skills.handle("найди корм для кошки до 1000", e.settings, null))
+        val out = assertIs<SkillOutcome.Say>(skills.handle("купи корм для кошки до 1000", e.settings, null))
         assertTrue(host.opened.isEmpty())
         assertTrue(out.products.isEmpty())
         // Ссылка остаётся в истории: человек откроет её сам, когда захочет.
@@ -187,7 +187,7 @@ class ShoppingSkillTest {
     @Test
     fun `просьба о покупке не превращается в статью`() = runTest {
         val (e, _) = env()
-        assertIs<SkillCommand.Shopping>(SkillPhrases.parse("найди кеды puma 46 размер", e.time.today()))
+        assertIs<SkillCommand.Shopping>(SkillPhrases.parse("купи кеды puma 46 размер", e.time.today()))
         // Продукты и рецепты остаются за своими навыками.
         assertIs<SkillCommand.FindArticle>(SkillPhrases.parse("найди рецепт борща", e.time.today()))
         assertEquals(null, SkillPhrases.parse("купи хлеб", e.time.today()))
