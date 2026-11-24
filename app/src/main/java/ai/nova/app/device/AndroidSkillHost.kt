@@ -223,6 +223,8 @@ class AndroidSkillHost(
             val browser = Intent(Intent.ACTION_VIEW, Uri.parse(web))
             if (browser.resolveActivity(context.packageManager) == null) return false
             launcher.launch(browser)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Logger.w("Music", "Не удалось включить ${app.title}", e)
             false

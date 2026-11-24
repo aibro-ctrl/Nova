@@ -117,6 +117,8 @@ class NovaVoiceModels(context: Context) {
                 if (!isReady(v.id)) error("голос не распаковался")
                 state.value = State.Ready
                 true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Logger.w(TAG, "Голос ${v.id} не скачан", e)
                 // Скачанное не выбрасываем: при повторной попытке докачаем с того же места.

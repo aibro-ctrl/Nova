@@ -86,6 +86,9 @@ class AndroidDeviceController(
         } catch (e: SecurityException) {
             Logger.w(TAG, "Нет разрешения для ${command::class.simpleName}", e)
             DeviceResult("Телефон не дал разрешения на это действие.", ok = false)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Отмена корутины — не задача приложения: пробрасываем, иначе загрузка не остановится по cancel().
+            throw e
         } catch (e: Exception) {
             Logger.w(TAG, "Команда ${command::class.simpleName} не выполнена", e)
             DeviceResult("Не получилось выполнить команду на этом телефоне.", ok = false)

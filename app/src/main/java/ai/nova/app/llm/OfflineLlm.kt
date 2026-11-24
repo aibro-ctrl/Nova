@@ -273,6 +273,8 @@ class OfflineLlm(
                 cleanup(keep = current.file)
                 _state.value = State.Ready
                 true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Logger.w(TAG, "Модель не скачана", e)
                 val need = current.size.coerceAtLeast(SIZE)

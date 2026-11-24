@@ -87,6 +87,8 @@ class UpdateManager(private val context: Context) {
             lastCheckedAt = System.currentTimeMillis()
             _state.value = if (info != null) UpdateState.Available(info) else UpdateState.UpToDate
             info
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Logger.w(TAG, "Проверка обновлений не удалась", e)
             _state.value = UpdateState.Error(friendly(e))
@@ -101,6 +103,8 @@ class UpdateManager(private val context: Context) {
             _state.value = UpdateState.Installing(info)
             withContext(Dispatchers.IO) { install(apk) }
             true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Logger.w(TAG, "Обновление не установлено", e)
             _state.value = UpdateState.Error(friendly(e))

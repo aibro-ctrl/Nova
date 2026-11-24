@@ -37,13 +37,15 @@ class StreetPlaces(private val http: HttpClient) {
     private val throttle = Mutex()
     private var lastCallAt = 0L
 
-    suspend fun search(query: String, city: String?, here: Pair<Double, Double>?, limit: Int = 6): List<PlaceCandidate> {
+    suspend fun search(query: String, city: String?, here: Pair<Double, Double>?, limit: Int = DEFAULT_LIMIT): List<PlaceCandidate> {
         val q = clean(query)
         if (q.isBlank()) return emptyList()
         val at = here?.let { round(it.first) to round(it.second) }
         val key = "$q|${city.orEmpty().lowercase()}|${at?.first ?: ""},${at?.second ?: ""}"
+        // Лимит берём с запасом: тег OSM отсекает лишнее, и чистыми остаются не все 20.
+        val pool = (limit * POOL_MULTIPLE).coerceAtLeast(POOL_MIN)
         cache[key]?.takeIf { System.currentTimeMillis() - it.at < TTL_MS }?.let { return it.list }
-        val list = runCatching { request(q, city, here, limit) }.getOrElse {
+        val list = runCatching { request(q, city, here, pool) }.getOrElse {
             if (it is kotlinx.coroutines.CancellationException) throw it
             Logger.w(TAG, "Поиск места «$q» не удался", it)
             emptyList()
@@ -92,6 +94,10 @@ class StreetPlaces(private val http: HttpClient) {
         const val TTL_MS = 10 * 60_000L
         const val MIN_INTERVAL_MS = 1_100L
         const val MAX_RESULTS = 20
+        /** Пул для «ещё»: теги OSM отсекают лишнее — берём с запасом, чтобы соседние не кончались на первом же запросе. */
+        const val POOL_MULTIPLE = 2
+        const val POOL_MIN = 12
+        const val DEFAULT_LIMIT = 6
         /** Половина рамки поиска: примерно 25 км на запад-восток и 33 км на север-юг. */
         const val BOX_LON = 0.35
         const val BOX_LAT = 0.30

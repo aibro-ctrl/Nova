@@ -73,6 +73,8 @@ class VoskModelManager(private val context: Context) {
             }
             replaceModel(tmp)
             true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Logger.w(TAG, "Не удалось распаковать встроенную модель", e)
             tmp.deleteRecursively()
@@ -96,6 +98,8 @@ class VoskModelManager(private val context: Context) {
                 downloadAndUnzip(url, tmp)
                 replaceModel(tmp)
                 return@withContext true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Logger.w(TAG, "Зеркало модели недоступно: ${URL(url).host}", e)
                 lastError = when (e) {
