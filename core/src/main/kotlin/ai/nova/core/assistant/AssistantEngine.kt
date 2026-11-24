@@ -131,10 +131,7 @@ class AssistantEngine(
     )
 
     /** Задача или напоминание с датой созданы — запоминаем план, чтобы «в календарь» сработало. */
-    fun notePlan(plan: PlanCalendar) {
-        pendingCalendar = plan
-        pendingCalendarAt = time.now()
-    }
+    fun notePlan(plan: PlanCalendar) = dialog.rememberPlan(plan, time.now())
 
     /** Итоги недели для воскресной сводки — тот же текст, что и по голосовой команде. */
     suspend fun weeklySummary(): String = review.week()
@@ -145,29 +142,61 @@ class AssistantEngine(
     /** Сколько не пробовать облачный AI после сбоя: иначе каждый вопрос снова ждёт таймаут сети. */
     private val AI_COOLDOWN_MS = java.time.Duration.ofMinutes(2).toMillis()
 
-    /** Куда отдавать куски ответа офлайн-модели, пока она пишет (озвучка начинает говорить сразу). */
-    @Volatile private var chunkSink: ((String) -> Unit)? = null
+    /**
+     * Состояние живого диалога в одном объекте — раньше это были разрозненные поля на самом оркестраторе.
+     * Оркестратор отвечает «что делать с фразой»; состояние «помним ли последнее и кому показывали предложения»
+     * живёт отдельно и закрывается за методами. Доступ — только из [handle] под локом [mutex].
+     */
+    private class DialogState {
+        /** Куда отдавать куски ответа офлайн-модели, пока она пишет (озвучка начинает говорить сразу). */
+        @Volatile var chunkSink: ((String) -> Unit)? = null
+        @Volatile var lastAiFailure: AiFailure? = null
+        var lastReply: AssistantReply? = null
+        var lastReplyAt: java.time.Instant = java.time.Instant.EPOCH
+        var lastMoreable: String? = null
+        var lastWasChat = false
+        var repeating = false
+        val shownSuggestions = LinkedHashSet<String>()
+        var lastSuggestionAt: java.time.Instant = java.time.Instant.EPOCH
+        var pendingCalendar: PlanCalendar? = null
+        var pendingCalendarAt: java.time.Instant = java.time.Instant.EPOCH
+        @Volatile var currentSource: InputSource = InputSource.TEXT
 
-    /** Последняя ошибка AI (null — последний запрос к AI прошёл успешно). */
-    @Volatile var lastAiFailure: AiFailure? = null
-        private set
+        /** Войти в новую реплику — запомнить источник приёма и приёмник кусков ответа. */
+        fun enter(source: InputSource, onChunk: ((String) -> Unit)?) {
+            currentSource = source
+            chunkSink = onChunk
+            repeating = false
+        }
 
-    /** Живой диалог: последний ответ (для «повтори»), фраза, которую можно повторить «ещё», был ли это разговор с моделью. */
-    private var lastReply: AssistantReply? = null
-    private var lastReplyAt: java.time.Instant = java.time.Instant.EPOCH
-    private var lastMoreable: String? = null
-    private var lastWasChat = false
-    private var repeating = false
-    /** Уже прозвучавшие предложения помощи и время последнего — чтобы не навязываться. */
-    private val shownSuggestions = LinkedHashSet<String>()
-    private var lastSuggestionAt: java.time.Instant = java.time.Instant.EPOCH
+        /** Запомнить сделанный ответ: он же «повтори», возможно «ещё», и был ли это разговор модели. */
+        fun rememberReply(text: String, reply: AssistantReply, at: java.time.Instant) {
+            if (repeating) return
+            lastReply = reply
+            lastReplyAt = at
+            lastWasChat = reply.provider != null && reply.outcomes.isEmpty() && !reply.changedData
+            val n = RuTokenizer.normalize(text)
+            if (MOREABLE.containsMatchIn(n)) lastMoreable = text
+            else if (!MORE.containsMatchIn(n.trimEnd('?', '!', '.'))) lastMoreable = null
+        }
 
-    /** План голосом, который ещё не в календаре: «в календарь» добавит именно его. */
-    private var pendingCalendar: PlanCalendar? = null
-    private var pendingCalendarAt: java.time.Instant = java.time.Instant.EPOCH
+        /** Реплика пошла — приёмник кусков больше не нужен. */
+        fun finishChunkSink() { chunkSink = null }
 
-    /** Откуда пришла текущая фраза: диктовка возможна только голосом. */
-    @Volatile private var currentSource: InputSource = InputSource.TEXT
+        /** Запомнить план голосом, ещё не в календаре — «в календарь» добавит именно его. */
+        fun rememberPlan(plan: PlanCalendar, at: java.time.Instant) {
+            pendingCalendar = plan
+            pendingCalendarAt = at
+        }
+    }
+
+    /** Состояние разговора: последний ответ, предложения помощи, незавершённый план — всё в одном месте. */
+    private val dialog = DialogState()
+
+    /** Последняя ошибка AI (null — последний запрос к AI прошёл успешно). Виден экрану настроек. */
+    var lastAiFailure: AiFailure?
+        get() = dialog.lastAiFailure
+        private set(value) { dialog.lastAiFailure = value }
 
     suspend fun handle(
         input: String,
@@ -175,14 +204,12 @@ class AssistantEngine(
         /** Куски ответа офлайн-модели по мере генерации: чтобы начать говорить, не дожидаясь всего текста. */
         onChunk: ((String) -> Unit)? = null,
     ): AssistantReply = mutex.withLock {
-        currentSource = source
-        chunkSink = onChunk
+        dialog.enter(source, onChunk)
         val cfg = settings()
         val text = ai.nova.core.nlp.Slang.normalize(stripWakeWord(input, cfg.assistantName))
         if (text.isBlank()) return@withLock AssistantReply("Слушаю!", expectFollowUp = true, awaitingAnswer = true)
         context.touch()
 
-        repeating = false
         val reply = try {
             decorate(process(text, cfg), cfg)
         } catch (e: CancellationException) {
@@ -191,16 +218,13 @@ class AssistantEngine(
             Logger.e(TAG, "Ошибка обработки команды", e)
             AssistantReply("Что-то пошло не так: ${e.message ?: "неизвестная ошибка"}. Попробуйте ещё раз.")
         }
-        if (!repeating) {
+        if (!dialog.repeating) {
             // Найденное (рецепт, статья) запоминаем: «запиши его в заметки» в следующей фразе.
             reply.entity?.let { runCatching { agent?.remember(it) } }
             record(text, reply.text, reply.sensitive)
-            lastReply = reply; lastReplyAt = time.now()
-            lastWasChat = reply.provider != null && reply.outcomes.isEmpty() && !reply.changedData
-            if (MOREABLE.containsMatchIn(RuTokenizer.normalize(text))) lastMoreable = text
-            else if (!MORE.containsMatchIn(RuTokenizer.normalize(text).trimEnd('?', '!', '.'))) lastMoreable = null
+            dialog.rememberReply(text, reply, time.now())
         }
-        chunkSink = null
+        dialog.finishChunkSink()
         continueDialog(reply, source, cfg)
     }
 
@@ -257,12 +281,12 @@ class AssistantEngine(
     private suspend fun withSuggestion(reply: AssistantReply): AssistantReply {
         if (reply.sensitive || reply.awaitingAnswer || reply.awaitingConfirmation || reply.endsDialog) return reply
         val now = time.now()
-        if (java.time.Duration.between(lastSuggestionAt, now) < SUGGESTION_COOLDOWN) return reply
+        if (java.time.Duration.between(dialog.lastSuggestionAt, now) < SUGGESTION_COOLDOWN) return reply
         val data = runCatching { suggestionData() }.getOrNull() ?: return reply
-        val suggestion = Suggestions.caring(data, shownSuggestions) ?: return reply
-        shownSuggestions += suggestion.key
-        while (shownSuggestions.size > 20) shownSuggestions.remove(shownSuggestions.first())
-        lastSuggestionAt = now
+        val suggestion = Suggestions.caring(data, dialog.shownSuggestions) ?: return reply
+        dialog.shownSuggestions += suggestion.key
+        while (dialog.shownSuggestions.size > 20) dialog.shownSuggestions.remove(dialog.shownSuggestions.first())
+        dialog.lastSuggestionAt = now
         return reply.copy(text = reply.text.trimEnd() + " " + suggestion.text)
     }
 
@@ -429,7 +453,7 @@ class AssistantEngine(
             lc.reply(
                 ai.nova.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName, cfg.persona.personality.skillStyle),
                 history,
-                onChunk = chunkSink,
+                onChunk = dialog.chunkSink,
             )
         } catch (e: CancellationException) {
             throw e
@@ -446,7 +470,7 @@ class AssistantEngine(
      */
     private fun isChatTurn(text: String, cfg: AssistantSettings): Boolean {
         if (ai.nova.core.ai.LocalChat.looksLikeChat(text)) return true
-        if (context.dialogMode || lastWasChat) return true
+        if (context.dialogMode || dialog.lastWasChat) return true
         // Короткая реплика без команды: «всё хорошо», «спасибо», «скучно».
         return ai.nova.core.ai.LocalChat.isSmallTalk(text) && localParser.parse(text, time.now(), time.zone()) == null
     }
@@ -481,9 +505,9 @@ class AssistantEngine(
      * Предложение живёт 10 минут — дальше фраза обрабатывается как обычная команда.
      */
     private suspend fun calendarTurn(text: String, cfg: AssistantSettings): AssistantReply? {
-        val plan = pendingCalendar ?: return null
-        if (java.time.Duration.between(pendingCalendarAt, time.now()).toMinutes() > 10) {
-            pendingCalendar = null
+        val plan = dialog.pendingCalendar ?: return null
+        if (java.time.Duration.between(dialog.pendingCalendarAt, time.now()).toMinutes() > 10) {
+            dialog.pendingCalendar = null
             return null
         }
         val t = ai.nova.core.nlp.RuTokenizer.normalize(text)
@@ -491,7 +515,7 @@ class AssistantEngine(
         if (cfg.locked && cfg.lockPolicy?.edit == false) {
             return AssistantReply("Разблокируйте телефон — добавлять события в календарь без разблокировки не разрешено.")
         }
-        pendingCalendar = null
+        dialog.pendingCalendar = null
         return execute(
             AssistantPlan("", listOf(AssistantAction.Device(DeviceCommand.CalendarEvent(plan.title, plan.at, allDay = plan.allDay)))),
             usedAI = false,
@@ -1164,21 +1188,21 @@ class AssistantEngine(
     private suspend fun dialogTurn(text: String, cfg: AssistantSettings): AssistantReply? {
         if (context.pendingConfirmation != null || context.pendingChoice != null || context.pendingSlot != null) return null
         val n = RuTokenizer.normalize(text).trim().trimEnd('?', '!', '.', ',')
-        val fresh = java.time.Duration.between(lastReplyAt, time.now()) <= DIALOG_TTL
-        if (fresh && REPEAT.containsMatchIn(n)) lastReply?.let { r ->
+        val fresh = java.time.Duration.between(dialog.lastReplyAt, time.now()) <= DIALOG_TTL
+        if (fresh && REPEAT.containsMatchIn(n)) dialog.lastReply?.let { r ->
             if (cfg.locked && r.sensitive) return AssistantReply("Разблокируйте телефон — это личное, без разблокировки не повторяю.")
-            repeating = true
+            dialog.repeating = true
             return AssistantReply(r.text, sensitive = r.sensitive, speakLanguage = r.speakLanguage, provider = r.provider)
         }
         skills?.let { sk ->
             skillReply(sk.more(text, cfg, skillAi), cfg)?.let { return it }
             skillReply(sk.followUp(text, cfg, skillAi), cfg)?.let { return it }
         }
-        if (fresh && MORE.containsMatchIn(n)) lastMoreable?.let { return process(it, cfg) }
+        if (fresh && MORE.containsMatchIn(n)) dialog.lastMoreable?.let { return process(it, cfg) }
         // «Отмени последнее» сразу после «выпила стакан воды» — отменяем отметку.
         if (UNDO.containsMatchIn(n)) habits?.undoRecent()?.let { return AssistantReply(it.text, changedData = true, sensitive = true) }
         // «Продолжай» после ответа модели — продолжение рассказа, а не музыка.
-        if (fresh && lastWasChat && CONTINUE.containsMatchIn(n)) {
+        if (fresh && dialog.lastWasChat && CONTINUE.containsMatchIn(n)) {
             if (!cfg.useAI) localAnswer("Продолжай.", cfg)?.let { return it }
         }
         return null
@@ -1337,7 +1361,7 @@ class AssistantEngine(
         // 4.1. Маршрут — раньше навыков и облака: иначе «найди маршрут домой» уходило в интернет-поиск,
         // а «маршрут музей» — в задачу «Осмотреть музей». Карту строим на устройстве и сразу.
         navigateFirst(text, cfg)?.let { return it }
-        if (currentSource != InputSource.TEXT && SpecialCommands.isDictationStart(text)) {
+        if (dialog.currentSource != InputSource.TEXT && SpecialCommands.isDictationStart(text)) {
             return AssistantReply("Диктуйте — я записываю. Можно делать паузы. Когда закончите, скажите «готово».", dictation = true, expectFollowUp = false)
         }
         special.translation(text)?.let { return translate(it, cfg) }
@@ -1524,8 +1548,8 @@ class AssistantEngine(
         if (full.isEmpty()) return full
         runCatching { conversations.add(context.conversationId, MessageRole.ASSISTANT, full) }
             .onFailure { Logger.w(TAG, "Не удалось сохранить сводку в историю", it) }
-        lastReply = AssistantReply(full)
-        lastReplyAt = time.now()
+        dialog.lastReply = AssistantReply(full)
+        dialog.lastReplyAt = time.now()
         return full
     }
 
