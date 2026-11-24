@@ -346,6 +346,8 @@ class VoiceController(
         // Что офлайн-модель уже написала. Куски приходят по мере генерации, поэтому первую фразу
         // Нова произносит через 1–2 секунды, а не после всего ответа.
         val written = StringBuilder()
+        // Что уже ушло в озвучку: по нему находим непрозвучавший конец готового ответа.
+        val said = StringBuilder()
         var interrupted = false
         /** Перебили словом «стоп» — разговор заканчивается; просто речью — продолжаем слушать. */
         var endedByStopWord = false
@@ -357,7 +359,9 @@ class VoiceController(
                 // Пока Нова говорит, её можно перебить словом «стоп» (если микрофон не занят фоновой службой — та ловит «стоп» сама).
                 val watcher = stopWatcher?.takeIf { !wakeHoldsMic.value }?.let { w ->
                     launch {
-                        when (w(settings.value.bargeIn)) {
+                        val why = w(settings.value.bargeIn)
+                        ai.nova.core.util.Logger.i(TAG, "перебивание: $why")
+                        when (why) {
                             Interruption.STOP_WORD -> { interrupted = true; endedByStopWord = true; tts.stop(); runCatching { onStop() } }
                             // Перебили голосом: замолкаем сразу, но разговор не заканчиваем — человек скажет, что хотел.
                             Interruption.SPEECH -> { interrupted = true; tts.stop() }
@@ -379,7 +383,10 @@ class VoiceController(
                     engine.handle(text, source) { piece ->
                         written.append(piece)
                         raw.append(piece)
-                        SpeechChunker.flush(raw) { sentence -> queue.trySend(sentence) }
+                        SpeechChunker.flush(raw) { sentence ->
+                            said.append(' ').append(sentence)
+                            queue.trySend(sentence)
+                        }
                         _state.value = VoiceState.Speaking(written.toString())
                     }
                 } ?: run {
@@ -398,13 +405,22 @@ class VoiceController(
             }
             if (willSpeak) {
                 // Хвост, который остался в буфере, и всё, что пришло не от модели (облако, команды), говорим целиком.
-                SpeechChunker.flush(raw, last = true) { sentence -> queue.trySend(sentence) }
+                SpeechChunker.flush(raw, last = true) { sentence ->
+                    said.append(' ').append(sentence)
+                    queue.trySend(sentence)
+                }
                 val streamed = written.toString().trim()
-                when {
-                    result.speakLanguage != null && streamed.isEmpty() -> foreignLanguage = result.speakLanguage
-                    streamed.isEmpty() -> if (result.text.isNotBlank()) queue.trySend(result.text)
-                    // Характер мог дописать фразу в конце — её тоже озвучиваем.
-                    result.text.startsWith(streamed) -> result.text.removePrefix(streamed).trim().takeIf { it.isNotEmpty() }?.let { queue.trySend(it) }
+                if (result.speakLanguage != null && streamed.isEmpty()) {
+                    foreignLanguage = result.speakLanguage
+                } else {
+                    // Готовый ответ мог измениться после чистки (служебная преамбула, приветствие, обрыв
+                    // по таймауту): договариваем всё, что ещё не прозвучало, а не только точный хвост.
+                    val rest = SpeechChunker.remainder(result.text, said.toString())
+                    if (rest.isNotBlank()) {
+                        ai.nova.core.util.Logger.d(TAG, "договариваю хвост ответа: ${rest.length} символов")
+                        queue.trySend(rest)
+                    }
+                    ai.nova.core.util.Logger.d(TAG, "озвучено ${said.length + rest.length} из ${result.text.length} символов ответа")
                 }
             }
             queue.close()

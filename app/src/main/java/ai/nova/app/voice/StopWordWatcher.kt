@@ -95,29 +95,42 @@ class StopWordWatcher(private val context: Context, private val engine: VoskEngi
             var partial = ""
             var floor = 0.0
             var loudFrames = 0
+            var lastVoiceAt = 0L
+            val startedAt = android.os.SystemClock.elapsedRealtime()
+            var warmedUp = false
             while (isActive) {
                 val n = record.read(buffer, 0, buffer.size)
                 // Ошибка чтения (микрофон занят или отобран) — выходим; пустое чтение не должно грузить процессор.
                 if (n < 0) return@withContext Interruption.NONE
                 if (n == 0) { kotlinx.coroutines.delay(20); continue }
-                if (bargeIn) {
-                    val rms = rms(buffer, n)
-                    // Шумовой фон обновляем только на тихих кадрах, иначе собственный голос поднимет порог.
-                    if (rms < floor * 1.5 || floor == 0.0) floor = floor * 0.9 + rms * 0.1
-                    val threshold = maxOf(MIN_RMS, floor * 3.5)
-                    loudFrames = if (rms > threshold) loudFrames + 1 else 0
-                    if (loudFrames >= SPEECH_FRAMES) return@withContext Interruption.SPEECH
+                val level = rms(buffer, n)
+                // Шумовой фон обновляем только на тихих кадрах, иначе собственный голос поднимет порог.
+                if (level < floor * 1.5 || floor == 0.0) floor = floor * 0.9 + level * 0.1
+                val threshold = maxOf(MIN_RMS, floor * 3.5)
+                loudFrames = if (level > threshold) loudFrames + 1 else 0
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (loudFrames >= VOICE_FRAMES) lastVoiceAt = now
+                // Первые мгновения новой фразы — атака собственного голоса и «разогрев» эхоподавления:
+                // в это время команды не слушаем, иначе Нова обрывает сама себя на первом слове.
+                if (!warmedUp) {
+                    warmedUp = now - startedAt >= GRACE_MS
+                    runCatching { recognizer.acceptWaveForm(buffer, n) }
+                    continue
                 }
+                if (bargeIn && loudFrames >= SPEECH_FRAMES) return@withContext Interruption.SPEECH
+                // Слова остановки принимаем только рядом с живым голосом в микрофоне: распознаватель
+                // с жёсткой грамматикой «слышит» слова остановки и в остатках эха собственной речи Нова.
+                val voiceHeard = now - lastVoiceAt <= VOICE_AFTER_MS
                 if (recognizer.acceptWaveForm(buffer, n)) {
-                    if (heardStop(recognizer.result)) return@withContext Interruption.STOP_WORD
+                    if (voiceHeard && heardStop(recognizer.result)) return@withContext Interruption.STOP_WORD
                     partial = ""
                 } else {
                     // Ждать конца фразы не нужно: слово распознаётся уже на лету.
                     // Два одинаковых промежуточных результата подряд — это не случайный шум, останавливаем ответ.
-                    val now = partialText(recognizer.partialResult)
-                    if (now.isNotEmpty() && StopWords.isStop(now)) {
-                        if (now == partial) return@withContext Interruption.STOP_WORD
-                        partial = now
+                    val heard = partialText(recognizer.partialResult)
+                    if (voiceHeard && heard.isNotEmpty() && StopWords.isStop(heard)) {
+                        if (heard == partial) return@withContext Interruption.STOP_WORD
+                        partial = heard
                     } else {
                         partial = ""
                     }
@@ -165,5 +178,11 @@ class StopWordWatcher(private val context: Context, private val engine: VoskEngi
         private const val MIN_RMS = 900.0
         /** Сколько кадров подряд должно быть громко: ~300 мс при кадре 40 мс. */
         private const val SPEECH_FRAMES = 8
+        /** Сколько кадров живого голоса нужно, чтобы поверить слову остановки: ~120 мс. */
+        private const val VOICE_FRAMES = 3
+        /** Сколько ждём конца слова после живого голоса: итог распознавателя приходит с задержкой ~0,5 с. */
+        private const val VOICE_AFTER_MS = 900L
+        /** Сколько не слушаем команды в начале фразы: эхо атаки и разогрев эхоподавления. */
+        private const val GRACE_MS = 700L
     }
 }

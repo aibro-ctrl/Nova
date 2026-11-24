@@ -126,7 +126,9 @@ class MainActivity : ComponentActivity() {
                 else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
             }
             NovaTheme(settings.themeMode, settings.dynamicColor, settings.accent) {
-                Surface(Modifier.fillMaxSize(), color = Color.Transparent) {
+                // Прозрачный фон не даёт готового цвета текста: без contentColor заголовки и ответы
+                // в чате оставались чёрными и пропадали в ночной теме.
+                Surface(Modifier.fillMaxSize(), color = Color.Transparent, contentColor = MaterialTheme.colorScheme.onBackground) {
                     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
                         // Фон всей программы: органические формы, подкрашенные выбранным цветом.
                         ai.nova.app.ui.components.OrganicBackground()
