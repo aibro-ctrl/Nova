@@ -50,13 +50,14 @@ class AndroidSkillHost(
     private val financePendingSince: suspend (Instant) -> List<ai.nova.core.model.Expense> = { emptyList() },
     /** Положить найденный текст в заметки Нова. */
     private val saveNoteTo: suspend (String, String) -> Boolean = { _, _ -> false },
+    /** Выбранное приложение для музыки — то же, что видно в настройках «Действия». */
+    private val musicAppSetting: () -> MusicApp? = { null },
+    private val onMusicApp: (MusicApp) -> Unit = {},
 ) : SkillHost {
     private val locator = Locator(context)
     private val players = ai.nova.app.media.OtherPlayers(context)
     private val mediaSearch = ai.nova.app.media.MediaSearch(context)
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
-    /** Какое музыкальное приложение человек выбрал для «включи музыку». */
-    private val prefs by lazy { context.getSharedPreferences("nova_music", Context.MODE_PRIVATE) }
 
     override suspend fun location(): GeoPoint? {
         if (!locator.hasCoarse() && !permissions.ensure(Manifest.permission.ACCESS_COARSE_LOCATION)) return null
@@ -274,12 +275,9 @@ class AndroidSkillHost(
 
     override fun resumeMusic(): Boolean = RadioService.resume(context)
 
-    override fun musicApp(): MusicApp? = prefs.getString(KEY_MUSIC_APP, null)
-        ?.let { id -> MusicApp.entries.firstOrNull { it.name == id } }
+    override fun musicApp(): MusicApp? = musicAppSetting()
 
-    override fun rememberMusicApp(app: MusicApp) {
-        prefs.edit().putString(KEY_MUSIC_APP, app.name).apply()
-    }
+    override fun rememberMusicApp(app: MusicApp) = onMusicApp(app)
 
     private fun installed(pkg: String): Boolean = runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
 
@@ -324,6 +322,5 @@ class AndroidSkillHost(
         /** Сколько ждём, пока плеер отрисует результаты поиска. */
         const val TAP_RESULT_DELAY_MS = 2_500L
 
-        const val KEY_MUSIC_APP = "last_app"
     }
 }

@@ -126,6 +126,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import ai.nova.app.ui.components.captionStyle
 import ai.nova.app.ui.components.bodySecondaryStyle
+import androidx.compose.material.icons.rounded.OpenInNew
 
 enum class SettingsPage(val route: String, val title: String, val subtitle: String, val icon: ImageVector, val main: Boolean = true) {
     VOICE("settings/voice", "Голос и речь", "Кто говорит, характер голоса и громкость", Icons.Rounded.RecordVoiceOver),
@@ -135,6 +136,7 @@ enum class SettingsPage(val route: String, val title: String, val subtitle: Stri
     BACKUP("settings/backup", "Резервная копия", "Сохранить записи в файл и перенести на другой телефон", Icons.Rounded.Backup),
     CAPABILITIES("settings/capabilities", "Что умеет Нова", "Команды и примеры", Icons.Rounded.Lightbulb, main = false),
     ROUTINES("settings/routines", "Сценарии", "Свои фразы-команды, разговор и сводки", Icons.Rounded.Bolt, main = false),
+    ACTIONS("settings/actions", "Действия", "Куда открывать ссылки, музыка и видео, траты из уведомлений", Icons.Rounded.OpenInNew, main = false),
     CLOCK("settings/clock", "Будильники и таймеры", "Свои или телефона", Icons.Rounded.Alarm, main = false),
     APPEARANCE("settings/appearance", "Оформление", "Тема и цвет", Icons.Rounded.Palette, main = false),
     ABOUT("settings/about", "О приложении", "Версия и обновления", Icons.Rounded.Info, main = false),
@@ -160,6 +162,7 @@ fun SettingsScreen(
         SettingsPage.ABOUT -> AboutPage(c, onBack)
         SettingsPage.CAPABILITIES -> CapabilitiesPage(c, onBack, openAi = { open(SettingsPage.AI) })
         SettingsPage.ROUTINES -> RoutinesPage(c, onBack)
+        SettingsPage.ACTIONS -> ActionsPage(c, onBack)
         SettingsPage.CLOCK -> ClockPage(onBack)
     }
 }

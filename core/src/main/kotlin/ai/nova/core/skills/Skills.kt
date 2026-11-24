@@ -67,6 +67,8 @@ class Skills(
     private var awaitCity: WeatherQuery? = null
     /** «Включи музыку»: спросили, в каком приложении включить, — ждём название. */
     private var awaitMusicApp: List<MusicApp> = emptyList()
+    /** Ждём приложение, но песня уже названа: после ответа включаем именно её, а не «что-нибудь». */
+    private var awaitMusicQuery: String? = null
     /** Какую песню только что искали: «включи в Яндекс Музыке» после подсказки включает именно её. */
     private var lastMusicQuery: String? = null
     private var lastMusicAt: java.time.Instant = java.time.Instant.EPOCH
@@ -91,7 +93,7 @@ class Skills(
         if (helpPlace?.let { Duration.between(it.at, time.now()) > PENDING_TTL } == true) helpPlace = null
         val waiting = game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null || awaitMusicApp.isNotEmpty()
         if (waiting && Duration.between(lastTurn, time.now()) > PENDING_TTL) reset()
-        return game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null || awaitMusicApp.isNotEmpty()
+        return game != null || awaitGameChoice || awaitCity != null || awaitReply || helpPlace != null || awaitMusicApp.isNotEmpty() || awaitMusicQuery != null
     }
 
     /** Экран погас: забываем, кому отвечали, — игра и прочее остаются. */
@@ -100,6 +102,7 @@ class Skills(
     fun reset() {
         game = null; awaitGameChoice = false; awaitCity = null; replyTarget = null; awaitReply = false; helpPlace = null
         awaitMusicApp = emptyList()
+        awaitMusicQuery = null
     }
 
     /**
@@ -285,17 +288,18 @@ class Skills(
             val t = SkillPhrases.norm(text)
             if (LocalCommandParser.isNo(t)) {
                 awaitMusicApp = emptyList()
+                awaitMusicQuery = null
                 return SkillOutcome.Say("Хорошо, музыку не включаю.")
             }
             val app = SkillPhrases.musicApp(t) ?: choices.firstOrNull { t.contains(SkillPhrases.norm(it.title)) }
             if (app != null) {
                 awaitMusicApp = emptyList()
-                return openMusicApp(app)
+                return playInChosen(app)
             }
             // Первое приложение из списка — если назвали просто «первое» / «давай яндекс».
             if (t == "первое" || t == "первый" || t == "любое") {
                 awaitMusicApp = emptyList()
-                return openMusicApp(choices.first())
+                return playInChosen(choices.first())
             }
         }
         return null
@@ -756,6 +760,20 @@ class Skills(
             )
             else SkillOutcome.Say("На телефоне нет «${app.title}». Скажите «включи песню ${query.orEmpty()}» — найду её и включу сама.")
         }
+        // Приложение не выбрано, а их несколько: спрашиваем один раз — ответ попадёт в настройки.
+        // Раньше Нова молча брала первое подходящее, и человек не знал, почему играет именно там.
+        if (query != null) {
+            val installed = MusicApp.PREFERRED.filter { host.hasMusicApp(it) }
+            if (installed.size > 1) {
+                awaitMusicApp = installed
+                awaitMusicQuery = query
+                return SkillOutcome.Say(
+                    "В каком приложении включить «${pretty(query)}»: ${installed.joinToString(", ") { it.title }}? " +
+                        "Запомню выбор — поменять можно в настройках, раздел «Действия».",
+                    followUp = true,
+                )
+            }
+        }
         if (query == null) return musicWithoutQuery()
         val track = runCatching { musicSearch.find(query) }.getOrElse { if (it is CancellationException) throw it; null }
             ?: return SkillOutcome.Say("Не нашла песню «${pretty(query)}». Назовите иначе — например, «включи песню Кино — Группа крови».")
@@ -770,8 +788,23 @@ class Skills(
     /** В каком приложении включать песню: выбранное раньше, иначе первое, что умеет включать по названию. */
     private fun playbackApp(): MusicApp? {
         host.musicApp()?.takeIf { host.hasMusicApp(it) }?.let { return it }
-        val installed = MusicApp.PREFERRED.filter { host.hasMusicApp(it) }
-        return installed.firstOrNull { !it.tapsFirstResult } ?: installed.singleOrNull()
+        // Ничего не выбрано: если приложение одно — его и берём, иначе спросим (см. [musicPlay]).
+        // Раньше молча выбиралось первое подходящее, и выбор нельзя было ни увидеть, ни изменить.
+        return MusicApp.PREFERRED.filter { host.hasMusicApp(it) }.singleOrNull()
+    }
+
+    /** После ответа «в каком приложении»: играем названную песню, а если её не было — просто музыку. */
+    private suspend fun playInChosen(app: MusicApp): SkillOutcome {
+        val query = awaitMusicQuery
+        awaitMusicQuery = null
+        if (query.isNullOrBlank()) return openMusicApp(app)
+        if (host.playInMusicApp(query, app)) {
+            host.rememberMusicApp(app)
+            lastMusicQuery = query
+            lastMusicAt = time.now()
+            return SkillOutcome.Say("Включаю «$query» в ${app.title}.")
+        }
+        return SkillOutcome.Say("Не получилось включить «$query» в ${app.title}. Проверьте приложение и скажите ещё раз.")
     }
 
     /**
@@ -788,6 +821,7 @@ class Skills(
         val remembered = host.musicApp()?.takeIf { it in installed }
         val chosen = remembered ?: installed.singleOrNull()
         if (chosen == null) {
+            awaitMusicQuery = null
             awaitMusicApp = installed
             return SkillOutcome.Say(
                 "В каком приложении включить музыку: ${installed.joinToString(", ") { it.title }}?",

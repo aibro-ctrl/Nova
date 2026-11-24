@@ -168,45 +168,6 @@ internal fun RoutinesPage(c: AppContainer, onBack: () -> Unit) {
                 }
             }
         }
-        item(key = "search-engine") {
-            // Android не даёт узнать поисковик браузера: без выбора «найди в интернете» открывало пустую страницу.
-            SectionLabel("Где искать в интернете")
-            Group {
-                val picked = ai.nova.core.assistant.SearchEngine.fromId(s.searchEngine)
-                ai.nova.core.assistant.SearchEngine.entries.forEachIndexed { i, engine ->
-                    if (i > 0) GroupDivider(inset = 66.dp)
-                    RadioRow(
-                        engine.title,
-                        "Открываю результаты поиска в браузере по умолчанию",
-                        picked == engine,
-                    ) { scope.launch { c.settings.setSearchEngine(engine.id) } }
-                }
-            }
-        }
-        item(key = "maps") {
-            // Маршрут можно вести и в конкретных картах: «построй маршрут в 2ГИС до вокзала» — главнее настройки.
-            SectionLabel("Карты для маршрутов")
-            Group {
-                val installed = remember {
-                    ai.nova.core.assistant.MapsApp.entries.associateWith {
-                        runCatching { context.packageManager.getPackageInfo(it.pkg, 0) }.isSuccess
-                    }
-                }
-                RadioRow(
-                    "Как в телефоне",
-                    "Открываю то приложение, которое выбрано системой для карт",
-                    s.mapsApp.isBlank(),
-                ) { scope.launch { c.settings.setMapsApp("") } }
-                ai.nova.core.assistant.MapsApp.entries.forEach { app ->
-                    GroupDivider(inset = 66.dp)
-                    RadioRow(
-                        app.title,
-                        if (installed[app] == true) "установлено на телефоне" else "не установлено — открою ${app.title} в браузере",
-                        s.mapsApp == app.id,
-                    ) { scope.launch { c.settings.setMapsApp(app.id) } }
-                }
-            }
-        }
     }
 }
 

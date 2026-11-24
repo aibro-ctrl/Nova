@@ -208,6 +208,9 @@ class AppContainer(private val context: Context) {
                 true
             }.getOrDefault(false)
         },
+        // Музыкальное приложение — одна настройка на всё приложение: и голос, и экран «Действия».
+        musicAppSetting = { ai.nova.core.skills.MusicApp.entries.firstOrNull { it.name == settings.settings.value.musicApp } },
+        onMusicApp = { app -> appScope.launch { settings.setMusicApp(app.name) } },
     )
     val skills: ai.nova.core.skills.Skills by lazy { ai.nova.core.skills.Skills(skillHost, http, time) }
     /** Каталог моделей Hugging Face: свежие Qwen без обновления приложения. */

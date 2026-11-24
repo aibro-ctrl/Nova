@@ -76,12 +76,11 @@ private val presets = listOf(
 )
 
 @Composable
-fun ExpensesScreen(c: AppContainer) {
+fun ExpensesScreen(c: AppContainer, openActions: () -> Unit = {}) {
     val all by remember { c.store.expenses.observe() }.collectAsStateWithLifecycle(emptyList())
     val settings by c.settings.settings.collectAsStateWithLifecycle()
     val name = settings.assistantName
     val context = LocalContext.current
-    var bankSheet by remember { mutableStateOf(false) }
     var presetIndex by rememberSaveable { mutableIntStateOf(2) }
     var adding by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Expense?>(null) }
@@ -93,7 +92,7 @@ fun ExpensesScreen(c: AppContainer) {
     NovaScreen(
         title = "Расходы",
         actions = {
-            IconButton(onClick = { bankSheet = true }) {
+            IconButton(onClick = openActions) {
                 Icon(Icons.Rounded.NotificationsActive, contentDescription = "Траты из уведомлений банков")
             }
         },
@@ -167,16 +166,6 @@ fun ExpensesScreen(c: AppContainer) {
         }
     }
 
-    if (bankSheet) {
-        BankPushSheet(
-            current = settings.bankPushes,
-            access = NovaNotificationListener.enabled(context),
-            onSelect = { scope.launch { c.settings.setBankPushes(it) } },
-            onAllow = { runCatching { context.startActivity(NovaNotificationListener.settingsIntent(context)) } },
-            onDismiss = { bankSheet = false },
-        )
-    }
-
     if (adding) {
         ExpenseEditor(today, null, onDismiss = { adding = false }, onSave = { amount, category, description, date ->
             scope.launch { c.expenses.create(Money.toMinor(amount), "RUB", category, description, date) }
@@ -230,34 +219,3 @@ private fun ExpenseEditor(
         onConfirm = onDelete, onDismiss = { askDelete = false })
 }
 
-/**
- * Траты из уведомлений банков. Нова не входит в банк: она разбирает пуш, который телефон и так показал,
- * и спрашивает, записать ли покупку. Ничего не уходит в интернет.
- */
-@Composable
-private fun BankPushSheet(
-    current: BankPushMode,
-    access: Boolean,
-    onSelect: (BankPushMode) -> Unit,
-    onAllow: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    EditorSheet("Траты из уведомлений банков", onDismiss) {
-        Text(
-            "Банк присылает пуш «Покупка 850 ₽ · Пятёрочка» — Нова записывает трату в расходы. " +
-                "Данные остаются на телефоне, в банк приложение не входит.",
-            style = bodySecondaryStyle(),
-        )
-        Group {
-            BankPushMode.entries.forEachIndexed { i, mode ->
-                if (i > 0) GroupDivider(inset = 52.dp)
-                RadioRow(mode.title, mode.hint, current == mode) { onSelect(mode) }
-            }
-        }
-        if (!access && current != BankPushMode.OFF) {
-            SecondaryButton("Разрешить доступ к уведомлениям", onAllow)
-        }
-        Hint("Поддерживаются банки: " + BankPushParser.supportedBanks.joinToString(", ") + ".")
-        Hint("Если банк не в списке — Нова спросит подтверждение, но запишет трату, когда в уведомлении есть «покупка», «оплата» или «списание».")
-    }
-}

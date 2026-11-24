@@ -191,6 +191,8 @@ data class AppSettings(
     val mapsApp: String = "",
     /** Где искать в интернете: yandex, google, duckduckgo; пусто — Яндекс по умолчанию. */
     val searchEngine: String = "",
+    /** Где включать музыку: имя MusicApp; пусто — спросим один раз и запомним. */
+    val musicApp: String = "",
     /** По воскресеньям в 19:00 — итоги недели (по умолчанию выключено). */
     val weeklyReview: Boolean = false,
     /** Шаги и сон брать с телефона (Health Connect или счётчик шагов) — только по согласию и только локально. */
@@ -251,6 +253,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val healthSync = booleanPreferencesKey("health_sync")
         val mapsApp = stringPreferencesKey("maps_app")
         val searchEngine = stringPreferencesKey("search_engine")
+        val musicApp = stringPreferencesKey("music_app")
         val weeklyReview = booleanPreferencesKey("weekly_review")
         val persona = stringPreferencesKey("persona")
         val quickInput = booleanPreferencesKey("quick_input")
@@ -354,6 +357,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             healthSync = p[K.healthSync] ?: false,
             mapsApp = p[K.mapsApp].orEmpty(),
             searchEngine = p[K.searchEngine].orEmpty(),
+            musicApp = p[K.musicApp].orEmpty(),
             weeklyReview = p[K.weeklyReview] ?: false,
             persona = p[K.persona] ?: "caring",
             quickInput = p[K.quickInput] ?: false,
@@ -452,6 +456,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setHealthSync(v: Boolean) = store.edit { it[K.healthSync] = v }
     suspend fun setMapsApp(id: String) = store.edit { it[K.mapsApp] = id }
     suspend fun setSearchEngine(id: String) = store.edit { it[K.searchEngine] = id }
+    suspend fun setMusicApp(id: String) = store.edit { it[K.musicApp] = id }
     suspend fun setWeeklyReview(v: Boolean) = store.edit { it[K.weeklyReview] = v }
     suspend fun setPersona(v: String) = store.edit { it[K.persona] = v }
     suspend fun setQuickInput(v: Boolean) = store.edit { it[K.quickInput] = v }

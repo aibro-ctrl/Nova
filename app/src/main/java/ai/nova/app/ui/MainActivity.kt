@@ -509,7 +509,8 @@ private fun Screen(
             else -> RecordsScreen(c, recordsSegment, setRecordsSegment, openHistory = { nav.open("history") })
         }
         Tab.PLANS -> PlansScreen(c, plansSegment, setPlansSegment)
-        Tab.EXPENSES -> ExpensesScreen(c)
+        // Колокольчик на экране расходов ведёт в «Настройки → Действия»: там теперь выбор трат из уведомлений.
+        Tab.EXPENSES -> ExpensesScreen(c, openActions = { nav.open(SettingsPage.ACTIONS.route, Tab.SETTINGS) })
         Tab.SETTINGS -> {
             val providerId = route?.takeIf { it.startsWith("settings/ai/") }?.removePrefix("settings/ai/")
             val provider = providerId?.let { ai.nova.core.ai.AIProviderType.fromIdOrNull(it) }

@@ -71,15 +71,29 @@ class MusicAppTest {
     @Test fun `названную песню включает приложение, а не короткий фрагмент`() = runTest {
         val host = Host(listOf(MusicApp.YANDEX, MusicApp.SPOTIFY))
         val e = env(host)
-        val reply = e.engine.handle("включи песню кино — группа крови").text
+        // Приложение ещё не выбрано, а их два: сначала спрашиваем, где включать.
+        val question = e.engine.handle("включи песню кино — группа крови").text
+        assertTrue(question.contains("Яндекс Музыка") && question.contains("Spotify"), question)
+        assertTrue(host.launched.isEmpty(), "до ответа ничего не открываем")
+
+        val reply = e.engine.handle("яндекс музыка").text
         // Полный трек играет приложение с лицензией: встроенный плеер умеет только 30 секунд.
         assertEquals(listOf("кино — группа крови" to MusicApp.YANDEX), host.launched)
         assertTrue(host.played.isEmpty(), "фрагмент не нужен, если есть приложение: ${host.played}")
-        assertTrue(reply.contains("Яндекс Музыка"), reply)
+        assertTrue(reply.contains("кино", ignoreCase = true), reply)
+        assertEquals(MusicApp.YANDEX, host.remembered, "выбор запоминаем, чтобы больше не спрашивать")
 
         val again = e.engine.handle("включи в яндекс музыке").text
         assertTrue(again.contains("группа крови", ignoreCase = true), again)
         assertEquals("кино — группа крови", host.launched.last().first)
+    }
+
+    @Test fun `выбранное приложение больше не спрашиваем`() = runTest {
+        val host = Host(listOf(MusicApp.YANDEX, MusicApp.ZVUK))
+        host.remembered = MusicApp.ZVUK
+        val reply = env(host).engine.handle("включи песню кино — группа крови").text
+        assertEquals(listOf("кино — группа крови" to MusicApp.ZVUK), host.launched)
+        assertTrue(reply.contains("Звук"), reply)
     }
 
     @Test fun `без музыкальных приложений песня играет встроенным плеером`() = runTest {
