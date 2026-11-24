@@ -38,9 +38,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -82,6 +79,20 @@ import ai.nova.app.ui.screens.PlansScreen
 import ai.nova.app.ui.screens.RecordsScreen
 import ai.nova.app.ui.screens.SettingsPage
 import ai.nova.app.ui.screens.SettingsScreen
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.sp
+import ai.nova.app.ui.components.pressScale
+import ai.nova.app.ui.theme.NovaSize
 import ai.nova.app.ui.theme.NovaTheme
 import ai.nova.app.voice.WakeWordService
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -524,26 +535,52 @@ private fun Screen(
     }
 }
 
+/**
+ * Нижнее меню: пять разделов, тонкая линия сверху и черта под активным.
+ *
+ * Своя панель вместо готовой NavigationBar: у неё стандартная «таблетка» вокруг значка,
+ * которая спорит с плоскими карточками экранов. Здесь активный раздел отмечается цветом
+ * и короткой чертой — заметно, но без лишнего объёма.
+ */
 @Composable
 private fun BottomBar(nav: Navigator) {
-    Column {
-        HorizontalDivider(thickness = 0.6.dp, color = MaterialTheme.colorScheme.outlineVariant)
-        NavigationBar(containerColor = ai.nova.app.ui.components.organicPanel(0.90f), tonalElevation = 0.dp) {
+    val c = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxWidth().background(ai.nova.app.ui.components.organicPanel(0.94f))) {
+        HorizontalDivider(thickness = 0.6.dp, color = c.outlineVariant)
+        Row(
+            Modifier.fillMaxWidth().navigationBarsPadding().height(NovaSize.navBar),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Tab.entries.forEach { tab ->
                 val selected = nav.tab == tab
-                NavigationBarItem(
-                    selected = selected,
-                    onClick = { nav.select(tab) },
-                    icon = { Icon(tab.icon, contentDescription = tab.title, modifier = Modifier.size(22.dp)) },
-                    label = { Text(tab.title, maxLines = 1, style = MaterialTheme.typography.labelSmall) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    ),
-                )
+                val tint by animateColorAsState(if (selected) c.primary else c.onSurfaceVariant, label = "tab-tint")
+                val interaction = remember { MutableInteractionSource() }
+                Column(
+                    Modifier.weight(1f).fillMaxHeight()
+                        .selectable(
+                            selected = selected,
+                            role = Role.Tab,
+                            interactionSource = interaction,
+                            indication = null,
+                            onClick = { nav.select(tab) },
+                        )
+                        .pressScale(interaction),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Icon(tab.icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+                    Text(
+                        tab.title,
+                        maxLines = 1,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp, letterSpacing = 0.1.sp),
+                        color = tint,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                    Box(
+                        Modifier.padding(top = 3.dp).size(width = 14.dp, height = 2.dp).clip(CircleShape)
+                            .background(if (selected) c.primary else Color.Transparent),
+                    )
+                }
             }
         }
     }

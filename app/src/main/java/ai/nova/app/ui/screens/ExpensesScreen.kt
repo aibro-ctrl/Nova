@@ -63,11 +63,16 @@ import ai.nova.core.nlp.Money
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import ai.nova.app.ui.components.bodySecondaryStyle
+import ai.nova.app.ui.theme.NovaSpace
+import ai.nova.app.ui.theme.amountStyle
 
-/** Доли категорий в одной бирюзово-шалфейной гамме: цвет помогает, но не превращает экран в радугу. */
+/**
+ * Доли категорий в одной бирюзово-шалфейной гамме: цвет помогает различить категории,
+ * но не превращает экран в радугу. Первые доли — самые тёмные, они же самые крупные.
+ */
 private val palette = listOf(
-    Color(0xFF238F83), Color(0xFF176F67), Color(0xFF7BA99E), Color(0xFFB8CDC0),
-    Color(0xFF4C7B72), Color(0xFF9BAA9F), Color(0xFFC75D50), Color(0xFF6E7F77),
+    Color(0xFF176F67), Color(0xFF238F83), Color(0xFF4C8C81), Color(0xFF6E9E92),
+    Color(0xFF8FB4A8), Color(0xFFAEC7BB), Color(0xFFC7D8CE), Color(0xFFDFE8E1),
 )
 
 private val presets = listOf(
@@ -99,9 +104,14 @@ fun ExpensesScreen(c: AppContainer, openActions: () -> Unit = {}) {
         fab = { NovaFab(Icons.Rounded.Add, "Добавить расход") { adding = true } },
     ) {
         item(key = "total") {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                Text(range.label.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(Money.format(report.totalMinor, report.currency), style = MaterialTheme.typography.displaySmall, modifier = Modifier.padding(top = 2.dp))
+            Column(Modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen)) {
+                Text(
+                    range.label.replaceFirstChar { it.uppercase() },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // Сумма — главное число экрана: крупно, но без декоративной «финансовой» графики.
+                Text(Money.format(report.totalMinor, report.currency), style = amountStyle(), modifier = Modifier.padding(top = NovaSpace.xs))
                 Text(
                     ExpenseAnalytics.plural(report.count, "операция", "операции", "операций") +
                         report.otherCurrencies.entries.joinToString("") { (cur, sum) -> " · + ${Money.format(sum, cur)}" },
@@ -109,11 +119,11 @@ fun ExpensesScreen(c: AppContainer, openActions: () -> Unit = {}) {
                 )
             }
         }
-        item(key = "periods") { Pills(presets.map { it.second }, presetIndex, { presetIndex = it }, Modifier.padding(vertical = 16.dp)) }
+        item(key = "periods") { Pills(presets.map { it.second }, presetIndex, { presetIndex = it }, Modifier.padding(vertical = NovaSpace.l)) }
         if (report.byCategory.isNotEmpty() && report.totalMinor > 0) {
             item(key = "bar") {
                 // Одна полоса из долей категорий — компактнее десятка отдельных индикаторов.
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(10.dp).clip(RoundedCornerShape(5.dp))) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen).height(10.dp).clip(RoundedCornerShape(5.dp))) {
                     report.byCategory.forEachIndexed { i, cat ->
                         val w = cat.amountMinor.toFloat() / report.totalMinor
                         if (w > 0f) Box(Modifier.weight(w).height(10.dp).background(palette[i % palette.size]))
@@ -121,7 +131,7 @@ fun ExpensesScreen(c: AppContainer, openActions: () -> Unit = {}) {
                 }
             }
             item(key = "cats") {
-                Group(Modifier.padding(top = 16.dp)) {
+                Group(Modifier.padding(top = NovaSpace.l)) {
                     report.byCategory.forEachIndexed { i, cat ->
                         if (i > 0) GroupDivider(inset = 44.dp)
                         val share = (cat.amountMinor * 100 / report.totalMinor).toInt()

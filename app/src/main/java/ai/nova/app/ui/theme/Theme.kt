@@ -30,15 +30,18 @@ import androidx.compose.ui.graphics.luminance
 // Quiet Utility: спокойная нейтральная основа, один бирюзовый акцент, тонкие линии вместо теней.
 // ---------------------------------------------------------------------------------------------
 
-/** Палитра Organic Tech: природные, спокойные тона. */
-val QuietBackground = Color(0xFFF7F5F0)
-val QuietSurface = Color(0xFFFFFFFF)
-val QuietPrimary = Color(0xFF238F83)
-val QuietPrimaryDark = Color(0xFF176F67)
-val QuietText = Color(0xFF292D30)
-val QuietTextSecondary = Color(0xFF85888A)
-val QuietError = Color(0xFFC75D50)
-val QuietDivider = Color(0xFFE8E6DF)
+/**
+ * Палитра Nova: тёплая бумага, чернила и один бирюзовый акцент.
+ * Оранжевый (см. [NovaPalette.Amber]) — второй, дозированный акцент, а не общий тон.
+ */
+val QuietBackground = NovaPalette.Paper
+val QuietSurface = NovaPalette.PaperCard
+val QuietPrimary = NovaPalette.Teal
+val QuietPrimaryDark = NovaPalette.TealDeep
+val QuietText = NovaPalette.Ink
+val QuietTextSecondary = NovaPalette.InkSecondary
+val QuietError = Color(0xFFB4544A)
+val QuietDivider = NovaPalette.Rule
 
 /** Мягкие природные оттенки для слоёв, плашек и диаграмм. */
 val Mint = Color(0xFFDDEBE3)
@@ -107,25 +110,26 @@ private val Dark = darkColorScheme(
     onPrimary = Color(0xFF00312C),
     primaryContainer = Color(0xFF1F554F),
     onPrimaryContainer = Color(0xFFBBE9E3),
-    secondary = Color(0xFFB3B8B0),
+    secondary = Color(0xFFB5B2A6),
     onSecondary = Color(0xFF1B1F1C),
-    secondaryContainer = Color(0xFF2A2F2B),
-    onSecondaryContainer = Color(0xFFE4E6E0),
+    secondaryContainer = Color(0xFF2A2721),
+    onSecondaryContainer = Color(0xFFE4E1D9),
     tertiary = Color(0xFF8FD5CD),
     onTertiary = Color(0xFF00332E),
-    background = Color(0xFF141715),
-    onBackground = Color(0xFFE9E9E3),
-    surface = Color(0xFF191C1A),
-    onSurface = Color(0xFFE9E9E3),
-    surfaceVariant = Color(0xFF232725),
-    onSurfaceVariant = Color(0xFF9DA19A),
-    surfaceContainerLowest = Color(0xFF101312),
-    surfaceContainerLow = Color(0xFF191C1A),
-    surfaceContainer = Color(0xFF1D2120),
-    surfaceContainerHigh = Color(0xFF242826),
-    surfaceContainerHighest = Color(0xFF2C312E),
-    outline = Color(0xFF3B413D),
-    outlineVariant = Color(0xFF2A2F2C),
+    // Тёмная тема тоже тёплая: не графит, а обожжённая бумага.
+    background = Color(0xFF14130F),
+    onBackground = Color(0xFFEAE7E0),
+    surface = Color(0xFF1A1813),
+    onSurface = Color(0xFFEAE7E0),
+    surfaceVariant = Color(0xFF24221B),
+    onSurfaceVariant = Color(0xFFA19D93),
+    surfaceContainerLowest = Color(0xFF0F0E0B),
+    surfaceContainerLow = Color(0xFF1A1813),
+    surfaceContainer = Color(0xFF1E1C16),
+    surfaceContainerHigh = Color(0xFF25231C),
+    surfaceContainerHighest = Color(0xFF2D2A22),
+    outline = Color(0xFF3D3930),
+    outlineVariant = Color(0xFF2B2921),
     error = Coral,
     onError = Color(0xFF4C1510),
     errorContainer = Color(0xFF7A2A20),
@@ -158,13 +162,13 @@ private val NovaTypography = Typography(
     labelSmall = TextStyle(fontFamily = Manrope, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.1.sp),
 )
 
-/** Скругления сдержанные: шаг сетки 4, радиусы кратны 2–4. */
+/** Скругления из общей шкалы [NovaRadius]: кнопки и поля 14, карточки 16, панели 24. */
 private val NovaShapes = Shapes(
-    extraSmall = RoundedCornerShape(8.dp),
-    small = RoundedCornerShape(10.dp),
-    medium = RoundedCornerShape(14.dp),
-    large = RoundedCornerShape(18.dp),
-    extraLarge = RoundedCornerShape(24.dp),
+    extraSmall = RoundedCornerShape(NovaRadius.small),
+    small = RoundedCornerShape(NovaRadius.small),
+    medium = RoundedCornerShape(NovaRadius.button),
+    large = RoundedCornerShape(NovaRadius.card),
+    extraLarge = RoundedCornerShape(NovaRadius.sheet),
 )
 
 @Composable

@@ -98,8 +98,13 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.sp
+import ai.nova.app.ui.theme.NovaRadius
+import ai.nova.app.ui.theme.NovaSize
+import ai.nova.app.ui.theme.NovaSpace
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -132,7 +137,7 @@ private val BARE_LINK = Regex("""https?://[^\s)]+""")
 
 /** Цвет и подчёркивание ссылки внутри сообщения. */
 @Composable
-private fun linkStyles(): TextLinkStyles = TextLinkStyles(
+internal fun linkStyles(): TextLinkStyles = TextLinkStyles(
     style = SpanStyle(color = MaterialTheme.colorScheme.primary, textDecoration = TextDecoration.Underline),
 )
 
@@ -199,19 +204,32 @@ fun ScreenHeader(
     onBack: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
-    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 12.dp)) {
+    Column(Modifier.fillMaxWidth().padding(start = NovaSpace.screen, end = NovaSpace.s, top = NovaSpace.xs, bottom = NovaSpace.m)) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
             if (onBack != null) {
-                IconButton(onClick = onBack, modifier = Modifier.padding(end = 4.dp).size(40.dp).padding(0.dp)) {
+                IconButton(onClick = onBack, modifier = Modifier.padding(end = NovaSpace.xs).size(40.dp)) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Назад")
                 }
             }
             Spacer(Modifier.weight(1f))
             actions()
         }
-        Text(title, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onBackground)
+        Text(
+            title,
+            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
         if (!subtitle.isNullOrBlank()) {
-            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, end = 12.dp))
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp, end = NovaSpace.m),
+            )
         }
     }
 }
@@ -232,7 +250,7 @@ fun NovaScreen(
         LazyColumn(
             state = state,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = if (fab != null) 104.dp else 28.dp),
+            contentPadding = PaddingValues(bottom = if (fab != null) NovaSpace.listBottomFab else NovaSpace.listBottom),
         ) {
             item(key = "screen-header") { ScreenHeader(title, subtitle, onBack, actions) }
             content()
@@ -259,10 +277,19 @@ fun NovaFab(icon: ImageVector, description: String, onClick: () -> Unit) {
     ) { Icon(icon, contentDescription = description) }
 }
 
+/** Подпись секции: мелкая, разрежённая, приглушённая — иерархию задаёт размер, а не жирность. */
 @Composable
 fun SectionLabel(text: String, modifier: Modifier = Modifier, trailing: (@Composable () -> Unit)? = null) {
-    Row(modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+    Row(
+        modifier.fillMaxWidth().padding(start = NovaSpace.screen, end = NovaSpace.screen, top = NovaSpace.xl, bottom = NovaSpace.s),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 0.2.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
         trailing?.invoke()
     }
 }
@@ -275,7 +302,7 @@ fun Group(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> 
         color = groupColor(),
         // Тонкая рамка: карточка читается на любом участке органического фона, не спорит с ним.
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
-        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen),
     ) { Column(content = content) }
 }
 
@@ -309,7 +336,7 @@ fun RowItem(
     Row(
         Modifier.fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .heightIn(min = 56.dp)
+            .heightIn(min = NovaSize.row)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -362,8 +389,8 @@ fun Modifier.pressScale(interaction: MutableInteractionSource): Modifier = compo
 @Composable
 fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
     BoxWithConstraints(
-        modifier.fillMaxWidth().padding(horizontal = 16.dp)
-            .clip(RoundedCornerShape(14.dp))
+        modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen)
+            .clip(RoundedCornerShape(NovaRadius.field))
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .padding(3.dp),
     ) {
@@ -371,15 +398,15 @@ fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, mod
         val itemWidth = maxWidth / count
         val offset by animateDpAsState(itemWidth * selected.coerceIn(0, count - 1), spring(dampingRatio = 0.8f, stiffness = 500f), label = "seg-offset")
         Box(
-            Modifier.offset(x = offset).width(itemWidth).height(38.dp)
-                .clip(RoundedCornerShape(11.dp)).background(groupColor())
-                .border(0.6.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(11.dp)),
+            Modifier.offset(x = offset).width(itemWidth).height(40.dp)
+                .clip(RoundedCornerShape(NovaRadius.small)).background(groupColor())
+                .border(0.6.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(NovaRadius.small)),
         )
         Row(Modifier.fillMaxWidth()) {
             options.forEachIndexed { i, label ->
                 val fg by animateColorAsState(if (i == selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, label = "seg-fg")
                 Box(
-                    Modifier.weight(1f).height(38.dp).clip(RoundedCornerShape(11.dp)).clickable { onSelect(i) },
+                    Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(NovaRadius.small)).clickable { onSelect(i) },
                     contentAlignment = Alignment.Center,
                 ) { Text(label, style = MaterialTheme.typography.labelLarge, color = fg, maxLines = 1) }
             }
@@ -418,10 +445,11 @@ fun Pill(text: String, icon: ImageVector? = null, color: Color = MaterialTheme.c
 @Composable
 fun SearchBox(value: String, onChange: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier) {
     Row(
-        modifier.fillMaxWidth().padding(horizontal = 16.dp)
-            .clip(RoundedCornerShape(16.dp))
+        modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen)
+            .clip(RoundedCornerShape(NovaRadius.field))
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .padding(start = 14.dp, end = 4.dp),
+            .heightIn(min = NovaSize.field)
+            .padding(start = NovaSpace.m, end = NovaSpace.xs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Icons.Rounded.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
@@ -487,19 +515,28 @@ fun EmptyState(icon: ImageVector, title: String, hint: String, modifier: Modifie
     }
 }
 
+/** Основное действие экрана: единственная залитая краской кнопка. */
 @Composable
 fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
-    Button(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 50.dp), shape = RoundedCornerShape(12.dp),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) { Text(text, style = MaterialTheme.typography.labelLarge) }
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.heightIn(min = NovaSize.button),
+        shape = RoundedCornerShape(NovaRadius.button),
+        contentPadding = PaddingValues(horizontal = NovaSpace.xl, vertical = NovaSpace.m),
+    ) { Text(text, style = MaterialTheme.typography.labelLarge) }
 }
 
 @Composable
 fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, danger: Boolean = false) {
     FilledTonalButton(
-        onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 50.dp), shape = RoundedCornerShape(12.dp),
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.heightIn(min = NovaSize.button),
+        shape = RoundedCornerShape(NovaRadius.button),
         colors = if (danger) ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)
         else ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(horizontal = NovaSpace.xl, vertical = NovaSpace.m),
     ) { Text(text, style = MaterialTheme.typography.labelLarge) }
 }
 

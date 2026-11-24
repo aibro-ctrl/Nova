@@ -42,6 +42,7 @@ import ai.nova.app.ui.components.EditorSheet
 import ai.nova.app.ui.components.EmptyState
 import ai.nova.app.ui.components.Group
 import ai.nova.app.ui.components.GroupDivider
+import ai.nova.app.ui.components.Hint
 import ai.nova.app.ui.components.NovaFab
 import ai.nova.app.ui.components.NovaField
 import ai.nova.app.ui.components.NovaScreen
@@ -118,6 +119,26 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
             0, 1 -> {
                 if (segment == 0) item(key = "secret") { SecretNotesEntry(c) }
                 val list = if (segment == 0) notes else ideas
+                item(key = "list-label") {
+                    SectionLabel(
+                        if (segment == 0) "Заметки" else "Идеи",
+                        trailing = if (list.isEmpty()) null else {
+                            {
+                                TextButton(onClick = {
+                                    val csv = ai.nova.core.export.CsvExport.notes(list, c.time.zone())
+                                    scope.launch {
+                                        c.device.perform(
+                                            ai.nova.core.assistant.DeviceCommand.ShareFile(
+                                                ai.nova.core.export.CsvExport.fileName(if (segment == 0) "notes" else "ideas", null, null),
+                                                "text/csv", csv,
+                                            ),
+                                        )
+                                    }
+                                }) { Text("Выгрузить", style = MaterialTheme.typography.labelLarge) }
+                            }
+                        },
+                    )
+                }
                 if (list.isEmpty()) item(key = "empty") {
                     EmptyState(
                         if (segment == 0) Icons.Rounded.Description else Icons.Rounded.Lightbulb,
@@ -146,25 +167,8 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
                         }
                     }
                 }
-                if (list.isNotEmpty()) item(key = "export") {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Хранятся в зашифрованной базе на телефоне.",
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(onClick = {
-                            val csv = ai.nova.core.export.CsvExport.notes(list, c.time.zone())
-                            scope.launch {
-                                c.device.perform(
-                                    ai.nova.core.assistant.DeviceCommand.ShareFile(
-                                        ai.nova.core.export.CsvExport.fileName(if (segment == 0) "notes" else "ideas", null, null),
-                                        "text/csv", csv,
-                                    ),
-                                )
-                            }
-                        }) { Text("Выгрузить в файл") }
-                    }
+                if (list.isNotEmpty()) item(key = "storage") {
+                    Hint("Записи хранятся в зашифрованной базе на телефоне.")
                 }
             }
             3 -> item(key = "health") { HealthPane(c, name) }
@@ -172,7 +176,7 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
                 if (memories.isEmpty()) item(key = "empty") {
                     EmptyState(Icons.Rounded.Psychology, "Пока ничего не запомнила", "Скажите: «$name, запомни, что я люблю зелёный чай»")
                 } else item(key = "memories") {
-                    Group(Modifier.padding(top = 4.dp)) {
+                    Group {
                         memories.forEachIndexed { i, m ->
                             if (i > 0) GroupDivider()
                             RowItem(title = m.content, subtitle = categoryRu(m.category), onClick = { editMemory = m })

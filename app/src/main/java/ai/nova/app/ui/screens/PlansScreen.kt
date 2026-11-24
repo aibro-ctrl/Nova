@@ -59,6 +59,7 @@ import ai.nova.core.model.TaskItem
 import ai.nova.core.nlp.RuDateTimeParser
 import kotlinx.coroutines.launch
 import ai.nova.app.ui.components.bodySecondaryStyle
+import ai.nova.app.ui.theme.NovaSpace
 
 /** План → календарь телефона: одно нажатие вместо ручного ввода события. */
 private fun addToCalendar(c: AppContainer, context: android.content.Context, title: String, at: java.time.Instant, allDay: Boolean, scope: kotlinx.coroutines.CoroutineScope) {
@@ -95,7 +96,7 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
         subtitle = "${RuFormat.count(active, "задача", "задачи", "задач")} · ${RuFormat.count(scheduled, "напоминание", "напоминания", "напоминаний")}",
         fab = { NovaFab(Icons.Rounded.Add, when (segment) { 0 -> "Добавить задачу"; 1 -> "Добавить напоминание"; else -> "Добавить в список" }) { adding = true } },
     ) {
-        item(key = "segments") { Segmented(listOf("Задачи", "Напоминания", "Покупки"), segment, onSegment, Modifier.padding(bottom = 12.dp)) }
+        item(key = "segments") { Segmented(listOf("Задачи", "Напоминания", "Покупки"), segment, onSegment, Modifier.padding(bottom = NovaSpace.m)) }
         if (segment == 0) {
             item(key = "filters") { Pills(listOf("Активные", "Просроченные", "Готово"), filter, { filter = it }) }
             val shown = when (filter) {
@@ -106,7 +107,7 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
             if (shown.isEmpty()) {
                 item(key = "empty") { EmptyState(Icons.Rounded.TaskAlt, if (filter == 1) "Просроченных нет" else "Здесь пусто", "Скажите: «$name, добавь задачу купить продукты завтра»") }
             } else item(key = "tasks") {
-                Group(Modifier.padding(top = 12.dp)) {
+                Group(Modifier.padding(top = NovaSpace.m)) {
                     shown.forEachIndexed { i, t ->
                         if (i > 0) GroupDivider(inset = 60.dp)
                         val overdue = t.isOverdue(today, now)
@@ -142,12 +143,12 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
                 Surface(
                     onClick = { runCatching { context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}"))) } },
                     shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.errorContainer,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen, vertical = NovaSpace.xs),
                 ) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.padding(NovaSpace.l), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.WarningAmber, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
                         Text("Точные напоминания выключены — Android может задержать их. Нажмите, чтобы разрешить.",
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.padding(start = 12.dp))
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.padding(start = NovaSpace.m))
                     }
                 }
             }
@@ -155,12 +156,12 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
                 Surface(
                     onClick = { requestBatteryExemption(context) },
                     shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.errorContainer,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen, vertical = NovaSpace.xs),
                 ) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.padding(NovaSpace.l), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.WarningAmber, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
                         Text("Телефон может усыплять $name ради батареи — напоминания будут опаздывать. Нажмите, чтобы разрешить работу в фоне.",
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.padding(start = 12.dp))
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.padding(start = NovaSpace.m))
                     }
                 }
             }
