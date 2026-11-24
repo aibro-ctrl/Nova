@@ -1,10 +1,7 @@
 package ai.nova.app.ui.screens
 
-import android.Manifest
-import android.content.pm.PackageManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -14,7 +11,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,6 +24,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -49,16 +46,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Stop
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -79,22 +73,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.nova.app.ui.components.AssistantOrb
+import ai.nova.app.ui.components.OrbMode
 import ai.nova.app.ui.components.BackupNudgeCard
 import ai.nova.app.ui.components.CrashCard
-import ai.nova.app.ui.components.Group
-import ai.nova.app.ui.components.IconTile
 import ai.nova.app.ui.components.LinkText
 import ai.nova.app.ui.components.MarkdownText
 import ai.nova.app.ui.components.PrimaryButton
@@ -106,9 +95,13 @@ import ai.nova.app.ui.components.captionStyle
 import ai.nova.app.ui.components.groupColor
 import ai.nova.app.ui.components.messageText
 import ai.nova.app.ui.components.pressScale
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import ai.nova.app.ui.components.rememberResumeTick
-import ai.nova.app.ui.theme.NovaRadius
 import ai.nova.app.ui.theme.NovaSize
+import ai.nova.app.ui.theme.NovaRadius
 import ai.nova.app.ui.theme.NovaSpace
 import ai.nova.app.ui.theme.amberColor
 import ai.nova.app.ui.theme.successColor
@@ -117,8 +110,6 @@ import ai.nova.core.assistant.RuFormat
 import ai.nova.core.model.MessageRole
 import ai.nova.core.nlp.Money
 import java.time.LocalTime
-import kotlin.math.PI
-import kotlin.math.sin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 
@@ -154,8 +145,10 @@ private enum class VoiceStage { IDLE, LISTENING, RECOGNISING, PROCESSING, ANSWER
 
 private data class VoiceUi(
     val stage: VoiceStage,
+    /** Короткое состояние для шапки чата: «Слушаю», «Думаю». */
     val title: String,
-    val hint: String,
+    /** Фраза под сферой на главной — она же подсказка, что делать. */
+    val status: String,
     val heard: String,
     val level: Float,
 ) {
@@ -182,11 +175,11 @@ private fun voiceUi(voice: VoiceState, name: String): VoiceUi {
         is VoiceState.Speaking -> "Отвечаю"
         is VoiceState.Error -> "Не получилось"
     }
-    val hint = when (voice) {
-        VoiceState.Idle -> "Нажмите микрофон или скажите «$name»"
-        is VoiceState.Listening -> "Говорите — я запишу"
-        is VoiceState.Thinking -> "Разбираю запрос"
-        is VoiceState.Speaking -> "Скажите «стоп», чтобы прервать"
+    val status = when (voice) {
+        VoiceState.Idle -> "Нажмите на сферу или скажите «$name»"
+        is VoiceState.Listening -> voice.hint ?: if (voice.followUp) "Слушаю дальше…" else "Слушаю…"
+        is VoiceState.Thinking -> "Думаю…"
+        is VoiceState.Speaking -> "Отвечаю… Скажите «стоп», чтобы прервать"
         is VoiceState.Error -> voice.message
     }
     val heard = when (voice) {
@@ -194,7 +187,7 @@ private fun voiceUi(voice: VoiceState, name: String): VoiceUi {
         is VoiceState.Thinking -> voice.heard
         else -> ""
     }
-    return VoiceUi(stage, title, hint, heard, (voice as? VoiceState.Listening)?.level ?: 0f)
+    return VoiceUi(stage, title, status, heard, (voice as? VoiceState.Listening)?.level ?: 0f)
 }
 
 /**
@@ -240,6 +233,9 @@ fun HomeScreen(
             Column(
                 Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = viewport)
                     .padding(bottom = NovaSpace.l),
+                // Сфера стоит по центру свободного места, как раньше: экран не «висит» сверху.
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
                 // Предупреждения — только по факту: восстановление базы, микрофон, сбой, обновление.
                 RecoveryCard()
@@ -249,12 +245,14 @@ fun HomeScreen(
                 UpdateCard(vm.c)
                 SetupCard(vm.c, settings.assistantName, onVisible = { setupShown = it })
 
-                VoicePanel(
+                OrbPanel(
                     ui = ui,
                     compact = setupShown,
-                    onMic = { if (ui.active) vm.stop() else onMic() },
+                    viewport = viewport,
+                    onTap = { if (ui.active) vm.stop() else onMic() },
                     onClearError = { vm.clearError() },
                 )
+                Spacer(Modifier.height(NovaSpace.l))
                 SuggestionRow { vm.send(it); openChat(false) }
                 TodaySection(
                     summary = summary,
@@ -263,7 +261,6 @@ fun HomeScreen(
                     onReminders = { openPlans(1) },
                     onExample = { openChat(true) },
                 )
-                LocationSection(onOpen = { openSettings(SettingsPage.ACCESS.route) })
                 if (history.isNotEmpty()) {
                     ConversationTeaser(history, settings.assistantName, onOpen = { openChat(false) })
                 }
@@ -272,7 +269,7 @@ fun HomeScreen(
         if (reply?.awaitingConfirmation == true) {
             ConfirmPrompt(onConfirm = { vm.confirm(it) })
         }
-        HomeInputBar(onSend = { vm.send(it); openChat(false) }, onOpenChat = { openChat(true) })
+        HomeInputBar(onSend = { vm.send(it); openChat(false) })
     }
 }
 
@@ -314,132 +311,65 @@ private fun HomeHeader(
 }
 
 /**
- * Голосовой блок: один микрофон, состояние словами и уровень записи.
- *
- * Человеку не нужно угадывать, что означает пульсирующий круг: подпись говорит прямо,
- * слушают его или уже отвечают, а кнопка в любой момент останавливает запись.
+ * Голосовой блок главной — та же сфера, что и раньше: нажатие слушает или останавливает,
+ * состояние подписано словами. Под сферой появляется то, что Нова услышала.
  */
 @Composable
-private fun VoicePanel(ui: VoiceUi, compact: Boolean, onMic: () -> Unit, onClearError: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(NovaRadius.sheet),
-        color = groupColor(),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen, vertical = NovaSpace.m),
-    ) {
-        Column(Modifier.padding(NovaSpace.l)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                MicButton(ui.stage, onMic)
-                Column(Modifier.weight(1f).padding(start = NovaSpace.l)) {
-                    Text(
-                        ui.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (ui.stage == VoiceStage.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        ui.hint,
-                        style = bodySecondaryStyle(),
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .padding(top = 2.dp)
-                            .clickable(enabled = ui.stage == VoiceStage.ERROR, onClick = onClearError),
-                    )
-                }
-                if (ui.stage == VoiceStage.LISTENING || ui.stage == VoiceStage.RECOGNISING) {
-                    LevelMeter(ui.level, Modifier.padding(start = NovaSpace.m))
-                }
-            }
-            AnimatedVisibility(ui.heard.isNotBlank()) {
-                Text(
-                    ui.heard,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth().padding(top = NovaSpace.m),
-                )
-            }
-            // Подсказка о том, что можно сказать, — но не в момент, когда и так всё понятно.
-            if (ui.stage == VoiceStage.IDLE && !compact) {
-                Text(
-                    "Например: «Расход 500 ₽ на продукты»",
-                    style = captionStyle(),
-                    modifier = Modifier.padding(top = NovaSpace.m),
-                )
-            }
-        }
-    }
-}
-
-/** Кнопка записи: цвет и значок говорят, что произойдёт при нажатии. */
-@Composable
-private fun MicButton(stage: VoiceStage, onClick: () -> Unit) {
+private fun OrbPanel(
+    ui: VoiceUi,
+    compact: Boolean,
+    viewport: androidx.compose.ui.unit.Dp,
+    onTap: () -> Unit,
+    onClearError: () -> Unit,
+) {
     val interaction = remember { MutableInteractionSource() }
-    val c = MaterialTheme.colorScheme
-    val (background, content) = when (stage) {
-        VoiceStage.ERROR -> c.errorContainer to c.onErrorContainer
-        VoiceStage.PROCESSING -> c.surfaceContainerHigh to c.onSurfaceVariant
-        VoiceStage.ANSWERING -> c.primaryContainer to c.onPrimaryContainer
-        else -> c.primary to c.onPrimary
+    val mode = when (ui.stage) {
+        VoiceStage.IDLE -> ai.nova.app.ui.components.OrbMode.IDLE
+        VoiceStage.LISTENING, VoiceStage.RECOGNISING -> ai.nova.app.ui.components.OrbMode.LISTENING
+        VoiceStage.PROCESSING -> ai.nova.app.ui.components.OrbMode.THINKING
+        VoiceStage.ANSWERING -> ai.nova.app.ui.components.OrbMode.SPEAKING
+        VoiceStage.ERROR -> ai.nova.app.ui.components.OrbMode.ERROR
     }
-    // Кольцо записи: единственная постоянная анимация блока, и она означает «микрофон включён».
-    val pulse by rememberInfiniteTransition(label = "mic").animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Reverse),
-        label = "mic-pulse",
-    )
-    val recording = stage == VoiceStage.LISTENING || stage == VoiceStage.RECOGNISING
-    Box(contentAlignment = Alignment.Center) {
-        if (recording) {
-            Box(Modifier.size(64.dp).clip(CircleShape).border(2.dp, amberColor().copy(alpha = pulse), CircleShape))
-        }
-        Surface(
-            onClick = onClick,
-            shape = CircleShape,
-            color = background,
-            contentColor = content,
-            interactionSource = interaction,
-            modifier = Modifier.size(56.dp).pressScale(interaction),
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = NovaSpace.m),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            Modifier.clip(CircleShape)
+                .clickable(interactionSource = interaction, indication = null, onClick = onTap)
+                .pressScale(interaction),
         ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                when (stage) {
-                    VoiceStage.PROCESSING -> CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = c.primary)
-                    VoiceStage.ANSWERING, VoiceStage.LISTENING, VoiceStage.RECOGNISING ->
-                        Icon(Icons.Rounded.Stop, contentDescription = "Остановить", modifier = Modifier.size(24.dp))
-                    VoiceStage.ERROR -> Icon(Icons.Rounded.ErrorOutline, contentDescription = "Ошибка", modifier = Modifier.size(24.dp))
-                    VoiceStage.IDLE -> Icon(Icons.Rounded.Mic, contentDescription = "Говорить", modifier = Modifier.size(26.dp))
-                }
-            }
+            // Сфера подстраивается под высоту экрана: на маленьких телефонах и с крупным шрифтом — меньше.
+            val full = (viewport * 0.40f).coerceIn(132.dp, 224.dp)
+            AssistantOrb(mode, ui.level, size = if (compact) (full * 0.72f).coerceAtLeast(112.dp) else full)
         }
-    }
-}
-
-/** Уровень записи: пять столбиков реагируют на голос, чтобы было видно, что микрофон слышит. */
-@Composable
-private fun LevelMeter(level: Float, modifier: Modifier = Modifier) {
-    val phase by rememberInfiniteTransition(label = "level").animateFloat(
-        initialValue = 0f,
-        targetValue = (2 * PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing)),
-        label = "level-phase",
-    )
-    val color = amberColor()
-    val base = 5f + level.coerceIn(0f, 1f) * 12f
-    Canvas(modifier.size(width = 30.dp, height = 28.dp)) {
-        val bars = 5
-        val gap = size.width / (bars * 2f - 1f)
-        repeat(bars) { i ->
-            val wave = 0.55f + 0.45f * sin(phase + i * 0.9f)
-            val h = (base * wave).coerceIn(4f, size.height)
-            drawRoundRect(
-                color = color,
-                topLeft = Offset(i * gap * 2f, (size.height - h) / 2f),
-                size = Size(gap, h),
-                cornerRadius = CornerRadius(gap / 2f),
+        Text(
+            ui.status,
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            color = if (ui.stage == VoiceStage.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = NovaSpace.xxl, end = NovaSpace.xxl, top = NovaSpace.m)
+                .clickable(enabled = ui.stage == VoiceStage.ERROR, onClick = onClearError),
+        )
+        AnimatedVisibility(ui.heard.isNotBlank()) {
+            Text(
+                ui.heard,
+                style = MaterialTheme.typography.titleMedium,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = NovaSpace.xxl, vertical = NovaSpace.xs),
+            )
+        }
+        // Пока Нова ждёт — один пример фразы вместо пустоты под сферой.
+        if (ui.stage == VoiceStage.IDLE) {
+            Text(
+                "Например: «Расход 500 ₽ на продукты»",
+                style = captionStyle(),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.padding(start = NovaSpace.xxl, end = NovaSpace.xxl, top = NovaSpace.xs),
             )
         }
     }
@@ -560,45 +490,6 @@ private fun StatCell(caption: String, value: String, onClick: () -> Unit, modifi
     }
 }
 
-/** Местоположение: включено оно или нет и где это поменять. Разрешение спрашиваем в настройках доступа. */
-@Composable
-private fun LocationSection(onOpen: () -> Unit) {
-    val context = LocalContext.current
-    val resume = rememberResumeTick()
-    val granted = remember(resume) {
-        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-    }
-    Text(
-        "Местоположение",
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = NovaSpace.screen, end = NovaSpace.screen, top = NovaSpace.xl, bottom = NovaSpace.s),
-    )
-    Group {
-        Row(
-            Modifier.fillMaxWidth().clickable(onClick = onOpen)
-                .heightIn(min = NovaSize.row)
-                .padding(horizontal = NovaSpace.l, vertical = NovaSpace.m),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconTile(
-                Icons.Outlined.LocationOn,
-                tint = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Column(Modifier.weight(1f).padding(start = NovaSpace.m)) {
-                Text(if (granted) "Включено" else "Выключено", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    if (granted) "Маршруты и напоминания по месту работают" else "Разрешите доступ — Нова подскажет, что рядом",
-                    style = bodySecondaryStyle(),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
-        }
-    }
-}
-
 /** Последний обмен репликами: короткий вход в разговор, не занимая пол-экрана. */
 @Composable
 private fun ConversationTeaser(history: List<ai.nova.core.model.ConversationMessage>, name: String, onOpen: () -> Unit) {
@@ -657,7 +548,7 @@ private fun ConfirmPrompt(onConfirm: (Boolean) -> Unit) {
 
 /** Поле ввода на главной: текст можно отправить сразу, микрофон — один, в голосовом блоке. */
 @Composable
-private fun HomeInputBar(onSend: (String) -> Unit, onOpenChat: () -> Unit) {
+private fun HomeInputBar(onSend: (String) -> Unit) {
     var input by rememberSaveable { mutableStateOf("") }
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     Row(
@@ -695,15 +586,14 @@ private fun HomeInputBar(onSend: (String) -> Unit, onOpenChat: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().focusRequester(focus),
                 )
             }
-            if (input.isNotBlank()) {
-                IconButton(onClick = { onSend(input.trim()); input = "" }) {
-                    Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "Отправить", tint = MaterialTheme.colorScheme.primary)
-                }
-            } else {
-                // Длинный разговор удобнее вести в чате: клавиатура и история сообщений на весь экран.
-                IconButton(onClick = onOpenChat) {
-                    Icon(Icons.Outlined.History, contentDescription = "Открыть чат", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+            // Одна и та же кнопка: пусто — приглушена, есть текст — отправляет.
+            // Историю и чат открывает значок в шапке, второй такой же здесь только путал.
+            IconButton(onClick = { if (input.isNotBlank()) { onSend(input.trim()); input = "" } }, enabled = input.isNotBlank()) {
+                Icon(
+                    Icons.AutoMirrored.Rounded.Send,
+                    contentDescription = "Отправить",
+                    tint = if (input.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                )
             }
         }
     }
