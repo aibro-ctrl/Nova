@@ -21,11 +21,11 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .signing
-          key: loli-signing-key-v1
+          key: nova-signing-key-v2
       - name: Fail loudly if the key is gone
         if: steps.keycache.outputs.cache-hit != 'true'
         env:
-          HAS_SECRET: ${{ secrets.LOLI_KEYSTORE_BASE64 != '' && '1' || '' }}
+          HAS_SECRET: ${{ (secrets.NOVA_KEYSTORE_BASE64 || secrets.LOLI_KEYSTORE_BASE64) != '' && '1' || '' }}
         run: |
           if [ -n "$HAS_SECRET" ]; then echo "Ключ берётся из секретов репозитория — кэш не нужен."; exit 0; fi
           echo "::error::Ключа подписи в кэше нет и секретов нет: следующий релиз получит другую подпись. См. docs/SIGNING.md"

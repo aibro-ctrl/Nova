@@ -47,6 +47,12 @@ interface SkillHost {
     /** Текст на экране (через спецвозможности). */
     suspend fun screenText(): String? = throw NeedsPermission(Permission.ACCESSIBILITY, "нет доступа к экрану")
 
+    /**
+     * Можно ли отдавать текст экрана модели. Платформа отвечает «нет», если текст уйдёт в облако,
+     * а пользователь этого явно не разрешил: экран чужого приложения — чужие данные.
+     */
+    fun screenAiAllowed(): Boolean = true
+
     suspend fun contact(name: String): ContactInfo? = null
 
     /**

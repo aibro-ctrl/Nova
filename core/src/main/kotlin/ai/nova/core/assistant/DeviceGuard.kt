@@ -26,7 +26,8 @@ object DeviceGuard {
             is DeviceCommand.Share -> has("""отправ|перешл|подел|скинь|напиш""") && (cmd.app.isBlank() || mentions(cmd.app, userText))
             is DeviceCommand.OpenUrl -> has("""сайт|ссылк|страниц|открой|зайди|перейди|http|www|\.ru|\.com""") && urlNamed(cmd.url, userText)
             is DeviceCommand.AddContact -> has("""контакт|номер""") && mentions(cmd.name, userText)
-            is DeviceCommand.OpenApp -> has("""открой|запусти|включи|зайди|перейди|приложени""")
+            is DeviceCommand.OpenApp ->
+                has("""открой|запусти|включи|зайди|перейди|приложени""") && mentions(cmd.name, userText)
             // Системные кнопки и режимы — только по прямой просьбе, а не по подсказке из заметки.
             is DeviceCommand.Global -> has("""назад|домой|недавн|скриншот|снимок|заблокир|блокир|уведомлен|быстры|питани|разделит|экран""")
             is DeviceCommand.OpenBackup -> has("""копи|бэкап|бекап|перен""")

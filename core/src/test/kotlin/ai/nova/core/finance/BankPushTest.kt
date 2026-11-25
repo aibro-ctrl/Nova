@@ -72,6 +72,15 @@ class BankPushTest {
         assertNull(parse("Т-Банк", "Перевод между своими счетами 10 000 ₽"))
     }
 
+    @Test fun secretCodesAreDetectedBeforeParsing() {
+        assertTrue(BankPushParser.isSecret("СберБанк", "Код: 4821. Никому не сообщайте"))
+        assertTrue(BankPushParser.isSecret("Т-Банк", "Одноразовый пароль 123456 для входа"))
+        assertTrue(BankPushParser.isSecret("Google", "Your verification code is 998877"))
+        assertTrue(BankPushParser.isSecret("Банк", "Подтвердите вход: 5566. Списание 1 ₽"))
+        assertNull(parse("Банк", "Подтвердите вход: 5566. Списание 1 ₽"))
+        assertFalse(BankPushParser.isSecret("СберБанк", "Покупка 850 ₽ · ПЯТЁРОЧКА"))
+    }
+
     @Test fun skipsNotificationsWithoutAmount() {
         assertNull(parse("СберБанк", "Успейте оформить карту с кэшбэком 5%"))
     }

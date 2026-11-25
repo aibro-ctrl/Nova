@@ -177,6 +177,8 @@ data class AppSettings(
     val appLock: Boolean = false,
     /** Скрывать содержимое в «недавних» и запрещать скриншоты и запись экрана. */
     val secureScreen: Boolean = false,
+    /** Разрешено отправлять текст экрана чужих приложений облачному AI («перескажи экран», «переведи экран»). */
+    val screenAiConsent: Boolean = false,
     /** Каждое утро — уведомление с планом на день. */
     val morningBrief: Boolean = true,
     /** В 21:00 — итоги дня (по умолчанию выключено). */
@@ -249,6 +251,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val accent = stringPreferencesKey("accent")
         val speechPause = stringPreferencesKey("speech_pause")
         val secureScreen = booleanPreferencesKey("secure_screen")
+        val screenAiConsent = booleanPreferencesKey("screen_ai_consent")
         val morningBrief = booleanPreferencesKey("morning_brief")
         val eveningBrief = booleanPreferencesKey("evening_brief")
         val briefBlocks = stringPreferencesKey("brief_blocks")
@@ -355,6 +358,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             accent = AccentColor.fromId(p[K.accent]),
             speechPause = SpeechPause.fromId(p[K.speechPause]),
             secureScreen = p[K.secureScreen] ?: false,
+            screenAiConsent = p[K.screenAiConsent] ?: false,
             morningBrief = p[K.morningBrief] ?: true,
             eveningBrief = p[K.eveningBrief] ?: false,
             briefBlocks = ai.nova.core.health.BriefBlocks.parse(p[K.briefBlocks]),
@@ -471,6 +475,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setPersona(v: String) = store.edit { it[K.persona] = v }
     suspend fun setQuickInput(v: Boolean) = store.edit { it[K.quickInput] = v }
     suspend fun setBankPushes(v: BankPushMode) = store.edit { it[K.bankPushes] = v.id }
+    suspend fun setScreenAiConsent(v: Boolean) = store.edit { it[K.screenAiConsent] = v }
     suspend fun setSecureScreen(v: Boolean) = store.edit { it[K.secureScreen] = v }
     suspend fun setSpeechPause(v: SpeechPause) = store.edit { it[K.speechPause] = v.id }
     suspend fun setSpeechPitch(v: Float) = store.edit { it[K.pitch] = v.coerceIn(0.5f, 2f) }

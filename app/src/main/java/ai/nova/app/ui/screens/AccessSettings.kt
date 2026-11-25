@@ -170,6 +170,12 @@ fun AccessPage(c: AppContainer, onBack: () -> Unit) {
                     "Не показывать содержимое в недавних приложениях, запретить скриншоты и запись экрана",
                     s.secureScreen, icon = Icons.Rounded.Visibility,
                 ) { v -> scope.launch { c.settings.setSecureScreen(v) } }
+                GroupDivider(inset = 66.dp)
+                SwitchItem(
+                    "Экран в облачный AI",
+                    "«Перескажи экран» и «переведи экран» отправляют текст чужого приложения внешнему AI-сервису. Банки, кошельки и менеджеры паролей не читаются никогда",
+                    s.screenAiConsent, icon = Icons.Rounded.Visibility,
+                ) { v -> scope.launch { c.settings.setScreenAiConsent(v) } }
             }
         }
 

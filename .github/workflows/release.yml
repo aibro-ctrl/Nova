@@ -68,15 +68,16 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .signing
-          key: nova-signing-key-v1
+          key: nova-signing-key-v2
 
       - name: Prepare signing key
         env:
-          LOLI_KEYSTORE_BASE64: ${{ secrets.LOLI_KEYSTORE_BASE64 }}
-          LOLI_KEYSTORE_PASSWORD_SECRET: ${{ secrets.NOVA_KEYSTORE_PASSWORD }}
-          LOLI_KEY_ALIAS_SECRET: ${{ secrets.NOVA_KEY_ALIAS }}
-          LOLI_KEY_PASSWORD_SECRET: ${{ secrets.NOVA_KEY_PASSWORD }}
-          LOLI_ALLOW_NEW_KEY: ${{ inputs.new_key == true && '1' || '' }}
+          # Новое имя секрета; старое LOLI_KEYSTORE_BASE64 читается для совместимости.
+          NOVA_KEYSTORE_BASE64: ${{ secrets.NOVA_KEYSTORE_BASE64 || secrets.LOLI_KEYSTORE_BASE64 }}
+          NOVA_KEYSTORE_PASSWORD_SECRET: ${{ secrets.NOVA_KEYSTORE_PASSWORD }}
+          NOVA_KEY_ALIAS_SECRET: ${{ secrets.NOVA_KEY_ALIAS }}
+          NOVA_KEY_PASSWORD_SECRET: ${{ secrets.NOVA_KEY_PASSWORD }}
+          NOVA_ALLOW_NEW_KEY: ${{ inputs.new_key == true && '1' || '' }}
         run: ./scripts/signing-key.sh
 
       - name: Save signing key to cache
@@ -84,7 +85,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .signing
-          key: nova-signing-key-v1
+          key: nova-signing-key-v2
 
       - name: Cache Vosk model
         uses: actions/cache@v4
@@ -103,7 +104,7 @@ jobs:
           SUPABASE_URL: ${{ vars.SUPABASE_URL || secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          ./gradlew --no-daemon :core:test :app:assembleRelease
+          ./gradlew --no-daemon -Pnova.requireSigning=true :core:test :app:assembleRelease
 
       - name: Package asset
         run: |
@@ -115,6 +116,10 @@ jobs:
           for lib in libnova_llm.so libsherpa-onnx-jni.so libvosk.so; do
             unzip -l "$APK" | grep -q "lib/arm64-v8a/$lib" || { echo "::error::$lib не попала в APK"; exit 1; }
           done
+
+      # Подпись проверяется до публикации: APK с debug-ключом или чужим сертификатом не должен попасть в релиз.
+      - name: Verify signing certificate
+        run: ./scripts/verify-signing.sh "$(ls app/build/outputs/apk/release/*.apk | head -1)"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -128,6 +133,9 @@ jobs:
           generate_release_notes: true
           body: |
             Сборка из коммита ${{ github.sha }}.
+
+            Отпечаток ключа подписи (SHA-256) — в [docs/SIGNING.md](https://github.com/${{ github.repository }}/blob/main/docs/SIGNING.md).
+            Сверьте его с тем, что показывает «Настройки → О приложении → Подпись приложения»: не совпало — это не официальная сборка.
 
             Установка: скачайте APK ниже или дождитесь предложения обновиться в самом приложении
             («Настройки → О приложении → Проверить обновления»).

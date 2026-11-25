@@ -662,8 +662,14 @@ class Skills(
 
     private suspend fun screen(mode: ScreenMode, cfg: AssistantSettings, ai: SkillAi?): SkillOutcome {
         val text = host.screenText()?.trim().orEmpty()
-        if (text.length < 3) return SkillOutcome.Say("На экране нет текста, который я могу прочитать.")
+        if (text.length < 3) return SkillOutcome.Say("На экране нет текста, который я могу прочитать — или это приложение банка, кошелька или паролей: их экран я не читаю.")
         val clipped = text.take(6000)
+        if (mode != ScreenMode.READ && !host.screenAiAllowed()) {
+            return SkillOutcome.Say(
+                "Для пересказа и перевода текст экрана уходит облачному AI — это могут быть чужие данные. " +
+                    "Разрешите это в Настройки → Безопасность → «Экран в облачный AI» или скажите «прочитай экран».",
+            )
+        }
         when (mode) {
             ScreenMode.READ -> return SkillOutcome.Say(clipped.take(900))
             ScreenMode.SUMMARY -> {

@@ -687,6 +687,13 @@ private fun OfflineModelPicker(c: AppContainer, onDismiss: () -> Unit) {
                                 "3. Вставьте это в поле ниже. Подходящий файл Нова выберет сама — для телефона это обычно Q4_K_M.",
                             style = captionStyle(),
                         )
+                        Text(
+                            "Осторожно: файл модели обрабатывается нативным кодом на телефоне. Контрольная сумма защищает от повреждения при скачивании, " +
+                                "но не от специально подготовленного файла — берите модели только у известных авторов (Qwen, Google, unsloth, bartowski).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
                         NovaField(
                             value = custom, onChange = { custom = it }, label = "Репозиторий",
                             placeholder = "unsloth/Qwen2.5-3B-Instruct-GGUF",

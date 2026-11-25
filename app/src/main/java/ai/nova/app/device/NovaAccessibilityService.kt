@@ -45,9 +45,16 @@ class NovaAccessibilityService : AccessibilityService() {
             // Клавиатуру пропускаем: по тексту её окна можно было бы восстановить набираемое.
             val other = windows.filter { it.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
                 .mapNotNull { it.root }.firstOrNull { it.packageName?.toString() != packageName } ?: return null
-            return collect(other)
+            return if (isSensitiveApp(other.packageName?.toString())) null else collect(other)
         }
-        return collect(root)
+        return if (isSensitiveApp(root.packageName?.toString())) null else collect(root)
+    }
+
+    /** Банки, кошельки, госуслуги, менеджеры паролей: их экран не читаем даже по команде — это чужие секреты. */
+    private fun isSensitiveApp(pkg: String?): Boolean {
+        if (pkg.isNullOrBlank()) return false
+        val label = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() }.getOrDefault("")
+        return AppAccess.isSensitive(pkg, label)
     }
 
     /**

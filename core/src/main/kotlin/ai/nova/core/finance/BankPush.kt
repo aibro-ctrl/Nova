@@ -96,6 +96,17 @@ object BankPushParser {
     private val INCOME_WORDS = Regex("""(?iu)(?<![а-яёa-z])(зачислен|пополнен|поступлен|поступил|возврат|вернул|перевод от|получен|начислен|доход|пришл)""")
     private val EXPENSE_WORDS = Regex("""(?iu)(?<![а-яёa-z])(покупка|покупку|оплата|оплачен|списание|списано|снятие|снято|платёж|платеж|перевод|перевели|отправлен|расход)""")
 
+    /**
+     * Одноразовые коды, пароли и подтверждения входа. Такие уведомления не должны даже попадать в разбор:
+     * слушатель отбрасывает их до любой обработки ([isSecret]), а не полагается только на фильтр ниже.
+     */
+    private val SECRET = Regex(
+        """(?iu)(код[\s:-]|код подтвержд|одноразов|пароль|password|passcode|otp\b|verification code|security code|\bpin\b|пин-код|никому не сообщайте|не сообщайте|подтвердите вход|вход в|авторизац|2fa|двухфактор)""",
+    )
+
+    /** Похоже на одноразовый код или пароль: это не трата, и хранить такой текст нельзя. */
+    fun isSecret(title: String, text: String): Boolean = SECRET.containsMatchIn("$title · $text")
+
     // Служебные пуши: сумма есть, но траты нет. Никогда не пишем.
     private val HARD_SKIP = Regex(
         """(?iu)(код подтвержд|пароль|выписк|кэшбэк|кешбэк|бонус|акци|предложен|тариф|лимит|доступн|рейтинг|страховк|инвест|ставк|одобрен|заявк|подписк|напомин|между своими|между счетами|между вашими|внутрибанковск)""",
@@ -119,7 +130,7 @@ object BankPushParser {
     fun parse(title: String, text: String, knownBank: String?): BankPush? {
         val raw = listOf(title, text).filter { it.isNotBlank() }.joinToString(" · ").trim()
         if (raw.isBlank()) return null
-        if (HARD_SKIP.containsMatchIn(raw)) return null
+        if (isSecret(title, text) || HARD_SKIP.containsMatchIn(raw)) return null
         val saysIncome = INCOME_WORDS.containsMatchIn(raw)
         val saysExpense = EXPENSE_WORDS.containsMatchIn(raw)
         val amount = AMOUNT.find(raw) ?: return null

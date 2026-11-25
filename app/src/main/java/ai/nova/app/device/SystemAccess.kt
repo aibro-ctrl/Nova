@@ -116,7 +116,9 @@ class SystemAccess(private val context: Context) {
         if (!requestShizuku()) return@withContext SetupResult(isAssistant(), accessibilityOn(), BackgroundLauncher(context).canLaunchFromBackground(),
             "Shizuku не запущен или не дал доступ.")
         shell("pm grant $pkg android.permission.WRITE_SECURE_SETTINGS")
-        shell("appops set $pkg ACCESS_RESTRICTED_SETTINGS allow")
+        // «Ограниченные настройки» Android 13+ — защита от вредоносных служб спецвозможностей.
+        // Снимаем её только если служба Нова ещё не включена: иначе лишнее право выдаётся впустую.
+        if (!accessibilityOn()) shell("appops set $pkg ACCESS_RESTRICTED_SETTINGS allow")
         shell("appops set $pkg SYSTEM_ALERT_WINDOW allow")
         if (Build.VERSION.SDK_INT >= 33) shell("pm grant $pkg android.permission.POST_NOTIFICATIONS")
         if (!isAssistant()) {

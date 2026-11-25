@@ -674,6 +674,22 @@ private fun AboutPage(c: AppContainer, onBack: () -> Unit) {
                 GroupDivider()
                 ValueItem("Версия", c.updates.currentVersion)
                 GroupDivider()
+                // Исходники открыты: сборка с изменённым кодом может выглядеть как Нова. Настоящая — только с этим отпечатком.
+                val fingerprint = remember { ai.nova.app.security.AppSignature.fingerprint(appContext) }
+                RowItem(
+                    title = "Подпись приложения",
+                    subtitle = fingerprint?.let { "SHA-256 ключа: $it. Сверьте с docs/SIGNING.md в репозитории — у сборки из другого источника отпечаток другой" }
+                        ?: "Не удалось прочитать подпись",
+                    icon = Icons.Rounded.Shield,
+                    maxSubtitleLines = 4,
+                    trailing = {
+                        if (fingerprint != null) TextButton(onClick = {
+                            val cm = appContext.getSystemService(android.content.ClipboardManager::class.java)
+                            cm?.setPrimaryClip(android.content.ClipData.newPlainText("signature", fingerprint))
+                        }) { Text("Копировать") }
+                    },
+                )
+                GroupDivider()
                 SwitchItem("Обновлять автоматически", "Проверять раз в 12 часов, скачивать и устанавливать новые версии", s.autoUpdate) { v ->
                     scope.launch { c.settings.setAutoUpdate(v) }
                 }

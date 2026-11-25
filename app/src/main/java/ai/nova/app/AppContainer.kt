@@ -218,6 +218,8 @@ class AppContainer(private val context: Context) {
                 store.shopping.addProduct(ai.nova.core.model.ShoppingItem.DEFAULT_LIST, product) != null
             }.getOrDefault(false)
         },
+        screenAiConsent = { settings.settings.value.screenAiConsent },
+        cloudAiConfigured = { cloudActive() || (settings.settings.value.useAI && aiConfigs().any { it.isComplete }) },
     )
     /** Площадки для покупок: выбранные в настройках, иначе обе. */
     fun shoppingMarketplaces(): Set<ai.nova.core.shopping.Marketplace> {

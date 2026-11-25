@@ -35,6 +35,11 @@ class DeviceGuardTest {
         assertTrue(ok(DeviceCommand.Share("", "привет"), "отправь привет"))
     }
 
+    @Test fun openedAppMustBeNamedByTheUser() {
+        assertTrue(ok(DeviceCommand.OpenApp("Телеграм"), "открой телеграм"))
+        assertFalse(ok(DeviceCommand.OpenApp("Банк"), "открой музыку"))
+    }
+
     @Test fun systemButtonsOnlyOnDirectRequest() {
         assertFalse(ok(DeviceCommand.Global(GlobalAction.LOCK), "прочитай заметку про рецепт"))
         assertTrue(ok(DeviceCommand.Global(GlobalAction.LOCK), "заблокируй экран"))

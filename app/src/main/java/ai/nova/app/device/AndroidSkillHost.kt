@@ -61,6 +61,10 @@ class AndroidSkillHost(
     private val selectedMarketplaces: () -> Set<ai.nova.core.shopping.Marketplace> = { emptySet() },
     /** Товар, который не удалось положить в корзину площадки, — в список покупок Нова. */
     private val saveToShoppingList: suspend (ai.nova.core.shopping.ShoppingProduct) -> Boolean = { false },
+    /** Разрешил ли пользователь отдавать текст экрана облачному AI (пересказ/перевод экрана). */
+    private val screenAiConsent: () -> Boolean = { false },
+    /** Уходит ли текст навыков в облако: есть настроенный внешний провайдер или «Облако Нова». */
+    private val cloudAiConfigured: () -> Boolean = { false },
 ) : SkillHost {
     private val locator = Locator(context)
     private val players = ai.nova.app.media.OtherPlayers(context)
@@ -102,6 +106,9 @@ class AndroidSkillHost(
         }
         return withContext(Dispatchers.Main) { service.screenText() }
     }
+
+    // Текст экрана уходит только модели на телефоне — согласие не нужно; в облако — только с явного разрешения.
+    override fun screenAiAllowed(): Boolean = !cloudAiConfigured() || screenAiConsent()
 
     override suspend fun contact(name: String): ContactInfo? {
         if (!permissions.ensure(Manifest.permission.READ_CONTACTS)) throw NeedsPermission(Permission.CONTACTS, "нет доступа к контактам")

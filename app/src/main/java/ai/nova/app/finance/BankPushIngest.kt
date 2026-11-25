@@ -54,12 +54,33 @@ object BankPushIngest {
         if (push.isIncome) return
         if (!firstTime(context, push)) return
         Logger.d(TAG, "Трата из уведомления ${push.bank}: ${push.merchant}")
-        if (mode == BankPushMode.AUTO) {
+        // Имя пакета банка может взять себе чужой APK, если настоящий банк не установлен.
+        // Без подтверждения пишем только приложения из магазина или системные; остальное — спрашиваем.
+        if (mode == BankPushMode.AUTO && trustedInstall(context, pkg)) {
             record(c, context, push.amountMinor, push.currency, push.category, push.description, undoable = true)
         } else {
             ask(context, push)
         }
     }
+
+    /** Магазины приложений, из которых ставятся настоящие банковские клиенты. */
+    private val TRUSTED_INSTALLERS = setOf(
+        "com.android.vending", "ru.vk.store", "com.huawei.appmarket", "com.xiaomi.mipicks", "com.xiaomi.market",
+        "com.sec.android.app.samsungapps", "com.heytap.market", "com.oppo.market", "com.bbk.appstore", "com.amazon.venezia",
+    )
+
+    /** Банк поставлен из магазина или входит в прошивку — а не скачан файлом под чужим именем. */
+    internal fun trustedInstall(context: Context, pkg: String): Boolean = runCatching {
+        val pm = context.packageManager
+        val info = pm.getApplicationInfo(pkg, 0)
+        if (info.flags and (android.content.pm.ApplicationInfo.FLAG_SYSTEM or android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0) return true
+        val installer = if (android.os.Build.VERSION.SDK_INT >= 30) {
+            pm.getInstallSourceInfo(pkg).let { it.installingPackageName ?: it.initiatingPackageName }
+        } else {
+            @Suppress("DEPRECATION") pm.getInstallerPackageName(pkg)
+        }
+        installer in TRUSTED_INSTALLERS
+    }.getOrDefault(false)
 
     /** Запрос подтверждения: тихое уведомление с кнопками «Добавить» и «Не надо». */
     private fun ask(context: Context, push: BankPush) {

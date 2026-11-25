@@ -19,7 +19,7 @@ fun String.asBuildConfigString(): String =
     "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 /** Текущая версия приложения (релиз может передать свою через NOVA_VERSION_NAME). */
-val APP_VERSION = "3.1.0"
+val APP_VERSION = "3.1.1"
 
 // Офлайн-модель для разговора: llama.cpp (MIT), фиксированная версия. Исходники скачиваются при сборке
 // и проверяются по sha256 — в репозиторий они не попадают.
@@ -58,6 +58,9 @@ val previewBuild = project.findProperty("nova.preview") == "true"
 
 val releaseKeystoreFile = config("NOVA_KEYSTORE_FILE")
 val hasReleaseSigning = releaseKeystoreFile.isNotEmpty() && file(releaseKeystoreFile).exists()
+// В релизном workflow без ключа подписи APK не собирается вовсе: раньше он молча подписывался debug-ключом,
+// и такой APK публиковался. Пароль debug-ключа знают все, значит подделку поставили бы поверх Нова.
+val requireReleaseSigning = project.findProperty("nova.requireSigning") == "true"
 
 android {
     namespace = "ai.nova.app"
@@ -127,7 +130,14 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+            signingConfig = when {
+                hasReleaseSigning -> signingConfigs.getByName("release")
+                requireReleaseSigning -> throw GradleException(
+                    "Нет ключа подписи: NOVA_KEYSTORE_FILE пуст или файл не найден. " +
+                        "Релиз нельзя подписывать debug-ключом — см. docs/SIGNING.md.",
+                )
+                else -> signingConfigs.getByName("debug")
+            }
         }
     }
 
