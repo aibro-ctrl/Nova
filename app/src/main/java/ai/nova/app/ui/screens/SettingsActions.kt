@@ -169,12 +169,9 @@ internal fun ActionsPage(c: AppContainer, onBack: () -> Unit) {
             var probe by remember { mutableStateOf<String?>(null) }
             var testing by remember { mutableStateOf(false) }
             GroupDivider(inset = 16.dp)
-            RowItem(
-                title = if (testing) "Проверяю каталог…" else "Проверить поиск товаров",
-                subtitle = probe ?: "Короткий запрос на площадке — видно, работает ли каталог",
-                chevron = !testing,
-            ) {
-                if (testing) return@RowItem
+            // Проверка запускается нажатием: у RowItem последний параметр — слот trailing, и лямбда,
+            // переданная «хвостом», выполнялась бы при каждой перерисовке, а не по нажатию.
+            val checkCatalog: () -> Unit = {
                 testing = true
                 probe = null
                 scope.launch {
@@ -190,6 +187,12 @@ internal fun ActionsPage(c: AppContainer, onBack: () -> Unit) {
                     testing = false
                 }
             }
+            RowItem(
+                title = if (testing) "Проверяю каталог…" else "Проверить поиск товаров",
+                subtitle = probe ?: "Короткий запрос на площадке — видно, работает ли каталог",
+                chevron = !testing,
+                onClick = if (testing) null else checkCatalog,
+            )
             Hint(
                 "Нова ищет товары и показывает их списком с фото, ценой и ссылкой. В корзину площадки " +
                     "приложение положить не может: выбранное сохраняется в «Списке покупок», а покупку и оплату " +
