@@ -121,6 +121,17 @@ jobs:
       - name: Verify signing certificate
         run: ./scripts/verify-signing.sh "$(ls app/build/outputs/apk/release/*.apk | head -1)"
 
+      # Если проверка подписи не прошла — сохраняем APK, чтобы разобраться, чем он подписан.
+      - name: Keep failed APK for diagnosis
+        if: failure()
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: failed-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 1
+          compression-level: 0
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:

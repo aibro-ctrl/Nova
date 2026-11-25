@@ -27,12 +27,19 @@ if [ -z "$EXPECTED" ]; then
   exit 1
 fi
 
-CERT="$("$APKSIGNER" verify --print-certs "$APK" | sed -nE 's/^Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]{64})$/\1/p' | head -1 | tr 'a-f' 'A-F')"
-DN="$("$APKSIGNER" verify --print-certs "$APK" | sed -nE 's/^Signer #1 certificate DN: //p' | head -1)"
-if [ -z "$CERT" ]; then
-  echo "::error::Не удалось прочитать сертификат подписи из $APK."
+RAW="$("$APKSIGNER" verify --print-certs "$APK" 2>&1 || true)"
+DN="$(printf '%s\n' "$RAW" | sed -n 's/^Signer #1 certificate DN: //p' | head -1)"
+CERT="$(printf '%s\n' "$RAW" | grep -m1 'certificate SHA-256 digest' | sed 's/.*digest:[[:space:]]*//' | tr -d '[:space:]' | tr 'a-f' 'A-F')"
+if ! printf '%s' "$CERT" | grep -Eq '^[0-9A-F]{64}$'; then
+  # Запасной путь: keytool читает сертификат прямо из APK, без apksigner.
+  CERT="$(keytool -printcert -jarfile "$APK" 2>/dev/null | grep -m1 'SHA256:' | sed 's/.*SHA256:[[:space:]]*//' | tr -d '[:space:]' | tr 'a-f' 'A-F' || true)"
+fi
+if ! printf '%s' "$CERT" | grep -Eq '^[0-9A-F]{64}$'; then
+  echo "::error::Не удалось прочитать сертификат подписи из $APK. Вывод apksigner:"
+  printf '%s\n' "$RAW" | tail -15
   exit 1
 fi
+
 ACTUAL="$(printf '%s' "$CERT" | fold -w2 | paste -sd: -)"
 
 echo "Сертификат: $DN"
