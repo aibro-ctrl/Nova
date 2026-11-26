@@ -98,7 +98,7 @@ class MixedPhrasesTest {
         val s = assertIs<AssistantAction.Search>(actions("что в списке покупок").single())
         assertEquals("список покупок", s.query)
         assertEquals(setOf(RecordType.NOTE), s.types)
-        assertEquals(AssistantAction.Device(DeviceCommand.ShowAlarms), actions("выключи будильник").single())
+        assertEquals(AssistantAction.Device(DeviceCommand.AlarmOff()), actions("выключи будильник").single())
     }
 
     @Test fun incomeIsNotSpending() {

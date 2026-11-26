@@ -34,7 +34,7 @@ data class GeoPoint(val lat: Double, val lon: Double, val name: String? = null)
 class InfoUnavailable(message: String) : Exception(message)
 
 /** Общие для «живых» ответов HTTP-запросы: таймаут, User-Agent, понятная ошибка. */
-internal suspend fun HttpClient.fetchText(url: String): String {
+internal suspend fun HttpClient.fetchText(url: String, userAgent: String = NOVA_USER_AGENT): String {
     var last: Exception? = null
     // Мобильная сеть рвётся: один повтор после короткой паузы.
     repeat(2) { attempt ->
@@ -42,7 +42,7 @@ internal suspend fun HttpClient.fetchText(url: String): String {
             get(url) {
                 // Навыку не нужно ждать 90 секунд, как AI: нет ответа за 10 — «нет связи».
                 if (this@fetchText.pluginOrNull(HttpTimeout) != null) timeout { connectTimeoutMillis = 5_000; requestTimeoutMillis = 10_000; socketTimeoutMillis = 10_000 }
-                header("User-Agent", "NovaAssistant/2.2 (Android; +https://github.com/aibro-ctrl/Nova)")
+                header("User-Agent", userAgent)
                 header("Accept", "application/json, application/rss+xml, application/xml, text/xml, */*")
                 header("Accept-Language", "ru")
             }
@@ -68,6 +68,15 @@ internal suspend fun HttpClient.fetchText(url: String): String {
     val cause = last?.let { e -> generateSequence<Throwable>(e) { it.cause }.last()::class.simpleName } ?: "нет ответа"
     throw InfoUnavailable("нет связи ($cause)")
 }
+
+/** Представляемся честно: сайты видят, кто их спрашивает. */
+internal const val NOVA_USER_AGENT = "NovaAssistant/2.2 (Android; +https://github.com/aibro-ctrl/Nova)"
+
+/**
+ * Некоторые RSS-сервисы (Bing Новости) отдают настоящую ленту только браузеру,
+ * а программе — HTML без новостей. Для них используем самый простой браузерный заголовок.
+ */
+internal const val BROWSER_USER_AGENT = "Mozilla/5.0"
 
 /** Предел размера ответа сетевого навыка. */
 internal const val MAX_BODY_BYTES = 3L * 1024 * 1024

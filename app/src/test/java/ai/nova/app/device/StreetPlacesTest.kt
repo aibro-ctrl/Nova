@@ -5,7 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Отбор мест из ответа справочника: без сети, на заранее записанном ответе. */
+/** Разбор ответа справочника по названию и адресу: без сети, на заранее записанном ответе. */
 class StreetPlacesTest {
 
     private fun hit(
@@ -41,11 +41,12 @@ class StreetPlacesTest {
     }
 
     @Test
-    fun fallsBackWhenNothingMatchesTheKind() {
-        // Разметка бывает неполной: пустой ответ хуже, чем ближайшее похожее название.
+    fun keepsNothingWhenTheKindDoesNotMatch() {
+        // «Аптекарский огород» в двух шагах — это не аптека: для вида места отбор строгий.
+        // Пустой ответ не беда: рядом ничего нет — значит, место ищут сами карты.
         val body = "[${hit("Аптека на Ленина", "building", "yes", "55.01", "82.90")}]"
 
-        assertEquals(listOf("Аптека на Ленина"), Nominatim.places(body, PlaceKind.PHARMACY, here = null).map { it.name })
+        assertEquals(emptyList<String>(), Nominatim.places(body, PlaceKind.PHARMACY, here = null).map { it.name })
     }
 
     @Test
@@ -63,5 +64,22 @@ class StreetPlacesTest {
     @Test
     fun brokenAnswerIsNotACrash() {
         assertEquals(emptyList<String>(), Nominatim.places("не json", PlaceKind.PHARMACY, here = null).map { it.name })
+    }
+
+    /** У аптеки без названия в справочнике ответ — её адрес, без повтора «улица, улица». */
+    @Test
+    fun unnamedPlaceIsKnownByItsAddress() {
+        val body = """
+            [{
+              "lat": "55.001", "lon": "82.900", "display_name": "улица Ленина, 5, Новосибирск",
+              "category": "amenity", "type": "pharmacy",
+              "address": { "road": "улица Ленина", "house_number": "5", "city": "Новосибирск" }
+            }]
+        """.trimIndent()
+
+        val place = Nominatim.places(body, PlaceKind.PHARMACY, here = 55.0 to 82.9).single()
+
+        assertEquals("", place.name)
+        assertEquals("улица Ленина, 5, Новосибирск", place.title)
     }
 }

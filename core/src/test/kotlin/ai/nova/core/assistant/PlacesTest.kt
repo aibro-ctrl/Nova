@@ -88,10 +88,19 @@ class PlacesTest {
     }
 
     @Test
-    fun twoGisRoutesByPointAndSearchesByWord() {
-        // 2ГИС по слову открывает список результатов, маршрут строит только по координатам.
-        assertEquals("google.navigation:q=55.03,82.92", MapsApp.TWOGIS.routeTo(55.03, 82.92, "аптека"))
-        assertEquals("dgis://2gis.ru/search/%D0%B0%D0%BF%D1%82%D0%B5%D0%BA%D0%B0", MapsApp.TWOGIS.routeTo(null, null, "аптека"))
+    fun twoGisRoutesByPointAndByWord() {
+        // Проверено на телефоне: ссылка 2ГИС строит маршрут и по координатам, и по слову —
+        // место по слову приложение ищет само, по своему справочнику.
+        // Порядок координат у 2ГИС — «долгота,широта».
+        assertEquals("dgis://2gis.ru/routeSearch/rsType/car/to/82.92,55.03", MapsApp.TWOGIS.routeTo(55.03, 82.92, "аптека"))
+        assertEquals(
+            "dgis://2gis.ru/routeSearch/rsType/pedestrian/to/82.92,55.03",
+            MapsApp.TWOGIS.routeTo(55.03, 82.92, "аптека", walking = true),
+        )
+        assertEquals(
+            "dgis://2gis.ru/routeSearch/rsType/pedestrian/to/%D0%B0%D0%BF%D1%82%D0%B5%D0%BA%D0%B0",
+            MapsApp.TWOGIS.routeTo(null, null, "аптека", walking = true),
+        )
     }
 
     @Test

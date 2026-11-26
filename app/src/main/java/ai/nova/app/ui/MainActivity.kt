@@ -146,6 +146,8 @@ class MainActivity : ComponentActivity() {
                         ai.nova.app.ui.components.OrganicBackground(intensity = 0.6f)
                         NovaRoot(container, listenRequest, openSettingsRequest, openBackupRequest, quickRequest, openChatRequest)
                         ai.nova.app.ui.components.VoiceMemoOverlay(container)
+                        // Звенит будильник или таймер — «Стоп» всегда под рукой, без шторки уведомлений.
+                        ai.nova.app.ui.components.RingOverlay(container)
                         ai.nova.app.ui.onboarding.FirstRunOnboarding(container)
                         ai.nova.app.ui.components.WhatsNewAutoShow()
                     }

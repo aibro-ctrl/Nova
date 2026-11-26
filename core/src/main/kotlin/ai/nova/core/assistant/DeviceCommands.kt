@@ -31,10 +31,27 @@ sealed interface DeviceCommand {
      * Маршрут до места. [vague] — человек сказал только «поесть»/«перекусить», без вида места:
      * тогда сначала спросим, что именно нужно, а не повезём в случайное кафе.
      */
-    data class Navigate(val destination: String, val app: MapsApp? = null, val vague: Boolean = false) : DeviceCommand
+    /** [walking] — пешком: до ближайшей аптеки или кафе идут, до заправки едут. */
+    data class Navigate(
+        val destination: String,
+        val app: MapsApp? = null,
+        val vague: Boolean = false,
+        val walking: Boolean = false,
+    ) : DeviceCommand
     data class OpenSettings(val section: SettingsSection) : DeviceCommand
     data object Stopwatch : DeviceCommand
     data object ShowAlarms : DeviceCommand
+    /** «Какие у меня будильники», «сколько включено»: свои будильники Нова знает точно. */
+    data object AlarmsLeft : DeviceCommand
+    /**
+     * «Выключи будильник», «выключи будильник на 7», «выключи все будильники».
+     * [delete] — человек сказал «удали»: будильник исчезает, а не просто выключается.
+     */
+    data class AlarmOff(val time: LocalTime? = null, val all: Boolean = false, val delete: Boolean = false) : DeviceCommand
+    /** «Ещё 5 минут», «повтори через 30 минут» — перенос уже сработавшего будильника. */
+    data class AlarmSnooze(val minutes: Int) : DeviceCommand
+    /** «Стоп», «замолчи» — выключить звучащий сейчас сигнал (будильник или таймер). */
+    data object Silence : DeviceCommand
     data class Camera(val video: Boolean = false, val selfie: Boolean = false) : DeviceCommand
     data class OpenUrl(val url: String) : DeviceCommand
     /** Музыка/видео по запросу: «включи Queen», «найди на ютубе рецепт пиццы». */
@@ -99,6 +116,16 @@ interface DeviceController {
 object UnsupportedDevice : DeviceController {
     override suspend fun perform(command: DeviceCommand) = DeviceResult("На этом устройстве я так не умею.", ok = false)
 }
+
+/** Будильник, который знает сама Нова: время, дни повтора и ближайшее срабатывание. */
+data class ActiveAlarm(
+    val time: LocalTime,
+    val days: Set<DayOfWeek> = emptySet(),
+    val label: String = "",
+    /** Ближайшее срабатывание; null — выключен или уже прошёл. */
+    val at: Instant? = null,
+    val enabled: Boolean = true,
+)
 
 /**
  * Разбор команд телефону и «бытовых» вопросов полностью офлайн:
@@ -225,11 +252,20 @@ object DevicePhrases {
         }
         if (re("""^(?:включи|запусти)\s+секундомер""").containsMatchIn(t) || t == "секундомер") return cmd(DeviceCommand.Stopwatch)
 
+        // «Ещё 5 минут», «повтори через 30 минут», «отложи будильник на 10 минут» — перенос сработавшего.
+        alarmSnooze(t)?.let { return cmd(it) }
+
         // Будильник: «разбуди меня в 7», «поставь будильник на 6:30», «будильник на 8 утра по будням».
         re("""^(?:разбуди(?:\s+меня)?|поставь будильник|заведи будильник|установи будильник|будильник|подними меня)\s*(?:на|в|к)?\s*(.+)$""").find(t)?.let { m ->
             alarmTime(m.groupValues[1])?.let { (time, days) -> return cmd(DeviceCommand.Alarm(time, "", days)) }
         }
-        if (re("""^(?:покажи|какие|мои)\s+будильник|^(?:выключи|отключи|удали|отмени|убери)\s+(?:все\s+)?будильник""").containsMatchIn(t)) return cmd(DeviceCommand.ShowAlarms)
+        // «Какие у меня будильники», «сколько включено», «мои будильники».
+        if (re("""^(?:какие|сколько|мои|покажи|список|перечисли|есть)\b.*\bбудильник|^будильники$""").containsMatchIn(t)) return cmd(DeviceCommand.AlarmsLeft)
+        // «Открой будильники в часах» — открыть приложение «Часы».
+        if (re("""^(?:открой|запусти|покажи)\s+(?:приложение\s+)?(?:будильники|часы)""").containsMatchIn(t)) return cmd(DeviceCommand.ShowAlarms)
+        alarmOff(t)?.let { return cmd(it) }
+        // «Стоп», «замолчи», «выключи сигнал» — просто прекратить звон, без разбора, чей он.
+        if (re("""^(?:стоп|стоп\s+сигнал|выключи\s+сигнал|останови\s+сигнал|замолчи(?:те)?(?:\s+пожалуйста)?|прекрати\s+звонить|отбой)$""").containsMatchIn(t)) return cmd(DeviceCommand.Silence)
 
         // Системные действия (через спецвозможности).
         val global = when {
@@ -475,8 +511,8 @@ object DevicePhrases {
         val days = when {
             re("""по будням|в будни|каждый будний""").containsMatchIn(d) -> WEEKDAYS
             re("""каждый день|ежедневно""").containsMatchIn(d) -> DayOfWeek.entries.toSet()
-            re("""по выходным""").containsMatchIn(d) -> setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)
-            else -> emptySet()
+            re("""по выходным|каждый выходной|на выходных""").containsMatchIn(d) -> setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)
+            else -> alarmDays(d)
         }
         re("""\bполовин\w*\s+(\S+)""").find(d)?.let { m ->
             val next = m.groupValues[1].toIntOrNull() ?: ORDINAL_HOURS.entries.firstOrNull { m.groupValues[1].startsWith(it.key) }?.value ?: return@let
@@ -488,6 +524,145 @@ object DevicePhrases {
         val min = m.groupValues[2].toIntOrNull() ?: 0
         if (h > 23 || min > 59) return null
         return LocalTime.of(adjust(h, d) % 24, min) to days
+    }
+
+    /**
+     * «Будильник на воскресенье» без времени: дни есть, часа нет.
+     * Тогда Нова спросит «во сколько?», а не промолчит.
+     */
+    fun alarmWithoutTime(t: String): Set<DayOfWeek>? {
+        val m = re("""^(?:разбуди(?:\s+меня)?|поставь будильник|заведи будильник|установи будильник|будильник|подними меня)\s*(?:на|в|к)?\s*(.+)$""").find(t) ?: return null
+        val tail = m.groupValues[1]
+        if (alarmTime(tail) != null) return null
+        return alarmDays(tail).takeIf { it.isNotEmpty() }
+    }
+
+    /** «выключи будильник», «выключи будильник на 7», «убери все будильники». */
+    private fun alarmOff(t: String): DeviceCommand.AlarmOff? {
+        val m = re("""^(выключи|отключи|удали|отмени|убери|сними|стоп)\s+(?:мне\s+)?(?:(все|всех|всё)\s+)?будильник\p{L}*(?:\s+(?:на|в|к)?\s*(.+))?$""").find(t) ?: return null
+        val all = m.groupValues[2].isNotEmpty()
+        val delete = m.groupValues[1].startsWith("удал")
+        val tail = m.groupValues[3].trim()
+        if (tail.isEmpty()) return DeviceCommand.AlarmOff(all = all, delete = delete)
+        return DeviceCommand.AlarmOff(alarmTime(tail)?.first, all, delete)
+    }
+
+    /**
+     * «Ещё 5 минут», «дай поспать ещё 10», «повтори через 30 минут», «продли будильник на 10 минут».
+     *
+     * «Отложи 10 минут» без слова «будильник» оставляем переносу напоминания — это частая фраза про запись.
+     */
+    private fun alarmSnooze(t: String): DeviceCommand.AlarmSnooze? {
+        val d = digitize(t)
+        val withAlarm = re("""^(?:продли|отложи|перенеси|добавь|повтори)\s+(?:ещё\s+)?будильник\p{L}*(?:\s+(?:на|через)\s*)?(?:(\d{1,3})\s*(?:минут\p{L}*|мин))?$""").find(d)
+        if (withAlarm != null) {
+            val minutes = withAlarm.groupValues[1].toIntOrNull() ?: 5
+            return minutes.takeIf { it in 1..180 }?.let { DeviceCommand.AlarmSnooze(it) }
+        }
+        val m = re(
+            """^(?:(?:ещ[её]|дай|хочу|посплю)|дай\s+\p{L}+)\b[^\d]{0,18}(\d{1,3})\s*(?:минут\p{L}*|мин)\b(?:\s+ещ[её])?$""" +
+                """|^повтори\s+через\s+(\d{1,3})\s*(?:минут\p{L}*|мин)$""",
+        ).find(d) ?: return null
+        val minutes = (m.groupValues[1].ifEmpty { m.groupValues[2] }).toIntOrNull() ?: return null
+        return minutes.takeIf { it in 1..180 }?.let { DeviceCommand.AlarmSnooze(it) }
+    }
+
+    /**
+     * Дни недели из фразы: «в воскресенье», «по вторникам», «с понедельника по пятницу».
+     * Пустой набор — будильник одноразовый.
+     */
+    fun alarmDays(text: String): Set<DayOfWeek> {
+        val d = digitize(text).lowercase().replace('ё', 'е')
+        val range = re("""(?:^|\s)с\s+([\p{L}]+)\s+по\s+([\p{L}]+)""").find(d)
+        if (range != null) {
+            val from = dayOf(range.groupValues[1])
+            val to = dayOf(range.groupValues[2])
+            if (from != null && to != null) {
+                val out = linkedSetOf<DayOfWeek>()
+                var day: DayOfWeek = from
+                // Понедельник → пятница; воскресенье → среда тоже должно закончиться средой.
+                repeat(7) {
+                    out += day
+                    if (day == to) return out
+                    day = day.plus(1)
+                }
+                return out
+            }
+        }
+        val found = linkedSetOf<DayOfWeek>()
+        Regex("""[\p{L}]+""").findAll(d).forEach { w ->
+            dayOf(w.value)?.let { found += it }
+        }
+        return found
+    }
+
+    private fun dayOf(word: String): DayOfWeek? {
+        val w = word.lowercase().replace('ё', 'е')
+        DAY_SHORT[w]?.let { return it }
+        return DAY_FORMS.entries.firstOrNull { (form, _) -> w == form }?.value
+            ?: DAY_FORMS.entries.firstOrNull { (form, _) -> form.startsWith(w) && w.length >= 4 }?.value
+            ?: DAY_FORMS.entries.firstOrNull { (form, _) -> w.startsWith(form) && form.length >= 5 }?.value
+    }
+
+    private val DAY_SHORT = mapOf(
+        "пн" to DayOfWeek.MONDAY, "вт" to DayOfWeek.TUESDAY, "ср" to DayOfWeek.WEDNESDAY,
+        "чт" to DayOfWeek.THURSDAY, "пт" to DayOfWeek.FRIDAY, "сб" to DayOfWeek.SATURDAY, "вс" to DayOfWeek.SUNDAY,
+    )
+
+    /** Все падежи, которые встречаются в речи: «в воскресенье», «с понедельника», «по вторникам». */
+    private val DAY_FORMS: Map<String, DayOfWeek> = buildMap {
+        fun add(day: DayOfWeek, vararg forms: String) = forms.forEach { put(it, day) }
+        add(DayOfWeek.MONDAY, "понедельник", "понедельника", "понедельнику", "понедельником", "понедельникам", "понедельники")
+        add(DayOfWeek.TUESDAY, "вторник", "вторника", "вторнику", "вторником", "вторникам", "вторники")
+        add(DayOfWeek.WEDNESDAY, "среда", "среду", "среды", "среде", "средой", "средам", "среды")
+        add(DayOfWeek.THURSDAY, "четверг", "четверга", "четвергу", "четвергом", "четвергам", "четверги")
+        add(DayOfWeek.FRIDAY, "пятница", "пятницу", "пятницы", "пятнице", "пятницей", "пятницам")
+        add(DayOfWeek.SATURDAY, "суббота", "субботу", "субботы", "субботе", "субботой", "субботам")
+        add(DayOfWeek.SUNDAY, "воскресенье", "воскресенья", "воскресенью", "воскресеньем", "воскресеньям")
+    }
+
+    /** «по будням», «по выходным», «каждый день», «по пятницам» — как сказать дни вслух. */
+    fun daysText(days: Set<DayOfWeek>): String = when {
+        days.isEmpty() -> ""
+        days.size == 7 -> "каждый день"
+        days == WEEKDAYS -> "по будням"
+        days == setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY) -> "по выходным"
+        else -> "по " + DayOfWeek.entries.filter { it in days }.joinToString(", ") { stem ->
+            when (stem) {
+                DayOfWeek.MONDAY -> "понедельникам"
+                DayOfWeek.TUESDAY -> "вторникам"
+                DayOfWeek.WEDNESDAY -> "средам"
+                DayOfWeek.THURSDAY -> "четвергам"
+                DayOfWeek.FRIDAY -> "пятницам"
+                DayOfWeek.SATURDAY -> "субботам"
+                DayOfWeek.SUNDAY -> "воскресеньям"
+            }
+        }
+    }
+
+    private fun alarmTimeText(a: ActiveAlarm): String = buildString {
+        append(RuFormat.time(a.time))
+        daysText(a.days).takeIf { it.isNotEmpty() }?.let { append(", ").append(it) }
+        if (a.label.isNotBlank()) append(", «").append(a.label).append('»')
+    }
+
+    /** Сколько включено и какие: «Сейчас включено 2 будильника: на 07:00 по будням и на 10:00 по выходным.» */
+    fun alarmsText(alarms: List<ActiveAlarm>): String {
+        val on = alarms.filter { it.enabled }.sortedBy { it.time }
+        if (on.isEmpty()) return "Включённых будильников нет. Скажите, например: «будильник на 7 утра»."
+        val head = "Сейчас ${on.size} ${plural(on.size, "включённый будильник", "включённых будильника", "включённых будильников")}: "
+        val items = on.map { alarmTimeText(it) }
+        val list = when (items.size) {
+            1 -> items[0]
+            else -> items.dropLast(1).joinToString(", ") + " и " + items.last()
+        }
+        return head + list + "."
+    }
+
+    private fun plural(n: Int, one: String, few: String, many: String): String = when {
+        n % 10 == 1 && n % 100 != 11 -> one
+        n % 10 in 2..4 && n % 100 !in 12..14 -> few
+        else -> many
     }
 
     /** «половина восьмого» — порядковые числительные часа. */
@@ -659,7 +834,7 @@ object DevicePhrases {
      * Без карт в фразе приложение выберет настройка.
      */
     /** Служебные слова перед местом: «найди ближайшую аптеку», «хочу в кино», «где музей». */
-    private val PLACE_LEAD = re("""^(?:(?:найди|найти|поищи|поискать|искать|покажи|посмотри|подскажи|где|куда|хочу|хотим|хочется|пойдём|пойдем|сходим|сходить|съездить|давай|можно|мне|нам|надо|нужно|бы)(?:\s+|$)|(?:в|во|на|до|к)\s+)""")
+    private val PLACE_LEAD = re("""^(?:(?:найди|найти|поищи|поискать|искать|покажи|посмотри|подскажи|где|куда|хочу|хотим|хочется|пойдём|пойдем|сходим|сходить|съездить|давай|можно|мне|нам|надо|нужно|бы|отведи|отведите|веди|проведи|отвези|отвезите|довези|довезите)(?:\s+|$)|(?:в|во|на|до|к)\s+)""")
 
     /**
      * Маршрут и поиск места на карте — самый широкий набор формулировок.
@@ -730,6 +905,11 @@ object DevicePhrases {
             // Вид места человек не назвал: спросим «посидеть или перекусить» и только потом поведём.
             return DeviceCommand.Navigate("поесть", MapsApp.parse(bare), vague = true)
         }
+        // Вид места — уже маршрут, даже если словаря мест слово не знает: «торговый центр»,
+        // «снять деньги», «автобусная остановка». Проверяем до словаря: он знает «рынок», но не
+        // «торговый центр», и такие фразы раньше уходили в поиск по записям вместо карты.
+        // Покупки и записи не перехватываем: «купи продукты» — это список, а не маршрут.
+        if (Places.isKindPhrase(bare) && !SHOPPING_VERB.containsMatchIn(bare)) return navigate(bare)
         // Вся фраза должна состоять из места и уточнений: «ближайшая аптека», «музей поблизости».
         // «сходить в парикмахерскую», «схожу в спортзал» — задачи и планы, их не перехватываем.
         val kinds = words.map { it.trim(',', '.', '!', '?') }.filterNot { RuQuery.isPlaceModifier(it) }
@@ -738,6 +918,9 @@ object DevicePhrases {
         if (re("""(?:^|\s)(?:мо[йяею]|наш\w*|у\s+меня)(?:\s|$)""").containsMatchIn(bare)) return null
         return navigate(bare)
     }
+
+    /** «Купи продукты», «добавь в список» — про покупки, а не про маршрут до магазина. */
+    private val SHOPPING_VERB = re("""^(?:купи|купить|куплю|покупать|добавь|допиши|запиши|внеси|положи|напомни|не\s+забудь)""")
 
     /** «Где поесть», «хочу есть», «перекусить» — вид места не назван, спросим уточнение. */
     private val FOOD_ONLY = re("""^(?:где|куда|хочу|хотим|можно|надо|мне|нам)?\s*(?:бы\s+)?(?:(?:хочу|хотим|можно|давай)\s+)?(?:поесть|пообедать|перекусить|покушать|подкрепиться|перекус|голоден|голодна|(?:хочу|хотим)\s+есть)$""")

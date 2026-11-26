@@ -59,6 +59,8 @@ class AndroidDeviceController(
     private val fallbackReminder: suspend (text: String, at: Instant) -> Unit,
     /** Свои таймеры Нова: не зависят от приложения «Часы», их можно спросить «сколько осталось» и отменить голосом. */
     private val timers: ai.nova.app.reminders.NovaTimers? = null,
+    /** Свои будильники Нова: их можно перечислить, выключить и отложить голосом. */
+    private val alarms: ai.nova.app.reminders.NovaAlarms? = null,
     /** Дыхание и медитация с голосовыми подсказками. */
     private val relaxation: ai.nova.app.health.Relaxation? = null,
     /** «Я за рулём»: чтение новых сообщений вслух. */
@@ -117,6 +119,17 @@ class AndroidDeviceController(
             }
             is DeviceCommand.Alarm -> {
                 val time = RuFormat.time(c.time)
+                val days = DevicePhrases.daysText(c.days)
+                // Свои будильники: Нова хранит их сама и потом может перечислить и выключить голосом.
+                val own = alarms?.takeIf { !ai.nova.app.reminders.Clocks.useSystem(context) }
+                if (own != null) {
+                    val alarm = own.set(c.time, c.days, c.label)
+                    val next = alarm.at?.let { RuFormat.time(it.atZone(java.time.ZoneId.systemDefault()).toLocalTime()) }
+                    return DeviceResult(
+                        "Будильник на $time${if (days.isNotEmpty()) " $days" else ""} поставлен." +
+                            (if (days.isEmpty() && next != null) " Разбужу ${if (next < time) "завтра" else "сегодня"} в $next." else ""),
+                    )
+                }
                 val intent = Intent(AlarmClock.ACTION_SET_ALARM)
                     .putExtra(AlarmClock.EXTRA_HOUR, c.time.hour)
                     .putExtra(AlarmClock.EXTRA_MINUTES, c.time.minute)
@@ -129,6 +142,77 @@ class AndroidDeviceController(
                 else {
                     fallbackReminder("Будильник $time", nextOccurrence(c.time))
                     DeviceResult("Поставила напоминание-будильник на $time.")
+                }
+            }
+            DeviceCommand.AlarmsLeft -> {
+                val own = alarms
+                if (own != null && !ai.nova.app.reminders.Clocks.useSystem(context)) DeviceResult(DevicePhrases.alarmsText(own.active()))
+                else open(
+                    Intent(AlarmClock.ACTION_SHOW_ALARMS),
+                    "Будильники приложения «Часы» мне не видны: система не даёт их прочитать. Открываю «Часы» — там весь список.",
+                    "Будильники",
+                )
+            }
+            is DeviceCommand.AlarmOff -> {
+                val own = alarms
+                if (own == null || ai.nova.app.reminders.Clocks.useSystem(context)) {
+                    // Даже в режиме «Часов» свой сигнал Нова обязана выключить.
+                    if (ai.nova.app.media.RingService.isRinging()) {
+                        ai.nova.app.media.RingService.stop(context)
+                        DeviceResult("Выключила сигнал.")
+                    } else {
+                        open(
+                            Intent(AlarmClock.ACTION_SHOW_ALARMS),
+                            "Будильники «Часов» я не вижу и выключить их сама не могу — открываю «Часы».",
+                            "Будильники",
+                        )
+                    }
+                } else {
+                    // Пока будильник звенит, «выключи будильник» — в первую очередь про звук.
+                    val ringing = own.ringing()
+                    val gone = own.off(c.time, c.all, c.delete)
+                    if (ringing != null) {
+                        ai.nova.app.media.RingService.stop(context)
+                        own.clearRinging()
+                    }
+                    val verb = if (c.delete) "Удалила" else "Выключила"
+                    when {
+                        gone.isNotEmpty() -> DeviceResult(
+                            "$verb " + gone.sortedBy { it.time }.joinToString(", ") { RuFormat.time(it.time) } + ".",
+                        )
+                        ringing != null -> DeviceResult("Выключила будильник ${RuFormat.time(ringing.time)}.")
+                        else -> DeviceResult("Включённых будильников нет — ${if (c.delete) "удалять" else "выключать"} нечего.")
+                    }
+                }
+            }
+            DeviceCommand.Silence -> {
+                val ringing = ai.nova.app.media.RingService.isRinging()
+                if (ringing) {
+                    ai.nova.app.media.RingService.stop(context)
+                    alarms?.clearRinging()
+                }
+                DeviceResult(if (ringing) "Выключила сигнал." else "Сейчас ничего не звенит.")
+            }
+            is DeviceCommand.AlarmSnooze -> {
+                val own = alarms
+                val at = if (own != null && !ai.nova.app.reminders.Clocks.useSystem(context)) own.snooze(c.minutes) else null
+                // «Ещё 12 минут», когда будильник молчит, — это про идущий таймер.
+                val timer = if (at != null) null else timers?.all()?.filter { it.endsAt.isAfter(java.time.Instant.now()) }?.minByOrNull { it.endsAt }
+                if (at == null && timer != null && timers != null) {
+                    val updated = timers.extend(timer.id, c.minutes * 60)
+                    if (updated != null) {
+                        val left = DevicePhrases.describeDuration(
+                            java.time.Duration.between(java.time.Instant.now(), updated.endsAt).seconds.toInt().coerceAtLeast(0),
+                        )
+                        val label = timer.label.takeIf { it.isNotBlank() }?.let { " «$it»" }.orEmpty()
+                        return DeviceResult("Продлила таймер$label на ${DevicePhrases.describeDuration(c.minutes * 60)} — осталось $left.")
+                    }
+                }
+                if (at == null) DeviceResult("Сейчас будильник не звонит, и активных таймеров нет — продлевать нечего.")
+                else {
+                    // Сигнал уже отложен — замолкаем сразу, иначе он звенит положенную минуту.
+                    ai.nova.app.media.RingService.stop(context)
+                    DeviceResult("Хорошо, разбужу через ${DevicePhrases.describeDuration(c.minutes * 60)}.")
                 }
             }
             DeviceCommand.ShowAlarms -> open(Intent(AlarmClock.ACTION_SHOW_ALARMS), "Открываю будильники.", "Будильники")
@@ -494,14 +578,14 @@ class AndroidDeviceController(
                     "когда будете там — запомню место и буду строить туда маршрут.",
                 ok = false,
             )
-        target.place?.let { place -> return route(place.name, place.lat, place.lon, c.app) }
-        return route(target.query, null, null, c.app)
+        target.place?.let { place -> return route(place.name, place.lat, place.lon, c.app, c.walking) }
+        return route(target.query, null, null, c.app, c.walking)
     }
 
     /** Маршрут до точки в выбранных картах; если приложения нет — маршрут в браузере. */
-    private fun route(text: String, lat: Double?, lon: Double?, app: MapsApp?): DeviceResult {
+    private fun route(text: String, lat: Double?, lon: Double?, app: MapsApp?, walking: Boolean = false): DeviceResult {
         val chosen = app ?: mapsApp() ?: defaultMaps()
-        val inApp = Intent(Intent.ACTION_VIEW, Uri.parse(chosen.routeTo(lat, lon, text))).setPackage(chosen.pkg)
+        val inApp = Intent(Intent.ACTION_VIEW, Uri.parse(chosen.routeTo(lat, lon, text, walking))).setPackage(chosen.pkg)
         if (installed(chosen.pkg) && resolves(inApp)) {
             return open(inApp, "Строю маршрут в ${chosen.title}.", "Маршрут")
         }
@@ -520,10 +604,16 @@ class AndroidDeviceController(
         return MapsApp.entries.firstOrNull { installed(it.pkg) } ?: MapsApp.GOOGLE
     }
 
-    /** Ближайшие места по названию — вокруг текущего места, с городом из настроек. */
+    /**
+     * Название или адрес по координатам. Вид места («аптека», «кафе») сюда не приходит: его ищут
+     * сами карты — у них полный справочник и часы работы, а ключей для этого не нужно.
+     *
+     * Разрешение на геолокацию не спрашиваем: без точки поиск идёт по городу из настроек, а маршрут
+     * до названного места всё равно строится. Лишний запрос разрешения на ровном месте — обуза.
+     */
     override suspend fun findPlaces(query: String, limit: Int): List<PlaceCandidate> {
         val searcher = streetPlaces ?: return emptyList()
-        val point = runCatching { here() }.getOrNull()
+        val point = if (locator.hasCoarse()) runCatching { here() }.getOrNull() else null
         return searcher.search(query, city(), point, limit)
     }
 

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -66,15 +67,13 @@ import ai.nova.app.ui.components.bodySecondaryStyle
 import ai.nova.app.ui.theme.NovaSpace
 import ai.nova.app.ui.theme.amountStyle
 import ai.nova.app.ui.theme.amberColor
+import ai.nova.app.ui.theme.categoryColors
+import ai.nova.app.ui.theme.luminanceIsLight
 
-/**
- * Доли категорий в одной бирюзово-шалфейной гамме: цвет помогает различить категории,
- * но не превращает экран в радугу. Первые доли — самые тёмные, они же самые крупные.
- */
-private val palette = listOf(
-    Color(0xFF176F67), Color(0xFF238F83), Color(0xFF4C8C81), Color(0xFF6E9E92),
-    Color(0xFF8FB4A8), Color(0xFFAEC7BB), Color(0xFFC7D8CE), Color(0xFFDFE8E1),
-)
+/** На тёмной теме оттенки чуть светлее: иначе цвет доли пропадает на тёмном фоне. */
+@Composable
+private fun categoryShade(color: Color): Color =
+    if (MaterialTheme.colorScheme.background.luminanceIsLight()) color else androidx.compose.ui.graphics.lerp(color, Color.White, 0.3f)
 
 private val presets = listOf(
     PeriodPreset.TODAY to "Сегодня", PeriodPreset.LAST_7_DAYS to "7 дней", PeriodPreset.THIS_MONTH to "Месяц",
@@ -132,12 +131,19 @@ fun ExpensesScreen(c: AppContainer, openActions: () -> Unit = {}) {
         }
         item(key = "periods") { Pills(presets.map { it.second }, presetIndex, { presetIndex = it }, Modifier.padding(vertical = NovaSpace.l)) }
         if (report.byCategory.isNotEmpty() && report.totalMinor > 0) {
+            val colors = categoryColors(report.byCategory.map { it.category })
             item(key = "bar") {
                 // Одна полоса из долей категорий — компактнее десятка отдельных индикаторов.
-                Row(Modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen).height(10.dp).clip(RoundedCornerShape(5.dp))) {
+                // Между долями тонкий просвет: даже похожие оттенки видны как разные категории.
+                Row(Modifier.fillMaxWidth().padding(horizontal = NovaSpace.screen).height(12.dp)) {
                     report.byCategory.forEachIndexed { i, cat ->
                         val w = cat.amountMinor.toFloat() / report.totalMinor
-                        if (w > 0f) Box(Modifier.weight(w).height(10.dp).background(palette[i % palette.size]))
+                        if (w > 0f) Box(
+                            Modifier.weight(w).fillMaxHeight()
+                                .padding(end = if (i == report.byCategory.lastIndex) 0.dp else 2.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(categoryShade(colors.getValue(cat.category))),
+                        )
                     }
                 }
             }
@@ -148,7 +154,7 @@ fun ExpensesScreen(c: AppContainer, openActions: () -> Unit = {}) {
                         val share = (cat.amountMinor * 100 / report.totalMinor).toInt()
                         RowItem(
                             title = cat.category,
-                            leading = { Box(Modifier.size(12.dp).clip(CircleShape).background(palette[i % palette.size])) },
+                            leading = { Box(Modifier.size(12.dp).clip(CircleShape).background(categoryShade(colors.getValue(cat.category)))) },
                             trailing = {
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text(Money.format(cat.amountMinor, report.currency), style = MaterialTheme.typography.bodyLarge)
@@ -174,9 +180,10 @@ fun ExpensesScreen(c: AppContainer, openActions: () -> Unit = {}) {
                     Group {
                         items.forEachIndexed { i, e ->
                             if (i > 0) GroupDivider()
+                            val category = ExpenseCategories.normalize(e.category, e.description)
                             RowItem(
-                                title = e.description.ifBlank { e.category },
-                                subtitle = if (e.description.isNotBlank()) e.category else null,
+                                title = e.description.ifBlank { category },
+                                subtitle = if (e.description.isNotBlank()) category else null,
                                 onClick = { editing = e },
                                 trailing = { Text(Money.format(e.amountMinor, e.currency), style = MaterialTheme.typography.bodyLarge) },
                             )
@@ -211,7 +218,9 @@ private fun ExpenseEditor(
 ) {
     var amount by rememberSaveable { mutableStateOf(initial?.let { (it.amountMinor / 100.0).let { v -> if (v % 1.0 == 0.0) v.toLong().toString() else v.toString() } }.orEmpty()) }
     var description by rememberSaveable { mutableStateOf(initial?.description.orEmpty()) }
-    var category by rememberSaveable { mutableStateOf(initial?.category.orEmpty()) }
+    var category by rememberSaveable {
+        mutableStateOf(initial?.let { ExpenseCategories.normalize(it.category, it.description) }.orEmpty())
+    }
     var dayOffset by rememberSaveable { mutableIntStateOf(0) }
     var askDelete by remember { mutableStateOf(false) }
     val value = amount.replace(',', '.').replace(" ", "").toDoubleOrNull()

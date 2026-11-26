@@ -13,22 +13,29 @@ enum class MapsApp(val id: String, val title: String, val pkg: String, val web: 
      * Ссылка «построй маршрут»: приложение карт строит путь от текущего места до точки.
      *
      * Что проверено на телефоне:
-     *  • Google Карты понимают и координаты, и адрес словом: `google.navigation:q=…` сразу включает навигацию;
-     *  • 2ГИС по слову открывает список результатов, а маршрут строит только по координатам —
-     *    поэтому без координат у него остаётся поиск;
+     *  • Google Карты понимают и координаты, и слово: `google.navigation:q=…` сразу включает навигацию;
+     *  • 2ГИС строит маршрут своей ссылкой `dgis://…/routeSearch/rsType/<тип>/to/…`, причём по слову
+     *    («аптека») она ищет место сама — по своему справочнику, где есть и аптеки на первых этажах домов,
+     *    и точки внутри торговых центров;
      *  • у Яндекс Карт маршрут задаётся ссылкой с точками и типом поездки.
-     * Без координат (место не нашли) маршрут не построить — открываем поиск, чтобы человек увидел список.
+     *
+     * [walking] — пешком. До ближайшей аптеки или кафе идут, а до заправки едут.
      */
-    fun routeTo(lat: Double?, lon: Double?, text: String): String = when {
-        lat != null && lon != null -> when (this) {
-            GOOGLE -> "google.navigation:q=$lat,$lon"
-            TWOGIS -> "google.navigation:q=$lat,$lon"
-            YANDEX -> "https://yandex.ru/maps/?rtext=~$lat,$lon&rtt=auto"
+    fun routeTo(lat: Double?, lon: Double?, text: String, walking: Boolean = false): String {
+        val move = if (walking) "pedestrian" else "car"
+        return when {
+            lat != null && lon != null -> when (this) {
+                GOOGLE -> "google.navigation:q=$lat,$lon" + if (walking) "&mode=w" else ""
+                // 2ГИС ждёт «долгота,широта» — перепутанные координаты уводят маршрут в океан.
+                TWOGIS -> "dgis://2gis.ru/routeSearch/rsType/$move/to/$lon,$lat"
+                YANDEX -> "https://yandex.ru/maps/?rtext=~$lat,$lon&rtt=" + if (walking) "pd" else "auto"
+            }
+            // Google Карты строят маршрут и по названию — проверено: «навигация до аптеки» сразу включает путь.
+            this == GOOGLE -> "google.navigation:q=" + search(text) + if (walking) "&mode=w" else ""
+            // 2ГИС по слову строит маршрут сам: искать место и угадывать координаты Нове не нужно.
+            this == TWOGIS -> "dgis://2gis.ru/routeSearch/rsType/$move/to/" + search(text)
+            else -> web + search(text)
         }
-        // Google Карты строят маршрут и по названию — проверено: «навигация до аптеки» сразу включает путь.
-        this == GOOGLE -> "google.navigation:q=" + search(text)
-        this == TWOGIS -> "dgis://2gis.ru/search/" + search(text)
-        else -> web + search(text)
     }
 
     /** Маршрут в браузере — если приложения карт на телефоне нет. */

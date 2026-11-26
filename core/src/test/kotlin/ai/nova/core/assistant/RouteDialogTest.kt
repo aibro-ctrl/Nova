@@ -8,8 +8,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Маршрут голосом: Нова находит ближайшее место, строит путь до точки и умеет показать следующее
- * по «ещё». Без карт и интернета — на подставном телефоне: здесь важно поведение разговора.
+ * Маршрут голосом: вид места («аптека», «кафе») Нова отдаёт картам — у них полный справочник,
+ * а название и адрес находит сама и строит путь до точки. Без карт и интернета — на подставном
+ * телефоне: здесь важно поведение разговора.
  */
 class RouteDialogTest {
 
@@ -38,34 +39,88 @@ class RouteDialogTest {
     private fun place(name: String, meters: Int) =
         PlaceCandidate(name = name, address = "улица Ленина, 5", lat = 55.0 + meters / 100000.0, lon = 82.9, meters = meters)
 
+    /**
+     * «Аптека» — вид места: сначала смотрим, есть ли что-то совсем рядом. Ничего нет — слово
+     * уходит картам: их справочник полнее, там есть и аптека на первом этаже жилого дома.
+     */
     @Test
-    fun pharmacyGoesToTheNearestOne() = runTest {
+    fun nearestIsSearchedByTheMapsAppWhenNothingIsAround() = runTest {
         val device = FakeDevice()
-        device.found["аптека"] = listOf(place("Аптека Вита", 350), place("Магнит Аптека", 900), place("Аптека Плюс", 1500))
         val e = TestEnv(device = device)
 
         val reply = e.engine.handle("построй маршрут до аптеки").text
-        assertEquals(listOf("аптека"), device.searched)
-        assertEquals("Аптека Вита", device.routed.single().name)
-        assertTrue(reply.contains("Аптека Вита"), reply)
-        assertTrue(reply.contains("350 метров"), reply)
-        assertTrue(reply.contains("ещё", ignoreCase = true), reply)
+        assertEquals(listOf("аптека"), device.searched, "рядом проверяем один раз")
+        assertTrue(device.routed.isEmpty(), "точку не выдумываем: ${device.routed}")
+        val command = device.performed.filterIsInstance<DeviceCommand.Navigate>().single()
+        assertEquals("аптека", command.destination)
+        assertTrue(command.walking, "до аптеки идут пешком")
+        assertTrue(reply.contains("аптека"), reply)
     }
 
+    /** Аптека в двух шагах — ведём к ней по координатам: это точно ближайшая. */
     @Test
-    fun anotherOneOnEshyo() = runTest {
+    fun pharmacyAroundTheCornerIsRoutedByPoint() = runTest {
         val device = FakeDevice()
-        device.found["аптека"] = listOf(place("Аптека Вита", 350), place("Магнит Аптека", 900))
+        device.found["аптека"] = listOf(place("Аптека Вита", 90), place("Аптека на Ленина", 400))
+        val e = TestEnv(device = device)
+
+        val reply = e.engine.handle("построй маршрут до аптеки").text
+        assertEquals("Аптека Вита", device.routed.single().name)
+        assertTrue(device.performed.isEmpty(), "карты не нужны — точка рядом: ${device.performed}")
+        assertTrue(reply.contains("Аптека Вита"), reply)
+        assertTrue(reply.contains("90 метр"), reply)
+    }
+
+    /**
+     * У аптек порог строже: в открытой карте аптека на первом этаже дома часто не отмечена.
+     * Аптека в 150 метрах — уже повод спросить карты, а не вести в соседнее здание.
+     */
+    @Test
+    fun pharmacyBeyondAHundredMetersIsSearchedByMaps() = runTest {
+        val device = FakeDevice()
+        device.found["аптека"] = listOf(place("Сибирский лекарь", 150))
+        val e = TestEnv(device = device)
+
+        e.engine.handle("найди ближайшую аптеку")
+        assertTrue(device.routed.isEmpty(), "аптека в 150 м — сверяемся с картами: ${device.routed}")
+        assertEquals("аптека", device.performed.filterIsInstance<DeviceCommand.Navigate>().single().destination)
+    }
+
+    /** Дальше «совсем рядом» — отдаём слово картам: соседняя аптека может оказаться не ближайшей. */
+    @Test
+    fun farPharmacyIsSearchedByMaps() = runTest {
+        val device = FakeDevice()
+        device.found["аптека"] = listOf(place("Дальняя аптека", 900))
+        val e = TestEnv(device = device)
+
+        e.engine.handle("построй маршрут до аптеки")
+        assertTrue(device.routed.isEmpty(), "маршрут по точке не строим: ${device.routed}")
+        assertEquals("аптека", device.performed.filterIsInstance<DeviceCommand.Navigate>().single().destination)
+    }
+
+    /** До заправки и парковки едут: пеший маршрут до них бессмыслен. */
+    @Test
+    fun fuelAndParkingAreReachedByCar() = runTest {
+        val device = FakeDevice()
+        val e = TestEnv(device = device)
+
+        e.engine.handle("маршрут до заправки")
+
+        val command = device.performed.filterIsInstance<DeviceCommand.Navigate>().single()
+        assertEquals("заправка", command.destination)
+        assertEquals(false, command.walking)
+    }
+
+    /** «Ещё» после вида места: список всех аптек рядом — в самом приложении карт. */
+    @Test
+    fun eshyoPointsToTheMapsAppList() = runTest {
+        val device = FakeDevice()
         val e = TestEnv(device = device)
         e.engine.handle("маршрут до аптеки")
 
         val next = e.engine.handle("ещё").text
-        assertEquals(listOf("Аптека Вита", "Магнит Аптека"), device.routed.map { it.name })
-        assertTrue(next.contains("Магнит Аптека"), next)
-
-        // Места кончились — честно говорим и больше не ищем.
-        val last = e.engine.handle("ещё").text
-        assertTrue(last.contains("Больше мест"), last)
+        assertTrue(next.contains("карт"), next)
+        assertEquals(1, device.performed.size, "места не перелистываем повторно: ${device.performed}")
     }
 
     @Test
@@ -79,17 +134,21 @@ class RouteDialogTest {
         assertTrue(device.searched.isEmpty(), "до ответа ничего не ищем: ${device.searched}")
 
         val reply = e.engine.handle("хочу суши").text
-        assertEquals(listOf("суши-бар"), device.searched)
-        assertTrue(reply.contains("Суши Wok"), reply)
+        val command = device.performed.filterIsInstance<DeviceCommand.Navigate>().single()
+        assertEquals("суши-бар", command.destination)
+        assertTrue(command.walking, "до суши-бара идут пешком")
+        assertTrue(reply.contains("суши-бар"), reply)
     }
 
+    /** Название — не вид места: его Нова находит сама и ведёт по координатам. */
     @Test
     fun namedPlaceAsksNoQuestions() = runTest {
         val device = FakeDevice()
-        device.found["кафе"] = listOf(place("Кафе Пушкин", 400))
+        device.found["Пушкин"] = listOf(place("Кафе Пушкин", 400))
         val e = TestEnv(device = device)
 
-        val reply = e.engine.handle("построй маршрут до кафе").text
+        val reply = e.engine.handle("построй маршрут до Пушкин").text
+        assertEquals("Кафе Пушкин", device.routed.single().name)
         assertTrue(reply.contains("Кафе Пушкин"), reply)
     }
 
@@ -119,15 +178,13 @@ class RouteDialogTest {
     @Test
     fun refusalCancelsTheOffer() = runTest {
         val device = FakeDevice()
-        device.found["аптека"] = listOf(place("Аптека Вита", 350), place("Магнит Аптека", 900))
         val e = TestEnv(device = device)
         e.engine.handle("маршрут до аптеки")
 
         val reply = e.engine.handle("нет, спасибо").text
         assertTrue(reply.contains("не строю"), reply)
-        assertEquals(1, device.routed.size)
-
-        // После отказа «ещё» — уже обычная фраза, а не продолжение маршрута.
-        assertNull(device.performed.lastOrNull() as? DeviceCommand.Navigate)
+        // После отказа маршрут второй раз не открываем и «ещё» уже не про места.
+        assertEquals(1, device.performed.size, "лишние команды: ${device.performed}")
+        assertNull(device.routed.firstOrNull())
     }
 }

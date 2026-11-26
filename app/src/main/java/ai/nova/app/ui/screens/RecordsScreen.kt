@@ -70,8 +70,19 @@ import java.util.Locale
 
 private val dateFmt = DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale("ru")).withZone(ZoneId.systemDefault())
 
-private val memoryCategories = listOf("other" to "Разное", "preference" to "Предпочтение", "fact" to "Факт", "goal" to "Цель", "person" to "Люди")
-private fun categoryRu(c: String) = memoryCategories.firstOrNull { it.first == c }?.second ?: "Разное"
+private val memoryCategories = listOf(
+    "other" to "Разное", "preference" to "Предпочтение", "fact" to "Факт", "goal" to "Цель", "person" to "Люди",
+    // Категории, которые Нова пишет сама: иначе они показывались как «Разное».
+    "покупки" to "Покупки", "Даты" to "Даты", "Сроки" to "Сроки", "Цели" to "Цели",
+    "Вещи" to "Вещи", "Долги" to "Долги", "Карточки" to "Карточки", "Подписки" to "Подписки",
+)
+private fun categoryRu(c: String) = memoryCategories.firstOrNull { it.first.equals(c, ignoreCase = true) }?.second ?: c.ifBlank { "Разное" }
+
+/** Категории, которые человек выбирает в редакторе памяти. */
+private val editableCategories = memoryCategories.filter { it.first in setOf("other", "preference", "fact", "goal", "person", "покупки") }
+
+/** Запись памяти без служебных строк: старые версии сохраняли факты покупок как код. */
+private fun memoryText(content: String) = ai.nova.core.shopping.ShoppingFact.readable(content)
 
 /** Вкладка «Записи»: заметки, идеи и то, что ассистент помнит о пользователе, плюс поиск по смыслу. */
 @Composable
@@ -196,7 +207,7 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
                     Group {
                         memories.forEachIndexed { i, m ->
                             if (i > 0) GroupDivider()
-                            RowItem(title = m.content, subtitle = categoryRu(m.category), onClick = { editMemory = m })
+                            RowItem(title = memoryText(m.content), subtitle = categoryRu(m.category), onClick = { editMemory = m })
                         }
                     }
                 }
@@ -259,12 +270,17 @@ private fun NoteEditor(initial: Note?, kind: NoteKind, onDismiss: () -> Unit, on
 
 @Composable
 private fun MemoryEditor(initial: MemoryItem?, onDismiss: () -> Unit, onSave: (String, String) -> Unit, onDelete: () -> Unit) {
-    var text by rememberSaveable { mutableStateOf(initial?.content.orEmpty()) }
+    var text by rememberSaveable { mutableStateOf(initial?.let { memoryText(it.content) }.orEmpty()) }
     var category by rememberSaveable { mutableStateOf(initial?.category ?: "other") }
     var askDelete by remember { mutableStateOf(false) }
+    // В редакторе — только те категории, что человек выбирает сам; служебные Нова пишет сама.
+    val choices = remember(initial?.category) {
+        val base = editableCategories
+        if (base.any { it.first.equals(category, true) }) base else base + (category to categoryRu(category))
+    }
     EditorSheet(if (initial == null) "Запомнить" else "Память", onDismiss) {
         NovaField(text, { text = it }, "Что запомнить", singleLine = false, minLines = 2)
-        Pills(memoryCategories.map { it.second }, memoryCategories.indexOfFirst { it.first == category }.coerceAtLeast(0), { category = memoryCategories[it].first })
+        Pills(choices.map { it.second }, choices.indexOfFirst { it.first == category }.coerceAtLeast(0), { category = choices[it].first })
         Spacer(Modifier.height(4.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             if (initial != null) SecondaryButton("Забыть", { askDelete = true }, danger = true)

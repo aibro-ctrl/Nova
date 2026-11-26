@@ -323,11 +323,18 @@ class AndroidSkillHost(
 
     private fun installed(pkg: String): Boolean = runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
 
-    override suspend fun ringPhone(): Boolean = RingService.start(context, "Я здесь!", "Нова ищет телефон. Коснитесь, чтобы остановить.", loud = true)
+    override suspend fun ringPhone(): Boolean = RingService.start(context, "Я здесь!", "Нова ищет телефон. Коснитесь, чтобы остановить.", loud = true, flash = true)
 
     override fun timers(): List<ActiveTimer> = timers.all()
     override fun cancelTimers(label: String?): Int = timers.cancel(label)
     override fun cancelTimer(id: String): Boolean = timers.cancelOne(id)
+    override fun extendTimer(id: String, seconds: Int): ActiveTimer? = timers.extend(id, seconds)
+
+    override fun stopRing(): Boolean {
+        val ringing = RingService.isRinging()
+        if (ringing) RingService.stop(context)
+        return ringing
+    }
 
     override suspend fun savePlace(name: String): SavedPlace? {
         if (!locator.hasFine() && !permissions.ensure(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) {

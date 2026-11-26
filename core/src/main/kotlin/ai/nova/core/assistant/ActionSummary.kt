@@ -36,7 +36,11 @@ object ActionSummary {
         is DeviceCommand.Call -> "звонок: ${short(command.who)}"
         is DeviceCommand.Message -> "сообщение: ${short(command.who)}"
         is DeviceCommand.Timer -> "таймер на ${command.seconds / 60} мин"
-        is DeviceCommand.Alarm -> "будильник на ${command.time}"
+        is DeviceCommand.Alarm -> "будильник на ${command.time}" + DevicePhrases.daysText(command.days).let { if (it.isEmpty()) "" else ", $it" }
+        DeviceCommand.AlarmsLeft -> "список будильников"
+        is DeviceCommand.AlarmOff -> if (command.all) "выключение будильников" else "выключение будильника"
+        is DeviceCommand.AlarmSnooze -> "будильник отложен на ${command.minutes} мин"
+        DeviceCommand.Silence -> "сигнал выключен"
         is DeviceCommand.OpenUrl -> "открыла ссылку"
         is DeviceCommand.Share -> "поделилась в ${short(command.app)}"
         is DeviceCommand.UndoDevice -> "отмена последнего действия"

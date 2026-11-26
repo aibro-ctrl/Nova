@@ -30,6 +30,91 @@ class DeviceCommandsTest {
         assertEquals(DeviceCommand.Timer(45), device("таймер 45 секунд"))
     }
 
+    @Test fun alarmOnNamedDays() {
+        assertEquals(
+            DeviceCommand.Alarm(LocalTime.of(9, 0), days = setOf(DayOfWeek.SUNDAY)),
+            device("будильник на воскресенье в 9"),
+        )
+        assertEquals(
+            DeviceCommand.Alarm(LocalTime.of(6, 30), days = setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)),
+            device("будильник на 6:30 с понедельника по пятницу"),
+        )
+        assertEquals(
+            DeviceCommand.Alarm(LocalTime.of(7, 0), days = setOf(DayOfWeek.TUESDAY, DayOfWeek.THURSDAY)),
+            device("будильник на 7 по вторникам и четвергам"),
+        )
+        assertEquals(
+            DeviceCommand.Alarm(LocalTime.of(10, 0), days = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)),
+            device("разбуди в 10 по выходным"),
+        )
+        assertEquals(
+            DeviceCommand.Alarm(LocalTime.of(8, 0), days = DayOfWeek.entries.toSet()),
+            device("будильник в 8 каждый день"),
+        )
+        // Обычный день недели в другом смысле не должен превращаться в повтор.
+        assertNull(device("будильник на 7 утра")?.let { (it as DeviceCommand.Alarm).days.takeIf { d -> d.isNotEmpty() } })
+    }
+
+    @Test fun alarmWithoutTimeAsksBack() = runTest {
+        val commands = mutableListOf<DeviceCommand>()
+        val e = TestEnv(device = object : DeviceController {
+            override suspend fun perform(command: DeviceCommand): DeviceResult {
+                commands += command
+                return DeviceResult("ок")
+            }
+        })
+        val ask = e.engine.handle("будильник на воскресенье")
+        assertTrue(ask.text.contains("Во сколько поставить будильник по воскресеньям"), ask.text)
+        // Ответ «в 9» дозаполняет день и ставит будильник, а не заводит напоминание.
+        e.engine.handle("в 9")
+        assertEquals(listOf<DeviceCommand>(DeviceCommand.Alarm(LocalTime.of(9, 0), days = setOf(DayOfWeek.SUNDAY))), commands)
+    }
+
+    @Test fun alarmsListOffAndSnooze() {
+        assertEquals(DeviceCommand.AlarmsLeft, device("какие у меня будильники"))
+        assertEquals(DeviceCommand.AlarmsLeft, device("сколько будильников включено"))
+        assertEquals(DeviceCommand.AlarmsLeft, device("мои будильники"))
+        assertEquals(DeviceCommand.AlarmOff(), device("выключи будильник"))
+        assertEquals(DeviceCommand.AlarmOff(LocalTime.of(7, 0)), device("выключи будильник на 7"))
+        assertEquals(DeviceCommand.AlarmOff(all = true), device("убери все будильники"))
+        assertEquals(DeviceCommand.AlarmOff(all = true, delete = true), device("удали все будильники"))
+        assertEquals(DeviceCommand.AlarmOff(LocalTime.of(7, 0), delete = true), device("удали будильник на 7"))
+
+        // «Стоп» глушит сигнал, «стоп будильник» — выключает будильник, «тише» — громкость.
+        assertEquals(DeviceCommand.Silence, device("стоп"))
+        assertEquals(DeviceCommand.Silence, device("замолчи"))
+        assertEquals(DeviceCommand.Silence, device("выключи сигнал"))
+        assertTrue(device("стоп будильник") is DeviceCommand.AlarmOff)
+        assertTrue(device("тише") is DeviceCommand.Volume)
+        assertEquals(DeviceCommand.AlarmSnooze(5), device("ещё 5 минут"))
+        assertEquals(DeviceCommand.AlarmSnooze(5), device("еще пять минут"))
+        assertEquals(DeviceCommand.AlarmSnooze(30), device("повтори через 30 минут"))
+        assertEquals(DeviceCommand.AlarmSnooze(10), device("отложи будильник на 10 минут"))
+        assertEquals(DeviceCommand.AlarmSnooze(15), device("дай поспать ещё 15 минут"))
+        // Не будильник: обычная просьба повторить песню.
+        assertNull(device("повтори песню"))
+    }
+
+    @Test fun alarmsTextIsHumanReadable() {
+        assertEquals("Включённых будильников нет. Скажите, например: «будильник на 7 утра».", DevicePhrases.alarmsText(emptyList()))
+        assertEquals("по будням", DevicePhrases.daysText(setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)))
+        assertEquals("каждый день", DevicePhrases.daysText(DayOfWeek.entries.toSet()))
+        val one = DevicePhrases.alarmsText(
+            listOf(
+                ActiveAlarm(LocalTime.of(7, 0), setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)),
+                ActiveAlarm(LocalTime.of(10, 30), setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY), enabled = false),
+            ),
+        )
+        assertEquals("Сейчас 1 включённый будильник: 07:00, по будням.", one)
+        val two = DevicePhrases.alarmsText(
+            listOf(
+                ActiveAlarm(LocalTime.of(7, 0), setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)),
+                ActiveAlarm(LocalTime.of(10, 30), setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)),
+            ),
+        )
+        assertEquals("Сейчас 2 включённых будильника: 07:00, по будням и 10:30, по выходным.", two)
+    }
+
     @Test fun alarms() {
         assertEquals(DeviceCommand.Alarm(LocalTime.of(7, 0)), device("разбуди меня в 7"))
         assertEquals(DeviceCommand.Alarm(LocalTime.of(6, 30)), device("поставь будильник на 6:30"))

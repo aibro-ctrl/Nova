@@ -44,7 +44,23 @@ data class AssistantSettings(
     val lockPolicy: LockPolicy? = null,
     /** Характер: заботливая, деловая, шутливая. */
     val persona: Persona = Persona.CARING,
-)
+    /** Новости: мир целиком, своя страна или выбранный город. */
+    val newsScope: ai.nova.core.skills.NewsScope = ai.nova.core.skills.NewsScope.WORLD,
+    /** Город для новостей (если выбран регион «Город»). */
+    val newsCity: String? = null,
+    /** Код страны для ленты новостей: RU, KZ, BY… */
+    val newsCountry: String = "RU",
+    /** Рубрики новостей: sport, tech, science, economy, culture, health, main. */
+    val newsTopics: List<ai.nova.core.skills.NewsTopic> = listOf(ai.nova.core.skills.NewsTopic.MAIN),
+) {
+    /** Что и как показывать в новостях — из настроек. */
+    fun newsQuery() = ai.nova.core.skills.NewsQuery(
+        scope = newsScope,
+        city = newsCity,
+        country = newsCountry.ifBlank { "RU" },
+        topics = newsTopics.ifEmpty { listOf(ai.nova.core.skills.NewsTopic.MAIN) },
+    )
+}
 
 /** Ответ ассистента для UI и голоса. */
 data class AssistantReply(
@@ -1280,8 +1296,10 @@ class AssistantEngine(
      */
     private suspend fun deviceFirst(text: String, cfg: AssistantSettings): AssistantReply? {
         val plan = runCatching { localParser.parse(text, time.now(), time.zone()) }.getOrNull() ?: return null
-        if (plan.slot != null) return null
-        if (plan.actions.isEmpty() || plan.actions.any { it !is AssistantAction.Device }) return null
+        // «Будильник на воскресенье» — спросить время лучше локально: ответ предсказуем и не зависит от модели.
+        if (plan.slot != null && plan.slot !is SlotRequest.AlarmTime) return null
+        if (plan.actions.isEmpty() && plan.slot == null) return null
+        if (plan.actions.any { it !is AssistantAction.Device }) return null
         return execute(plan, usedAI = false, offline = cfg.useAI, name = cfg.assistantName)
     }
 
@@ -1608,10 +1626,27 @@ class AssistantEngine(
         return full
     }
 
-    private suspend fun runCommands(routine: ai.nova.core.model.Routine, cfg: AssistantSettings): AssistantReply {
+    /** Сколько всего времени даётся сценарию: длиннее — человек уже не слушает, а шаги терялись бы все. */
+    private val ROUTINE_BUDGET: java.time.Duration = java.time.Duration.ofSeconds(60)
+
+    /**
+     * Выполняет шаги сценария. Бюджет времени проверяется между шагами: если сценарий уже слишком долгий,
+     * оставшиеся шаги помечаются пропущенными, но ответ всё равно доходит до человека целиком.
+     */
+    private suspend fun runCommands(
+        routine: ai.nova.core.model.Routine,
+        cfg: AssistantSettings,
+        budget: java.time.Duration = ROUTINE_BUDGET,
+    ): AssistantReply {
         val replies = ArrayList<String>()
         var changed = false
+        val deadline = System.currentTimeMillis() + budget.toMillis()
         for (cmd in routine.commands.take(10)) {
+            val left = deadline - System.currentTimeMillis()
+            if (left < 1_000) {
+                replies += "Не успела: $cmd"
+                continue
+            }
             routineDepth++
             val r = try {
                 process(cmd, cfg)

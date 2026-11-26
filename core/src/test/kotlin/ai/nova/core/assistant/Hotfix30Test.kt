@@ -71,18 +71,18 @@ class Hotfix30Test {
 
     @Test
     fun placeNameWithoutKindWords() {
-        assertEquals("галерея", Places.name("торгового центра Галерея"))
+        assertEquals("Галерея", Places.name("торгового центра Галерея"))
         assertNull(Places.name("аптека"))
         assertNull(Places.name("ближайший торговый центр"))
         // Предлог в остатке — значит, фразу только описывают, а не называют: маршрут строим по ней целиком.
         assertNull(Places.name("аптека на ленина"))
         assertNull(Places.name("кафе в парке"))
         assertEquals(
-            listOf("галерея Новосибирск", "торгового центра Галерея"),
+            listOf("Галерея Новосибирск", "торгового центра Галерея"),
             Places.searchQueries("торгового центра Галерея", "Новосибирск"),
         )
         // Города нет — сначала название, потом фраза как сказали.
-        assertEquals(listOf("галерея", "торгового центра Галерея"), Places.searchQueries("торгового центра Галерея", null))
+        assertEquals(listOf("Галерея", "торгового центра Галерея"), Places.searchQueries("торгового центра Галерея", null))
     }
 
     @Test
@@ -91,19 +91,23 @@ class Hotfix30Test {
         val e = env(device)
         e.engine.handle("построй маршрут до торгового центра Галерея")
 
-        // В справочник уходит фраза как сказали: варианты с названием собирает поиск мест.
-        assertEquals("торгового центра Галерея", device.searched.single())
-        // Не нашли точку — карты получают название без слов-типов, а не фразу целиком.
+        // Рядом ничего нет — место ищут карты, и получают название без слов-типов:
+        // «галерея», а не фразу целиком.
+        assertEquals(listOf("торгового центра Галерея"), device.searched)
         val nav = device.performed.filterIsInstance<DeviceCommand.Navigate>().single()
-        assertEquals("галерея", nav.destination)
+        assertEquals("Галерея", nav.destination)
     }
 
+    /** «Аптека» без уточнений — вид места: рядом пусто, значит слово уходит картам. */
     @Test
-    fun plainPharmacyStillSearchedAsBefore() = runTest {
+    fun plainPharmacyGoesToMaps() = runTest {
         val device = NoPlaces()
         val e = env(device)
         e.engine.handle("построй маршрут до аптеки")
-        assertEquals("аптека", device.searched.single())
-        assertEquals("аптека", device.performed.filterIsInstance<DeviceCommand.Navigate>().single().destination)
+        // Сначала смотрим, что есть совсем рядом, — и только потом отдаём слово картам.
+        assertEquals(listOf("аптека"), device.searched)
+        val nav = device.performed.filterIsInstance<DeviceCommand.Navigate>().single()
+        assertEquals("аптека", nav.destination)
+        assertTrue(nav.walking, "до аптеки идут пешком")
     }
 }

@@ -16,8 +16,13 @@ import java.time.temporal.TemporalAdjusters
 sealed interface SkillCommand {
     data class Weather(val query: WeatherQuery) : SkillCommand
     data class Rates(val query: RatesQuery) : SkillCommand
-    data class News(val topic: NewsTopic) : SkillCommand
-    data class NewsDetails(val index: Int) : SkillCommand
+    /**
+     * Новости: [topic] — рубрика, названная человеком; [about] — тема своими словами
+     * («видеоигры», «недвижимость», «пк»), по ней ищем отдельно и не подменяем выбором из настроек.
+     */
+    data class News(val topic: NewsTopic? = null, val about: String? = null) : SkillCommand
+    /** Подробности: [index] — номер в последней ленте, [about] — слова из заголовка. */
+    data class NewsDetails(val index: Int? = null, val about: String? = null) : SkillCommand
     data class Fact(val query: String) : SkillCommand
     /** «Найди рецепт борща и запиши в заметки»: [save] — положить найденное в заметки, [recipe] — раздел о приготовлении. */
     data class FindArticle(val query: String, val save: Boolean = false, val recipe: Boolean = false) : SkillCommand
@@ -41,6 +46,8 @@ sealed interface SkillCommand {
     data object WhereAmI : SkillCommand
     data object TimersLeft : SkillCommand
     data class TimersCancel(val label: String?) : SkillCommand
+    /** «Продли таймер на 2 минуты»: [seconds] — на сколько продлить. */
+    data class TimersExtend(val seconds: Int) : SkillCommand
     data class SavePlace(val name: String) : SkillCommand
     data class PlaceRemind(val text: String, val place: String, val onLeave: Boolean) : SkillCommand
     data object ListPlaces : SkillCommand
@@ -86,6 +93,8 @@ object SkillPhrases {
         places(t, text)?.let { return it }
         shopping(t, text)?.let { return it }
         find(t)?.let { return it }
+        // «Добавь 3 минуты к таймеру» — это продление, а не запись; проверяем до записи.
+        if (rx("""^добавь\b.*\bтаймер""").containsMatchIn(t)) timersExtend(t)?.let { return it }
         if (RECORD_VERB.containsMatchIn(t)) return null
         if (money) finance(t)?.let { return it }
         // Явный поиск в интернете — это команда телефону, а не вопрос навыку.
@@ -355,26 +364,117 @@ object SkillPhrases {
     // ------------------------------------------------------------------ Новости
 
     private val NEWS = rx(
-        """^(?:а\s+)?(?:(?:расскажи|прочитай|почитай|покажи|включи|какие|скажи|озвучь|давай)\s+)?(?:мне\s+)?(?:последние\s+|свежие\s+|главные\s+|сегодняшние\s+|самые\s+важные\s+)?новост|^что\s+нового(?:\s+в\s+мире|\s+в\s+стране|\s+в\s+спорте|\s+в\s+науке|\s+в\s+экономике|\s+в\s+технологиях)?$|^что\s+(?:сейчас\s+)?происходит\s+в\s+мире|^что\s+(?:сейчас\s+|сегодня\s+)?(?:пишут|говорят)\s+в\s+новост|^(?:че|чё|что)\s+(?:там\s+)?нового(?:\s+в\s+мире|\s+в\s+стране)?$|^есть\s+(?:какие-нибудь\s+|свежие\s+)?новости(?!\s+(?:от|из|у)\s)|^что\s+(?:сегодня\s+|сейчас\s+)?в\s+новостях""",
+        """^(?:а\s+)?(?:(?:расскажи|прочитай|почитай|покажи|включи|какие|скажи|озвучь|давай)\s+)?(?:мне\s+)?(?:последние\s+|свежие\s+|главные\s+|сегодняшние\s+|самые\s+важные\s+)?новост|^что\s+нового(?:\s+(?:в|во|про|о|об|насчёт|насчет|по)\s+.+)?$|^что\s+(?:сейчас\s+)?происходит\s+в\s+мире|^что\s+(?:сейчас\s+|сегодня\s+)?(?:пишут|говорят)\s+в\s+новост|^(?:че|чё|что)\s+(?:там\s+)?(?:нового|слышно|пишут|говорят)(?:\s+(?:нового|новенького|интересного|свежего))?(?:\s+(?:в|во|про|о|об|насчёт|насчет|по)\s+.+)?$|^есть\s+(?:какие-нибудь\s+|свежие\s+)?новости(?!\s+(?:от|из|у)\s)|^что\s+(?:сегодня\s+|сейчас\s+)?в\s+новостях""",
     )
 
     fun news(t: String): SkillCommand? {
-        if (rx("""^(?:подробнее|расскажи подробнее|открой\s+(?:эту\s+|первую\s+|вторую\s+|третью\s+|четвертую\s+|пятую\s+)?новость)$""").containsMatchIn(t)) {
-            val idx = when {
-                t.contains("втор") -> 1; t.contains("трет") -> 2; t.contains("четв") -> 3; t.contains("пят") -> 4
-                else -> 0
-            }
-            return SkillCommand.NewsDetails(idx)
-        }
+        newsDetails(t)?.let { return it }
+        newsByOrdinal(t)?.let { return it }
         if (!NEWS.containsMatchIn(t)) return null
-        val topic = when {
-            rx("""спорт|футбол|хоккей""").containsMatchIn(t) -> NewsTopic.SPORT
-            rx("""технолог|айти|\bit\b|гаджет|компьютер""").containsMatchIn(t) -> NewsTopic.TECH
-            rx("""наук|техник|космос""").containsMatchIn(t) -> NewsTopic.SCIENCE
-            rx("""эконом|финанс|бизнес|рынк""").containsMatchIn(t) -> NewsTopic.ECONOMY
-            else -> NewsTopic.MAIN
+        // Конкретика важнее выбора в настройках: «новости про недвижимость» — это поиск по теме.
+        val about = newsAbout(t)
+        // Рубрику человек может назвать сам — она важнее выбранной в настройках.
+        return SkillCommand.News(if (about == null) topicOf(t) else null, about)
+    }
+
+    /**
+     * Уточнение темы после прочитанной ленты: «а про недвижимость?», «а спорт?».
+     * null — темы в фразе нет.
+     */
+    fun newsFollowUp(t: String): SkillCommand.News? {
+        val about = newsAbout("новости $t")
+        val topic = if (about == null) topicOf(t) else null
+        if (about == null && topic == null) return null
+        return SkillCommand.News(topic, about)
+    }
+
+    /** Хвост фразы после слова «новости» / «что нового». */
+    private val NEWS_ANCHOR = Regex("""(?:новост\p{L}*|что\s+нового|что\s+слышно|что\s+происходит|что\s+там)""")
+
+    /** Связки перед темой: «про», «о», «в мире», «по теме», «в сфере». */
+    private val NEWS_LEAD = Regex(
+        """(?:(?:в|во)\s+(?:мире|стране|россии|нашей\s+стране)|нового|новенького|интересного|свежего|новостей|новости|новость|""" +
+            """про|о|об|обо|насчёт|насчет|касательно|для|по\s+теме|по\s+поводу|в\s+сфере|в\s+области|в\s+теме|на\s+тему|по)\s+""",
+    )
+
+    /**
+     * Тема новостей своими словами: «новости в мире видеоигр» → «видеоигр»,
+     * «что нового про пк» → «пк». null — тема не названа, работаем по настройкам.
+     */
+    private fun newsAbout(t: String): String? {
+        val anchor = NEWS_ANCHOR.find(t) ?: return null
+        var tail = t.substring(anchor.range.last + 1).trim().trim(',', '.', ':', ';', '!', '?')
+        // «за неделю», «на сегодня» — это период, а не тема.
+        if (rx("""^(?:за|на|в)?\s*(?:неделю|месяц|день|сутки|выходные|сегодня|вчера|год|час)$""").containsMatchIn(tail)) return null
+        tail = tail.replace(Regex("""\s+(?:сегодня|сейчас|пожалуйста|за\s+сегодня|на\s+сегодня|за\s+неделю|за\s+месяц)\s*$"""), "").trim()
+        // «новости в мире», «новости в стране» — это регион: его обрабатывает topicOf, а не поиск.
+        if (rx("""^(?:в|во)\s+(?:мире|стране|россии|нашей\s+стране)$""").containsMatchIn(tail)) return null
+        // Связки идут подряд: «что нового про новости спорта» → «спорта».
+        repeat(3) { tail = tail.replaceFirst(NEWS_LEAD, "").trim() }
+        if (tail.isEmpty() || tail.length < 2) return null
+        // «новости в мире», «новости спорта», «новости России» — регион и рубрики, а не тема.
+        if (rx("""^(?:мир\p{L}*|стран\p{L}*|росси\p{L}*|рф|спорт\p{L}*|наук\p{L}*|эконом\p{L}*|технолог\p{L}*|культур\p{L}*|здоров\p{L}*|главн\p{L}*|важн\p{L}*|всё|все|вообще|интересн\p{L}*)$""").containsMatchIn(tail)) return null
+        if (tail.split(' ').size > 6) return null
+        // Названная тема — известная рубрика («новости про космос») — лучше рубрикой.
+        if (tail.split(' ').size == 1 && topicOf(tail) != null) return null
+        return tail
+    }
+
+    /** «Новости спорта», «что в экономике» — рубрика из фразы; null — «просто новости». */
+    private fun topicOf(t: String): NewsTopic? = when {
+        rx("""спорт|футбол|хоккей""").containsMatchIn(t) -> NewsTopic.SPORT
+        rx("""технолог|айти|\bit\b|гаджет|компьютер""").containsMatchIn(t) -> NewsTopic.TECH
+        rx("""наук|космос""").containsMatchIn(t) -> NewsTopic.SCIENCE
+        rx("""эконом|финанс|бизнес|рынк""").containsMatchIn(t) -> NewsTopic.ECONOMY
+        rx("""культур|кино|театр|концерт""").containsMatchIn(t) -> NewsTopic.CULTURE
+        rx("""здоров|медицин|врач""").containsMatchIn(t) -> NewsTopic.HEALTH
+        // «Новости мира», «что в мире», «новости страны», «что в стране» — это регион, а не рубрика.
+        rx("""\bв мире\b|\bмир(?:а|е)\b""").containsMatchIn(t) -> NewsTopic.WORLD
+        rx("""\bв стране\b|\bстран(?:а|е|ы)\b|\bросси""").containsMatchIn(t) -> NewsTopic.COUNTRY
+        else -> null
+    }
+
+    private val NEWS_ORDINALS = listOf("перв", "втор", "трет", "четверт", "пят", "шест", "седьм", "восьм", "девят", "десят")
+
+    /** Номер новости в последней ленте: «вторая», «про третью», «новость номер 4». */
+    private fun newsIndex(t: String): Int? {
+        Regex("""(?:новост\p{L}*\s*(?:номер|№)\s*|№\s*)(\d{1,2})""").find(t)?.let { m ->
+            return (m.groupValues[1].toIntOrNull() ?: 0).takeIf { it in 1..10 }?.minus(1)
         }
-        return SkillCommand.News(topic)
+        NEWS_ORDINALS.forEachIndexed { i, stem ->
+            // «о второй» — номер без слова «новость»; иначе порядочное слово ищем только рядом с новостями.
+            val ordinal = rx("""\b$stem\p{L}*(?:\s+новост\p{L}*)?\b""").containsMatchIn(t)
+            if (ordinal && (t.contains("новост") || t.trim().split(' ').size == 1)) return i
+        }
+        return null
+    }
+
+    /**
+     * «Подробнее», «расскажи подробнее о второй», «про что третья новость», «про новость о сухогрузе».
+     * Возвращает null, если фраза не про новости — тогда её разберут другие навыки.
+     */
+    private fun newsDetails(t: String): SkillCommand? {
+        val asksMore = rx("""^(?:расскажи\s+|а\s+)?(?:подробнее|поподробнее|подробней|полностью|целиком)(?:\s+расскажи)?$""").containsMatchIn(t)
+        if (asksMore) return SkillCommand.NewsDetails(0)
+        // «подробнее о второй», «подробнее про сухогруз» — всегда про новости.
+        val aboutMore = rx("""^(?:расскажи\s+|а\s+)?(?:подробнее|поподробнее|подробней)\s+(?:о|об|про)\s+(.+)$""")
+        // «расскажи про вторую новость», «что там про сухогруз в новостях» — только если речь о новостях.
+        val about = rx("""^(?:расскажи|прочитай|открой|покажи|что\s+там)\s+(?:мне\s+)?(?:подробнее\s+|поподробнее\s+)?(?:о|об|про)\s+(.+)$""")
+        val subject = (aboutMore.find(t)?.groupValues?.get(1)
+            ?: about.find(t)?.groupValues?.get(1)?.takeIf { it.contains("новост") })
+            ?.trim()?.trim('?', '.', ',') ?: return null
+        if (subject.isEmpty()) return null
+        newsIndex(subject)?.let { return SkillCommand.NewsDetails(it) }
+        // «про новость», «про новости» — первая в ленте; иначе ищем по словам заголовка.
+        if (rx("""^(?:о|об|про)?\s*новост\p{L}*(?:\s+номер\s*\d+)?$""").containsMatchIn(subject)) return SkillCommand.NewsDetails(0)
+        return SkillCommand.NewsDetails(about = subject)
+    }
+
+    /** Номер новости без слова «подробнее»: «третья новость», «новость номер 4». */
+    private fun newsByOrdinal(t: String): SkillCommand? {
+        // «Третья новость» — номер без слова «подробнее»; короткая фраза, чтобы не перехватывать лишнее.
+        if (!t.contains("новост") || t.trim().split(' ').size > 4) return null
+        return newsIndex(t)?.let { SkillCommand.NewsDetails(it) }
     }
 
     // ------------------------------------------------------------------ Факты (Википедия)
@@ -589,7 +689,30 @@ object SkillPhrases {
         rx("""^(?:отмени|выключи|останови|сбрось|удали|убери|отключи)\s+(?:все\s+)?таймер(?:ы|а)?(?:\s+(?:на\s+)?(.+))?$""").find(t)?.let { m ->
             return SkillCommand.TimersCancel(m.groupValues[1].trim().takeIf { it.isNotBlank() && it != "все" })
         }
+        timersExtend(t)?.let { return it }
         return null
+    }
+
+    /**
+     * «Продли таймер на 2 минуты», «продли ещё на 10 минут», «добавь 3 минуты к таймеру».
+     * Без числа — пять минут. «Добавь таймер на 5 минут» — это новый таймер, не продление.
+     */
+    private fun timersExtend(t: String): SkillCommand.TimersExtend? {
+        val verb = rx("""^(?:продли|продлить|продлевай|продлеваешь|докинь|прибавь|добавь)\b""")
+        if (!verb.containsMatchIn(t)) return null
+        // Без слова «таймер» продление понимаем только по «продли…»: иначе «прибавь громкость»
+        // и «добавь таймер на 5 минут» уедут не туда.
+        val prolong = rx("""^продли""").containsMatchIn(t)
+        // «Добавь/прибавь/докинь … к таймеру» — продление; «добавь таймер» и «прибавь громкость» — нет.
+        val addTo = rx("""^(?:добавь|прибавь|докинь)\b""").containsMatchIn(t) && t.contains("таймеру")
+        if (!prolong && !addTo) return null
+        val rest = t
+            .replace(verb, " ")
+            .replace(rx("""\bтаймер\p{L}*"""), " ")
+            .replace(rx("""\b(?:на|к|ещё|еще|время|чуть|немного|пожалуйста)\b"""), " ")
+            .replace(Regex("""\s+"""), " ").trim()
+        val seconds = DevicePhrases.duration(rest) ?: return SkillCommand.TimersExtend(300)
+        return seconds.takeIf { it in 1..86_400 }?.let { SkillCommand.TimersExtend(it) }
     }
 
     // ------------------------------------------------------------------ Места

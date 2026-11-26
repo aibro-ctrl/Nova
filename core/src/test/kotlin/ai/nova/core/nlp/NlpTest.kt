@@ -164,6 +164,25 @@ class ExpenseCategoriesTest {
         assertEquals("Хобби", ExpenseCategories.normalize("хобби"))
     }
 
+    /**
+     * Номер карты вместо категории: раньше «Sber 8013» из пуша банка сохранялся как категория
+     * и висел отдельной строкой в статистике. Теперь категорию подсказывает описание траты.
+     */
+    @Test fun cardNumberIsNotACategory() {
+        assertEquals("Продукты", ExpenseCategories.normalize("Sber 8013", "Пятёрочка"))
+        assertEquals("Транспорт", ExpenseCategories.normalize("Карта ••1234", "такси до дома"))
+        assertEquals(ExpenseCategories.OTHER, ExpenseCategories.normalize("sber 8013"))
+        assertEquals(ExpenseCategories.OTHER, ExpenseCategories.normalize("Сбер"))
+        assertEquals("Здоровье", ExpenseCategories.normalize("Счёт 40817810", "аптека"))
+        // Нормальная категория из описания по-прежнему не перебивает названную явно.
+        assertEquals(ExpenseCategories.OTHER, ExpenseCategories.normalize("Другое", "Пятёрочка"))
+    }
+
+    @Test fun categorizeIgnoresLegalForm() {
+        assertEquals("Продукты", ExpenseCategories.categorize("ООО «Пятёрочка»"))
+        assertEquals("Кафе и рестораны", ExpenseCategories.categorize("ИП Иванов, кофейня"))
+    }
+
     @Test fun moneyFormat() {
         assertEquals("1 200 ₽", Money.format(120_000, "RUB"))
         assertEquals("12,5 $", Money.format(1250, "USD"))

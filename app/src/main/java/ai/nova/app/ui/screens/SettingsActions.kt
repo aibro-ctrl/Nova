@@ -35,6 +35,15 @@ internal fun ActionsPage(c: AppContainer, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var bankPush by remember { mutableStateOf(settings.bankPushes) }
+    var cityEdit by remember { mutableStateOf(false) }
+    if (cityEdit) {
+        TextDialog(
+            title = "Город для новостей",
+            initial = settings.newsCity,
+            hint = "Пусто — беру город из профиля. Например: Казань.",
+            onDismiss = { cityEdit = false },
+        ) { value -> scope.launch { c.settings.setNewsCity(value) } }
+    }
 
     NovaScreen(title = "Действия", onBack = onBack) {
         item(key = "link-targets") {
@@ -197,6 +206,55 @@ internal fun ActionsPage(c: AppContainer, onBack: () -> Unit) {
                 "Нова ищет товары и показывает их списком с фото, ценой и ссылкой. В корзину площадки " +
                     "приложение положить не может: выбранное сохраняется в «Списке покупок», а покупку и оплату " +
                     "делаете вы сами.",
+            )
+        }
+
+        item(key = "news-region") {
+            SectionLabel("Новости: регион")
+            val region = ai.nova.core.skills.NewsScope.of(settings.newsScope)
+            Group {
+                ai.nova.core.skills.NewsScope.entries.forEachIndexed { i, option ->
+                    if (i > 0) GroupDivider(inset = 66.dp)
+                    RadioRow(option.title, option.hint, region == option) {
+                        scope.launch { c.settings.setNewsScope(option.id) }
+                    }
+                }
+                if (region == ai.nova.core.skills.NewsScope.CITY) {
+                    GroupDivider(inset = 16.dp)
+                    RowItem(
+                        title = "Город для новостей",
+                        subtitle = settings.newsCity.ifBlank {
+                            settings.city.ifBlank { "не выбран — спрошу в первый раз" }
+                        },
+                        chevron = true,
+                        // Тоже нажатие: в слоте trailing присваивание шло бы во время компоновки.
+                        onClick = { cityEdit = true },
+                    )
+                }
+            }
+            Hint(
+                "Новости берутся из открытых лент и читаются на телефоне: ни аккаунт, ни ключи не нужны. " +
+                    "Регион меняет, откуда берутся заголовки — мир, страна или ваш город.",
+            )
+        }
+
+        item(key = "news-topics") {
+            SectionLabel("Новости: рубрики")
+            val chosen = ai.nova.core.skills.NewsQuery.topicsOf(settings.newsTopics).map { it.name }
+            Group {
+                ai.nova.core.skills.NewsTopic.PICKABLE.forEachIndexed { i, topic ->
+                    if (i > 0) GroupDivider(inset = 16.dp)
+                    SwitchItem(topic.title, "Читаю вместе с остальными выбранными рубриками", topic.name in chosen) { on ->
+                        val next = if (on) chosen + topic.name else chosen - topic.name
+                        // Ни одной рубрики не оставляем: иначе читать нечего.
+                        if (next.isEmpty()) return@SwitchItem
+                        scope.launch { c.settings.setNewsTopics(next.joinToString(",")) }
+                    }
+                }
+            }
+            Hint(
+                "Если выбрано несколько рубрик, Нова читает по одной новости из каждой — так в пятёрке " +
+                    "будут все темы. Одну новость можно попросить подробнее: «расскажи подробнее о второй».",
             )
         }
 

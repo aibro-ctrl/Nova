@@ -5,6 +5,7 @@ import ai.nova.core.finance.ReportMode
 import ai.nova.core.model.NoteKind
 import ai.nova.core.model.RecordType
 import ai.nova.core.model.Recurrence
+import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -202,6 +203,9 @@ sealed interface SlotRequest {
     ) : SlotRequest
 
     data class ReminderTime(val text: String, override val question: String) : SlotRequest
+
+    /** «Будильник на воскресенье» без времени → «Во сколько?» → будильник на этот день. */
+    data class AlarmTime(val days: Set<DayOfWeek>, override val question: String) : SlotRequest
 
     /** Фраза не распознана — предложить сохранить её заметкой. */
     data class SaveAsNote(val text: String, override val question: String) : SlotRequest

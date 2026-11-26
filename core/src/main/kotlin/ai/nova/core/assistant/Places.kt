@@ -20,23 +20,38 @@ data class PlaceCandidate(
 
 /**
  * Типы мест, которые человек называет словом: «поесть», «аптека», «магазин одежды».
- * [search] — что искать на карте, если человек не уточнил ничего другого.
+ * [search] — что отдать картам: они ищут по своему справочнику и понимают это слово.
+ * [osm] — как спросить открытую карту: она ищет по названиям, и «торговый центр» ей не слово,
+ * а «молл» — слово. Поэтому у вида места два запроса.
+ * [byCar] — до такого места обычно едут: пеший маршрут до заправки или парковки бессмыслен.
  */
-enum class PlaceKind(val search: String, val question: String?) {
-    FOOD("кафе", "Посидеть в кафе, поесть в ресторане или быстро перекусить? Можно назвать кухню: пицца, суши, бургеры, кофе."),
-    COFFEE("кофейня", null),
-    PHARMACY("аптека", null),
+enum class PlaceKind(
+    val search: String,
+    val question: String?,
+    val byCar: Boolean = false,
+    val osm: String = search,
+    /** «Совсем рядом» для этого вида: у аптек порог меньше — в открытой карте их часто нет. */
+    val nearMeters: Int? = null,
+) {
+    FOOD("кафе", "Посидеть в кафе, поесть в ресторане или быстро перекусить? Можно назвать кухню: пицца, суши, бургеры, кофе.", osm = "кафе"),
+    COFFEE("кофейня", null, osm = "кафе"),
+        // Аптека на первом этаже жилого дома или внутри торгового центра в открытой карте часто
+    // не отмечена, зато есть у карт. Поэтому «рядом» для аптеки — это сотня метров: если открытая
+    // карта нашла аптеку дальше, доверяем картам — у них справочник полнее.
+    PHARMACY("аптека", null, nearMeters = 120),
     CLOTHES("магазин одежды", null),
-    MALL("торговый центр", null),
+    MALL("торговый центр", null, osm = "молл"),
     GROCERY("супермаркет", null),
-    FUEL("заправка", null),
+    FUEL("заправка", null, byCar = true),
     BANK("банк", null),
     ATM("банкомат", null),
     CINEMA("кинотеатр", null),
-    HOTEL("гостиница", null),
-    PARKING("парковка", null),
+    HOTEL("гостиница", null, byCar = true),
+    PARKING("парковка", null, byCar = true),
     DENTIST("стоматология", null),
     MARKET("рынок", null),
+    STOP("автобусная остановка", null),
+    ;
 }
 
 /**
@@ -57,7 +72,7 @@ object Places {
         PlaceKind.COFFEE to listOf("кофе", "кофейн"),
         PlaceKind.PHARMACY to listOf("аптек", "лекарств", "таблетк"),
         PlaceKind.GROCERY to listOf("супермаркет", "продукт", "гипермаркет", "магазин"),
-        PlaceKind.FUEL to listOf("заправк", "бензин", "азс", "азк"),
+        PlaceKind.FUEL to listOf("заправк", "заправ", "бензин", "азс", "азк"),
         PlaceKind.ATM to listOf("банкомат", "снять деньги", "наличн"),
         PlaceKind.BANK to listOf("банк", "отделение банка"),
         PlaceKind.CINEMA to listOf("кинотеатр", "кино"),
@@ -65,6 +80,7 @@ object Places {
         PlaceKind.PARKING to listOf("парковк", "припарковаться", "стоянк"),
         PlaceKind.DENTIST to listOf("стоматолог", "зубн"),
         PlaceKind.MARKET to listOf("рынок", "базар"),
+        PlaceKind.STOP to listOf("остановк", "автобус"),
     )
 
     /** Уточнения, которые человек говорит в ответ на вопрос про еду. */
@@ -106,6 +122,9 @@ object Places {
 
     private fun rx(p: String) = ai.nova.core.nlp.Rx.of(p)
 
+    /** «Ближайший», «рядом», «недалеко» — уточнение, а не часть вида места. */
+    private fun isModifier(word: String): Boolean = ai.nova.core.nlp.RuQuery.isPlaceModifier(word)
+
     private fun norm(text: String): String =
         text.lowercase().replace('ё', 'е').replace(rx("""[^a-zа-я0-9\s\-]"""), " ").replace(rx("""\s+"""), " ").trim()
 
@@ -114,6 +133,30 @@ object Places {
         val t = " " + norm(text) + " "
         return KINDS.firstOrNull { (_, words) -> words.any { w -> t.contains(" $w") } }?.first
     }
+
+    /**
+     * Вся фраза — только вид места и уточнения: «торговый центр», «снять деньги», «автобусная
+     * остановка». Нужно разбору команд: такие фразы — маршрут, даже если словаря мест слово не знает.
+     * «Что такое фондовый рынок» и «купи продукты» под это не подходят: в них есть лишние слова.
+     */
+    fun isKindPhrase(text: String): Boolean {
+        val words = norm(text).split(' ').filter { it.isNotBlank() }
+        if (words.isEmpty() || words.size > 3) return false
+        if (kind(text) == null) return false
+        val core = words.filterNot { w -> FILLER.any { w.startsWith(it) } || isModifier(w) }
+        // Сравниваем по основе: «отделения» и «отделение», «остановку» и «остановка» — одно слово.
+        return core.isNotEmpty() && core.all { w -> KINDISH.any { k -> w == k || w.commonPrefixWith(k).length >= 4 } }
+    }
+
+    /** Слова, из которых состоят названия видов мест: «торговый», «центр», «снять», «деньги». */
+    private val KINDISH: Set<String> = KINDS.flatMap { (kind, words) ->
+        words + kind.search.split(' ') + kind.osm.split(' ')
+    }
+        // «снять деньги» — два слова: в фразе человека они стоят отдельно.
+        .flatMap { it.split(' ') }
+        .map { it.lowercase().replace('ё', 'е') }
+        .filter { it.isNotEmpty() }
+        .toSet()
 
     /** «Поесть» без уточнения: сначала спросим, что именно нужно. */
     fun vague(text: String): Boolean = norm(text).let { t ->
@@ -156,11 +199,14 @@ object Places {
     private val FILLER = setOf(
         "до", "к", "в", "во", "на", "у", "около", "возле", "рядом", "ближайший", "ближайшая",
         "ближайшее", "ближайшую", "поблизости", "недалеко", "мне", "меня", "пожалуйста",
+        // Сказуемое и вопрос перед местом: «хочу суши», «где ближайшая аптека», «отведи в кофейню».
+        "хочу", "хочется", "можно", "найди", "поищи", "покажи", "где", "отведи", "отвези", "давай", "ну",
     )
 
     /** Слова-типы: они описывают, что это за место, а не как оно называется. */
     private val GENERIC = listOf(
         "торгов", "центр", "тц", "трц", "молл", "mall", "магазин", "аптек", "лекарств", "кафе",
+        "остановк", "автобус",
         "ресторан", "кофейн", "супермаркет", "гипермаркет", "продукт", "заправк", "бензин", "азс",
         "азк", "банкомат", "банк", "кинотеатр", "кино", "гостиниц", "отел", "отель", "парковк",
         "стоянк", "стоматолог", "зубн", "рынок", "базар", "одежд", "бутик", "обув", "шопинг", "шмот",
@@ -171,13 +217,16 @@ object Places {
      * null — в названии одни типы («аптека», «ближайший торговый центр»), искать нечего.
      */
     fun name(text: String): String? {
+        // Регистр сохраняем: карты ищут «Галерея», а не «галерея» — с маленькой буквы находятся не те места.
+        val spoken = text.trim().split(' ').filter { it.isNotBlank() }
         val words = norm(text).split(' ').filter { it.isNotBlank() }
+        if (spoken.size != words.size) return null
         var i = 0
         while (i < words.size && words[i] in FILLER) i++
         while (i < words.size && GENERIC.any { k -> words[i].startsWith(k) && words[i].length - k.length <= 3 }) i++
         // Остаток с предлога сразу — не название, а описание: «кафе в парке» это не «парке».
         if (i == 0 || i >= words.size || words[i] in FILLER) return null
-        return words.drop(i).joinToString(" ")
+        return spoken.drop(i).joinToString(" ")
     }
 
     /**

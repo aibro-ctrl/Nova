@@ -176,6 +176,13 @@ internal fun RoutinesPage(c: AppContainer, onBack: () -> Unit) {
 internal fun RoutinesSection(c: AppContainer) {
     val scope = rememberCoroutineScope()
     val routines by remember { c.store.routines.observe() }.collectAsStateWithLifecycle(emptyList())
+    // Расписание живёт в напоминании «Сценарий: …» — по нему и видно, запускается ли сценарий сам.
+    val reminders by remember { c.store.reminders.observe() }.collectAsStateWithLifecycle(emptyList())
+    val schedules = reminders.filter { it.active && it.text.startsWith(ai.nova.core.model.Routine.SCHEDULE_PREFIX) }
+        .associate { r ->
+            ai.nova.core.model.Routine.normalize(r.text.removePrefix(ai.nova.core.model.Routine.SCHEDULE_PREFIX)) to
+                (r.recurrence?.time ?: r.triggerAt.atZone(java.time.ZoneId.of(r.timeZone)).toLocalTime())
+        }
     var editing by remember { mutableStateOf<ai.nova.core.model.Routine?>(null) }
     var creating by remember { mutableStateOf(false) }
     if (creating) RoutineEditorDialog(c, null) { creating = false }
@@ -187,11 +194,15 @@ internal fun RoutinesSection(c: AppContainer) {
         }
         routines.forEachIndexed { i, r ->
             if (i > 0) GroupDivider()
+            val at = schedules[ai.nova.core.model.Routine.normalize(r.trigger)]
             RowItem(
-                title = "«${r.trigger}»", subtitle = r.commands.joinToString(" · "), maxSubtitleLines = 3,
+                title = "«${r.trigger}»",
+                subtitle = (if (at != null) "каждый день в ${ai.nova.app.reminders.BriefTimes.label(at)} · " else "") +
+                    r.commands.joinToString(" · "),
+                maxSubtitleLines = 3,
                 chevron = true, onClick = { editing = r },
                 trailing = {
-                    IconButton(onClick = { scope.launch { c.store.routines.delete(r.id) } }) {
+                    IconButton(onClick = { scope.launch { deleteRoutine(c, r) } }) {
                         Icon(Icons.Rounded.Close, contentDescription = "Удалить сценарий", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
@@ -255,6 +266,13 @@ internal fun RoutineEditorDialog(c: AppContainer, editing: ai.nova.core.model.Ro
         mutableStateListOf<String>().apply { addAll(ai.nova.core.assistant.RoutineBlocks.extras(original)) }
     }
     var newExtra by remember { mutableStateOf("") }
+    var scheduled by remember { mutableStateOf(false) }
+    var at by remember { mutableStateOf(java.time.LocalTime.of(8, 0)) }
+    // Расписание хранится напоминанием, поэтому читаем его из базы, а не из сценария.
+    androidx.compose.runtime.LaunchedEffect(editing?.trigger) {
+        val existing = routineSchedule(c, editing?.trigger)
+        if (existing != null) { scheduled = true; at = existing }
+    }
     val commands = ai.nova.core.assistant.RoutineBlocks.compose(original, selected, extras)
     val canSave = trigger.isNotBlank() && commands.isNotEmpty()
 
@@ -295,6 +313,28 @@ internal fun RoutineEditorDialog(c: AppContainer, editing: ai.nova.core.model.Ro
                     }
                 }
                 NovaField(newExtra, { newExtra = it.take(120) }, "Своя команда", modifier = Modifier.padding(top = 12.dp))
+                GroupDivider()
+                SwitchItem(
+                    "Запускать по расписанию",
+                    if (scheduled) "Каждый день в ${ai.nova.app.reminders.BriefTimes.label(at)} — сама, без напоминания" else "Пока только по фразе",
+                    scheduled,
+                ) { scheduled = it }
+                if (scheduled) {
+                    // Время меняется здесь же, без второго диалога: он перекрывал конструктор.
+                    RowItem(
+                        title = "Время запуска",
+                        subtitle = ai.nova.app.reminders.BriefTimes.label(at),
+                        trailing = {
+                            TextButton(onClick = { at = at.minusMinutes(15) }) { Text("−15") }
+                            TextButton(onClick = { at = at.plusMinutes(15) }) { Text("+15") }
+                        },
+                    )
+                    Text(
+                        "Повторяю каждый день. Ответ придёт уведомлением и останется в истории общения.",
+                        style = captionStyle(),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
                 TextButton(
                     enabled = newExtra.isNotBlank(),
                     onClick = { extras.add(newExtra.trim()); newExtra = "" },
@@ -317,6 +357,7 @@ internal fun RoutineEditorDialog(c: AppContainer, editing: ai.nova.core.model.Ro
                             c.store.routines.delete(old.id)
                             retargetScheduledReminder(c, old.trigger, saved.trigger)
                         }
+                        setRoutineSchedule(c, saved.trigger, if (scheduled) at else null)
                         onDismiss()
                     }
                 },
@@ -326,12 +367,53 @@ internal fun RoutineEditorDialog(c: AppContainer, editing: ai.nova.core.model.Ro
     )
 }
 
+/** Когда сценарий запускается сам, или null — только по фразе. */
+private suspend fun routineSchedule(c: AppContainer, trigger: String?): java.time.LocalTime? {
+    if (trigger.isNullOrBlank()) return null
+    val reminder = c.scheduleReminders(trigger).firstOrNull { it.active } ?: return null
+    return reminder.recurrence?.time ?: reminder.triggerAt.atZone(java.time.ZoneId.of(reminder.timeZone)).toLocalTime()
+}
+
+/**
+ * Расписание сценария — ежедневное напоминание «Сценарий: фраза»: его срабатывание и запускает сценарий.
+ * Старое время снимаем, чтобы сценарий не сработал дважды; без времени — снимаем расписание совсем.
+ */
+private suspend fun setRoutineSchedule(c: AppContainer, trigger: String, at: java.time.LocalTime?) {
+    c.scheduleReminders(trigger)
+        .forEach { c.store.reminders.delete(it.id); c.reminderScheduler.cancel(it.id) }
+    if (at == null) return
+    val zone = c.time.zone()
+    val rule = ai.nova.core.model.Recurrence(ai.nova.core.model.Recurrence.Frequency.DAILY, time = at)
+    val text = ai.nova.core.model.Routine.SCHEDULE_PREFIX + trigger
+    val reminder = c.store.reminders.create(text, rule.nextAfter(c.time.now(), zone), rule, zone.id)
+    c.reminderScheduler.schedule(reminder)
+}
+
+/** Напоминания-расписания этой фразы: по ним сценарий запускается сам. */
+internal suspend fun AppContainer.scheduleReminders(trigger: String): List<ai.nova.core.model.Reminder> {
+    val prefix = ai.nova.core.model.Routine.SCHEDULE_PREFIX
+    val key = ai.nova.core.model.Routine.normalize(trigger)
+    return store.reminders.all().filter {
+        it.text.startsWith(prefix) && ai.nova.core.model.Routine.normalize(it.text.removePrefix(prefix)) == key
+    }
+}
+
+/**
+ * Удаление сценария вместе с его расписанием.
+ *
+ * Одной записи в базе мало: расписание живёт отдельным напоминанием «Сценарий: …», и без его снятия
+ * удалённый сценарий продолжал срабатывать каждый день.
+ */
+internal suspend fun deleteRoutine(c: AppContainer, routine: ai.nova.core.model.Routine) {
+    c.store.routines.delete(routine.id)
+    setRoutineSchedule(c, routine.trigger, null)
+}
+
 /** Напоминание «Сценарий: старое имя» должно запускать сценарий с новым именем, иначе он пропадёт из расписания. */
 private suspend fun retargetScheduledReminder(c: AppContainer, oldTrigger: String, newTrigger: String) {
     val prefix = ai.nova.core.model.Routine.SCHEDULE_PREFIX
-    val key = ai.nova.core.model.Routine.normalize(oldTrigger)
-    c.store.reminders.active()
-        .filter { it.text.startsWith(prefix) && ai.nova.core.model.Routine.normalize(it.text.removePrefix(prefix)) == key }
+    c.scheduleReminders(oldTrigger)
+        .filter { it.active }
         .forEach { c.store.reminders.update(it.copy(text = prefix + newTrigger)) }
 }
 
@@ -341,20 +423,23 @@ internal enum class Brief { MORNING, EVENING, WEEKLY }
 /** Выбор времени сводки: системные часы-циферблат не нужны, хватает компактного ввода. */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-internal fun BriefTimeDialog(initial: java.time.LocalTime, onDismiss: () -> Unit, onPicked: (java.time.LocalTime) -> Unit) {
+internal fun BriefTimeDialog(
+    initial: java.time.LocalTime,
+    onDismiss: () -> Unit,
+    title: String = "Время сводки",
+    hint: String = "Сводка придёт в это время. Если уведомления выключены, ничего не приходит.",
+    onPicked: (java.time.LocalTime) -> Unit,
+) {
     val state = androidx.compose.material3.rememberTimePickerState(
         initialHour = initial.hour, initialMinute = initial.minute, is24Hour = true,
     )
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Время сводки") },
+        title = { Text(title) },
         text = {
             Column {
                 androidx.compose.material3.TimeInput(state = state)
-                Text(
-                    "Сводка придёт в это время. Если уведомления выключены, ничего не приходит.",
-                    style = captionStyle(),
-                )
+                Text(hint, style = captionStyle())
             }
         },
         confirmButton = {

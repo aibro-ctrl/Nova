@@ -108,6 +108,32 @@ class BankPushTest {
         assertEquals(a.dedupKey, b.dedupKey)
     }
 
+    /**
+     * Номер точки в названии магазина — не повод выбросить магазин: раньше такой пуш оставался
+     * без названия, и трата уходила в «Другое».
+     */
+    @Test fun storeWithNumberIsStillAMerchant() {
+        val push = parse("СберБанк", "Покупка 850 ₽\nПЯТЁРОЧКА 1234") ?: error("не разобрано")
+        assertTrue(push.merchant.startsWith("Пятёрочка"), push.merchant)
+        assertEquals("Продукты", push.category)
+        // А служебные строки с цифрами магазином не становятся.
+        assertNull(parse("СберБанк", "Покупка 500 ₽ · Баланс 1 000 ₽")?.merchant?.takeIf { it.isNotBlank() })
+    }
+
+    /** «Sber 8013» — это карта, а не магазин: имя карты не должно попадать в описание и категорию. */
+    @Test fun cardLabelIsNotAMerchant() {
+        val push = parse("СберБанк", "Списание 300 ₽\nSber 8013") ?: error("не разобрано")
+        assertEquals("", push.merchant)
+        assertEquals("Сбер", push.description)
+        assertEquals(0, push.category.count { it.isDigit() })
+    }
+
+    /** Категорию подсказывает текст пуша, когда магазина в уведомлении нет. */
+    @Test fun categoryComesFromPushText() {
+        assertEquals("Переводы", parse("СберБанк", "Списание 500 ₽\nПеревод на карту")?.category)
+        assertEquals("Транспорт", parse("СберБанк", "Списание 400 ₽\nОплата такси")?.category)
+    }
+
     @Test fun knownBanksAreMapped() {
         assertEquals("Сбер", BankPushParser.bank("ru.sberbankmobile"))
         assertEquals("Т-Банк", BankPushParser.bank("com.idamob.tinkoff.android"))

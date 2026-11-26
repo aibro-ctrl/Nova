@@ -23,10 +23,16 @@ data class BankPush(
     /** Исходный текст — для проверки пользователем. */
     val raw: String,
 ) {
-    /** Категория по названию магазина: «Пятёрочка» → «Продукты». */
+    /**
+     * Категория по названию магазина: «Пятёрочка» → «Продукты».
+     * Магазина в уведомлении может не быть — тогда категорию подсказывает сам текст пуша
+     * («Перевод», «Штраф», «Оплата связи»), а не глухое «Другое».
+     */
     val category: String
         get() = if (isIncome) ExpenseCategories.INCOME
-        else ExpenseCategories.categorize(merchant).takeIf { it != ExpenseCategories.OTHER } ?: ExpenseCategories.OTHER
+        else ExpenseCategories.categorize(merchant).takeIf { it != ExpenseCategories.OTHER }
+            ?: ExpenseCategories.categorize(raw).takeIf { it != ExpenseCategories.OTHER }
+            ?: ExpenseCategories.OTHER
 
     /** Описание записи: магазин, банк и карта — чтобы потом было понятно, откуда трата. */
     val description: String
@@ -197,14 +203,35 @@ object BankPushParser {
                 cleanMerchant(match.groupValues[1])?.let { return it }
             }
         }
-        // Магазин отдельным куском: «ПЯТЁРОЧКА», «MAGNUM CASH&CARRY».
+        // Магазин отдельным куском: «ПЯТЁРОЧКА», «MAGNUM CASH&CARRY», «ПЯТЁРОЧКА 1234».
         for (segment in segments) {
             if (segment.contains(amountText)) continue
-            if (Regex("""\d""").containsMatchIn(segment)) continue
             if (HARD_SKIP.containsMatchIn(segment) || SOFT_SKIP.containsMatchIn(segment)) continue
+            // Цифра в куске — ещё не повод выбрасывать его: у магазина часто есть номер точки.
+            // Выбрасываем только строки без названия — дату, время, маску карты, остаток.
+            if (Regex("""\d""").containsMatchIn(segment) && !storeWithNumber(segment)) continue
             cleanMerchant(segment)?.let { return it }
         }
         return null
+    }
+
+    /** Служебное начало строки: «Баланс 100 ₽», «Карта *8123», «Операция 08:45». */
+    private val SERVICE_START = Regex(
+        """(?iu)^(?:баланс|остаток|доступно|карта|картой|счет|счёт|код|дата|время|операция|сумма|комисси|лимит|платеж|платёж|перевод|списание|покупка|оплата)\b""",
+    )
+
+    /** Имя банка с номером карты: «Sber 8013», «Тинькофф ••8123» — это не магазин. */
+    private val BANK_LABEL = Regex(
+        """(?iu)^(?:сбер\w*|sber\w*|тинькофф\w*|tinkoff\w*|т-?банк\w*|альфа\w*|alfa\w*|втб\w*|vtb\w*|""" +
+            """райф\w*|газпромбанк\w*|росбанк\w*|совкомбанк\w*|открытие|озон|яндекс|псб|мтс|почта|хоум|уралсиб\w*|ак\s*барс|рнкб|бспб)\b""",
+    )
+
+    /** «ПЯТЁРОЧКА 1234», «АЗС 42» — название точки с номером, а не служебная строка с цифрами. */
+    private fun storeWithNumber(segment: String): Boolean {
+        val v = segment.trim()
+        if (SERVICE_START.containsMatchIn(v) || BANK_LABEL.containsMatchIn(v)) return false
+        val m = Regex("""^(.+?)\s+\d{1,6}$""").find(v) ?: return false
+        return m.groupValues[1].count { it.isLetter() } >= 3
     }
 
     private fun cleanMerchant(raw: String): String? {

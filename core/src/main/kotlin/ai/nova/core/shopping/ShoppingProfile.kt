@@ -5,9 +5,7 @@ import ai.nova.core.model.MemoryItem
 import ai.nova.core.nlp.RuTokenizer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 
 /**
  * Память покупок: размеры, бренды, вид животного.
@@ -20,21 +18,34 @@ class ShoppingProfile(private val memory: MemoryRepository) {
 
     /** Факты для текущего поиска. Читаются один раз перед разбором фразы. */
     suspend fun facts(): ShoppingFacts {
-        val items = runCatching { memory.all() }.getOrElse { emptyList() }
-        val parsed = items.filter { it.category == CATEGORY }.mapNotNull { fact(it) }
+        val parsed = stored()
         return ShoppingFacts(
-            shoeSize = parsed.lastOrNull { it.attribute == "shoe_size" }?.value,
-            clothesSize = parsed.lastOrNull { it.attribute == "clothes_size" }?.value,
-            preferredBrands = parsed.filter { it.attribute == "preferred_brand" }.map { it.value },
-            petKind = parsed.lastOrNull { it.attribute == "pet_kind" }?.value,
+            shoeSize = parsed.lastOrNull { it.first.attribute == "shoe_size" }?.first?.value,
+            clothesSize = parsed.lastOrNull { it.first.attribute == "clothes_size" }?.first?.value,
+            preferredBrands = parsed.filter { it.first.attribute == "preferred_brand" }.map { it.first.value },
+            petKind = parsed.lastOrNull { it.first.attribute == "pet_kind" }?.first?.value,
         )
     }
 
     /** Все сохранённые факты — для экрана «что Нова помнит о покупках». */
-    suspend fun all(): List<ShoppingFact> =
+    suspend fun all(): List<ShoppingFact> = stored().map { it.first }
+
+    /**
+     * Записи памяти покупок. Старые версии хранили служебную строку вида
+     * `{"attribute":"shoe_size","value":"44"}` — в разделе «Память» это выглядело как код.
+     * Такие записи переписываем человеческим текстом один раз, читая их же.
+     */
+    private suspend fun stored(): List<Pair<ShoppingFact, MemoryItem>> =
         runCatching { memory.all() }.getOrElse { emptyList() }
             .filter { it.category == CATEGORY }
-            .mapNotNull { fact(it) }
+            .mapNotNull { item ->
+                val fact = fact(item) ?: return@mapNotNull null
+                val readable = item.content.trim() != fact.label
+                val fixed = if (readable) {
+                    runCatching { memory.update(item.copy(content = fact.label)) }.getOrDefault(item)
+                } else item
+                fact to fixed
+            }
 
     /**
      * Запоминает факт. Возвращает сам факт — по нему Нова честно говорит, что запомнила.
@@ -47,12 +58,8 @@ class ShoppingProfile(private val memory: MemoryRepository) {
         // Повторный тот же факт не плодит записи.
         val same = all().firstOrNull { it.attribute == attribute && it.value.equals(clean, true) }
         if (same != null) return same
-        val content = buildJsonObject {
-            put("attribute", attribute)
-            put("value", clean)
-            put("source", "user_statement")
-            put("confidence", "1.0")
-        }.toString()
+        // В памяти — обычная фраза: её видно в разделе «Память» и понятно без расшифровки.
+        val content = ShoppingFact(attribute, clean).label
         val item = runCatching { memory.create(content, CATEGORY) }.getOrNull() ?: return null
         return fact(item) ?: ShoppingFact(attribute, clean, item.id)
     }
@@ -86,12 +93,8 @@ class ShoppingProfile(private val memory: MemoryRepository) {
         return null
     }
 
-    private fun fact(item: MemoryItem): ShoppingFact? {
-        val json = runCatching { Json.parseToJsonElement(item.content) as? JsonObject }.getOrNull() ?: return null
-        val attribute = runCatching { json["attribute"]?.jsonPrimitive?.content }.getOrNull() ?: return null
-        val value = runCatching { json["value"]?.jsonPrimitive?.content }.getOrNull() ?: return null
-        return ShoppingFact(attribute, value, item.id)
-    }
+    private fun fact(item: MemoryItem): ShoppingFact? =
+        ShoppingFact.parse(item.content)?.copy(id = item.id)
 
     companion object {
         /** Категория в общей памяти Нова: видно в разделе «Память» вместе с остальными фактами. */
@@ -102,13 +105,36 @@ class ShoppingProfile(private val memory: MemoryRepository) {
 /** Один сохранённый факт о покупках. */
 data class ShoppingFact(val attribute: String, val value: String, val id: String? = null) {
     /** Как это звучит для человека. */
-    val label: String
-        get() = when (attribute) {
-            "shoe_size" -> "Размер обуви: $value"
-            "clothes_size" -> "Размер одежды: $value"
-            "preferred_brand" -> "Любимый бренд: $value"
-            "pet_kind" -> "Питомец: $value"
-            "preferred_color" -> "Любимый цвет: $value"
-            else -> "$attribute: $value"
+    val label: String get() = labelOf(attribute, value)
+
+    companion object {
+        /** Подписи фактов: по ним же читаются записи, сохранённые обычным текстом. */
+        val LABELS: Map<String, String> = linkedMapOf(
+            "shoe_size" to "Размер обуви: ",
+            "clothes_size" to "Размер одежды: ",
+            "preferred_brand" to "Любимый бренд: ",
+            "pet_kind" to "Питомец: ",
+            "preferred_color" to "Любимый цвет: ",
+        )
+
+        fun labelOf(attribute: String, value: String): String = (LABELS[attribute] ?: "$attribute: ") + value
+
+        /** Факт из записи памяти: обычный текст («Размер обуви: 44») или старый служебный JSON. */
+        fun parse(content: String): ShoppingFact? {
+            val raw = content.trim()
+            LABELS.forEach { (attribute, label) ->
+                if (raw.length >= label.length && raw.regionMatches(0, label, 0, label.length, ignoreCase = true)) {
+                    val value = raw.substring(label.length).trim()
+                    if (value.isNotEmpty()) return ShoppingFact(attribute, value)
+                }
+            }
+            val json = runCatching { Json.parseToJsonElement(raw) as? JsonObject }.getOrNull() ?: return null
+            val attribute = runCatching { json["attribute"]?.jsonPrimitive?.content }.getOrNull() ?: return null
+            val value = runCatching { json["value"]?.jsonPrimitive?.content }.getOrNull() ?: return null
+            return ShoppingFact(attribute, value)
         }
+
+        /** Как показать запись памяти человеку: служебную строку старых версий — по-русски. */
+        fun readable(content: String): String = parse(content)?.label ?: content
+    }
 }

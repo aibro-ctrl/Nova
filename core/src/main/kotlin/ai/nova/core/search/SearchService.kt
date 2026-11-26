@@ -47,7 +47,10 @@ class SearchService(
         }
         if (want(RecordType.TASK)) tasks.all().forEach { docs += SearchDoc(RecordType.TASK, it.id, it.title, it.details, it.updatedAt) }
         if (want(RecordType.REMINDER)) reminders.all().forEach { docs += SearchDoc(RecordType.REMINDER, it.id, it.text, "", it.updatedAt) }
-        if (want(RecordType.MEMORY)) memories.all().forEach { docs += SearchDoc(RecordType.MEMORY, it.id, it.content, it.category, it.updatedAt) }
+        // Память покупок старых версий хранилась служебной строкой: в поиске показываем её по-русски.
+        if (want(RecordType.MEMORY)) memories.all().forEach {
+            docs += SearchDoc(RecordType.MEMORY, it.id, ai.nova.core.shopping.ShoppingFact.readable(it.content), it.category, it.updatedAt)
+        }
         return docs
     }
 

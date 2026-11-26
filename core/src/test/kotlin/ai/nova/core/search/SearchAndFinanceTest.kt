@@ -88,6 +88,20 @@ class ExpenseAnalyticsTest {
         val r = ExpenseAnalytics.report(emptyList(), ExpenseAnalytics.range(PeriodPreset.TODAY, today))
         assertEquals("Расходов сегодня не нашла.", ExpenseAnalytics.describe(r, ReportMode.TOTAL))
     }
+
+    /**
+     * Старые записи с номером карты вместо категории: в разбивке они должны попасть
+     * в категорию по описанию, а не отдельной строкой «Sber 8013».
+     */
+    @Test fun cardNumberCategoryIsCountedByDescription() = runTest {
+        val env = TestEnv()
+        env.store.expenses.create(85_000, "RUB", "Sber 8013", "Пятёрочка", today)
+        env.store.expenses.create(30_000, "RUB", "Продукты", "Магнит", today)
+        val report = ExpenseAnalytics.report(env.store.expenses.all(), ExpenseAnalytics.range(PeriodPreset.TODAY, today))
+        assertEquals(listOf("Продукты"), report.byCategory.map { it.category })
+        assertEquals(115_000, report.byCategory.single().amountMinor)
+        assertTrue(ExpenseAnalytics.matchesCategory(env.store.expenses.all().first { it.category.startsWith("Sber") }, "продукты"))
+    }
 }
 
 class RedactorTest {

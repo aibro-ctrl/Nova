@@ -72,7 +72,8 @@ data class LockPolicy(
         is AssistantAction.QueryExpenses, is AssistantAction.QueryTasks, AssistantAction.QueryReminders,
         is AssistantAction.QueryMemories, is AssistantAction.Search, is AssistantAction.Agenda -> view
         is AssistantAction.Device -> when (val c = action.command) {
-            is DeviceCommand.Timer, is DeviceCommand.Alarm, is DeviceCommand.Flashlight, DeviceCommand.Battery,
+            is DeviceCommand.Timer, is DeviceCommand.Alarm, is DeviceCommand.AlarmOff, is DeviceCommand.AlarmSnooze,
+            DeviceCommand.AlarmsLeft, DeviceCommand.Silence, is DeviceCommand.Flashlight, DeviceCommand.Battery,
             is DeviceCommand.Media, is DeviceCommand.Volume, is DeviceCommand.DoNotDisturb, is DeviceCommand.Brightness, is DeviceCommand.Relax, is DeviceCommand.Focus, is DeviceCommand.SleepMode -> basicDevice
             // Заблокировать экран можно всегда; остальные системные кнопки — как открытие приложений.
             is DeviceCommand.Global -> c.action == GlobalAction.LOCK || apps

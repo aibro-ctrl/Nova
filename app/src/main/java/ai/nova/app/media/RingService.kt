@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -38,7 +39,18 @@ class RingService : Service() {
         val title = intent?.getStringExtra(EXTRA_TITLE) ?: "Нова"
         val text = intent?.getStringExtra(EXTRA_TEXT).orEmpty()
         val loud = intent?.getBooleanExtra(EXTRA_LOUD, false) == true
+        val alarmId = intent?.getStringExtra(EXTRA_ALARM_ID)
+        val flashTorch = intent?.getBooleanExtra(EXTRA_FLASH, false) == true
         val stop = PendingIntent.getService(this, 0, Intent(this, RingService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val snooze = alarmId?.let { id ->
+            PendingIntent.getBroadcast(
+                this, id.hashCode(),
+                Intent(this, ai.nova.app.reminders.AlarmReceiver::class.java)
+                    .setAction(ai.nova.app.reminders.NovaAlarms.ACTION_SNOOZE)
+                    .putExtra(ai.nova.app.reminders.NovaAlarms.EXTRA_ID, id),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        }
         val n = NotificationCompat.Builder(this, Notifications.CHANNEL_ALARMS)
             .setSmallIcon(R.drawable.ic_stat_nova)
             .setContentTitle(title)
@@ -49,6 +61,7 @@ class RingService : Service() {
             .setContentIntent(stop)
             .setDeleteIntent(stop)
             .addAction(0, "Стоп", stop)
+            .apply { if (snooze != null) addAction(0, "Ещё 5 минут", snooze) }
             .build()
         try {
             ServiceCompat.startForeground(this, Notifications.RING_ID, n, if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else 0)
@@ -58,9 +71,12 @@ class RingService : Service() {
         }
         // Сначала снимаем старые задачи, потом запускаем мигание — иначе оно гаснет сразу.
         handler.removeCallbacksAndMessages(null)
+        startedAt = SystemClock.elapsedRealtime()
         play(loud)
-        if (loud) flash()
-        handler.postDelayed({ stopAll() }, if (loud) 60_000L else 90_000L)
+        // Фонарик — только для «Нова, где ты?»: будильник не должен светить в глаза.
+        if (flashTorch) flash()
+        // Будильник звенит до «Стоп» (или пять минут), таймер — полторы: успеть подойти и выключить.
+        handler.postDelayed({ stopAll() }, if (loud) 5 * 60_000L else 90_000L)
         return START_NOT_STICKY
     }
 
@@ -115,6 +131,8 @@ class RingService : Service() {
         }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         Notifications.cancel(this, Notifications.RING_ID)
+        startedAt = 0L
+        ai.nova.app.reminders.NovaAlarms(this).clearRinging()
         stopSelf()
     }
 
@@ -127,6 +145,8 @@ class RingService : Service() {
         restoreVolume?.let { v -> runCatching { getSystemService(AudioManager::class.java)?.setStreamVolume(AudioManager.STREAM_ALARM, v, 0) } }
         restoreVolume = null
         runCatching { getSystemService(CameraManager::class.java)?.let { cm -> cm.cameraIdList.forEach { id -> runCatching { cm.setTorchMode(id, false) } } } }
+        startedAt = 0L
+        ai.nova.app.reminders.NovaAlarms(this).clearRinging()
         super.onDestroy()
     }
 
@@ -136,11 +156,23 @@ class RingService : Service() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_TEXT = "text"
         const val EXTRA_LOUD = "loud"
+        /** id будильника Нова: к сигналу добавляется кнопка «Ещё 5 минут». */
+        const val EXTRA_ALARM_ID = "alarm_id"
+        /** Мигать фонариком: только «Нова, где ты?», не будильники. */
+        const val EXTRA_FLASH = "flash"
 
-        fun start(context: Context, title: String, text: String, loud: Boolean): Boolean = runCatching {
+        /** Сигнал звенит прямо сейчас — по нему «стоп» и «выключи будильник» глушат звук. */
+        @Volatile
+        private var startedAt = 0L
+
+        fun isRinging(): Boolean = startedAt > 0 && SystemClock.elapsedRealtime() - startedAt < 10 * 60_000L
+
+        fun start(context: Context, title: String, text: String, loud: Boolean, snoozeAlarmId: String? = null, flash: Boolean = false): Boolean = runCatching {
             ContextCompat.startForegroundService(
                 context,
-                Intent(context, RingService::class.java).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_TEXT, text).putExtra(EXTRA_LOUD, loud),
+                Intent(context, RingService::class.java).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_TEXT, text)
+                    .putExtra(EXTRA_LOUD, loud).putExtra(EXTRA_FLASH, flash)
+                    .apply { if (snoozeAlarmId != null) putExtra(EXTRA_ALARM_ID, snoozeAlarmId) },
             )
         }.onFailure { Logger.w(TAG, "Сигнал не запустился", it) }.isSuccess
 

@@ -92,6 +92,10 @@ interface SkillHost {
     fun cancelTimers(label: String?): Int = 0
     /** Отменить один таймер по id. */
     fun cancelTimer(id: String): Boolean = false
+    /** Продлить таймер на [seconds]; null — таймера уже нет. */
+    fun extendTimer(id: String, seconds: Int): ActiveTimer? = null
+    /** Заглушить звучащий сигнал; true — он действительно звенел. */
+    fun stopRing(): Boolean = false
 
     /** Запомнить текущее место под именем. */
     suspend fun savePlace(name: String): SavedPlace? = null

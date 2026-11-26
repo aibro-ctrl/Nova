@@ -164,19 +164,21 @@ class AppContainer(private val context: Context) {
     val permissions = ai.nova.app.device.PermissionBroker(context)
     /** Свои таймеры и напоминания по месту. */
     val timers = ai.nova.app.reminders.NovaTimers(context)
+    /** Свои будильники: их можно перечислить, выключить и отложить голосом. */
+    val alarms = ai.nova.app.reminders.NovaAlarms(context)
     val geo = ai.nova.app.reminders.GeoReminders(context)
     /** Дыхание и медитация голосом; «я за рулём» — сообщения вслух. */
     val relaxation = ai.nova.app.health.Relaxation(appScope) { speech.speak(it) }
     val driving = ai.nova.app.health.DrivingMode(context, appScope) { speech.speak(it) }
     /** Где телефон — для ближайших мест и геозон. */
     private val locator = ai.nova.app.device.Locator(context)
-    /** Поиск ближайших мест по названию (OpenStreetMap): только чтобы отдать картам точку для маршрута. */
+    /** Название и адрес по координатам (OpenStreetMap): вид места ищут сами карты. */
     private val streetPlaces by lazy { ai.nova.app.device.StreetPlaces(http) }
 
     val device = AndroidDeviceController(context, launcher, appAccess, permissions, fallbackReminder = { text, at ->
         val r = store.reminders.create(text, at, null, time.zone().id)
         reminderScheduler.schedule(r)
-    }, timers = timers, relaxation = relaxation, driving = driving,
+    }, timers = timers, alarms = alarms, relaxation = relaxation, driving = driving,
         // Карты из настроек: «в 2ГИС», «в Google» — иначе открываем те, что назначены системой для geo:.
         mapsApp = { ai.nova.core.assistant.MapsApp.fromId(settings.settings.value.mapsApp) },
         // Где искать в интернете: Android не сообщает поисковик браузера, поэтому выбор хранит Нова.
@@ -366,6 +368,9 @@ class AppContainer(private val context: Context) {
             userName = it.userName.takeIf { n -> n.isNotBlank() }, city = it.city.takeIf { c -> c.isNotBlank() },
             lockPolicy = lockPolicy(),
             persona = ai.nova.core.assistant.Persona.of(it.persona),
+            newsScope = ai.nova.core.skills.NewsScope.of(it.newsScope),
+            newsCity = it.newsCity.takeIf { c -> c.isNotBlank() } ?: it.city.takeIf { c -> c.isNotBlank() },
+            newsTopics = ai.nova.core.skills.NewsQuery.topicsOf(it.newsTopics),
         )
     }
 
@@ -554,6 +559,7 @@ class AppContainer(private val context: Context) {
     /** [afterBoot] — телефон перезагрузился: будильники и зоны мест сброшены системой. */
     suspend fun rescheduleReminders(afterBoot: Boolean = false) {
         runCatching { timers.rescheduleAll(afterBoot) }
+        runCatching { alarms.rescheduleAll() }
         runCatching { geo.registerAll(force = afterBoot) }
         runCatching { ai.nova.app.reminders.SleepMode.reschedule(context) }
         reminderScheduler.rescheduleAll(store.reminders.active())

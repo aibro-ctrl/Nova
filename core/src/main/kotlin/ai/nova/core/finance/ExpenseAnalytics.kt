@@ -79,7 +79,10 @@ object ExpenseAnalytics {
             currency = main,
             totalMinor = mainItems.sumOf { it.amountMinor },
             count = inRange.size,
-            byCategory = mainItems.groupBy { it.category }.map { (c, l) -> CategorySum(c, l.sumOf { it.amountMinor }) }
+            // Категория приводится к каноничной и здесь: в записях, сохранённых раньше, вместо неё
+            // лежал номер карты («Sber 8013»), и такие траты показывались отдельной «категорией».
+            byCategory = mainItems.groupBy { ExpenseCategories.normalize(it.category, it.description) }
+                .map { (c, l) -> CategorySum(c, l.sumOf { it.amountMinor }) }
                 .sortedByDescending { it.amountMinor },
             top = mainItems.sortedByDescending { it.amountMinor }.take(5),
             items = inRange.sortedWith(compareByDescending<Expense> { it.occurredOn }.thenByDescending { it.createdAt }),
@@ -91,7 +94,8 @@ object ExpenseAnalytics {
         val c = category.lowercase().trim()
         if (c.isEmpty()) return true
         val stem = c.take(maxOf(4, c.length - 2))
-        return e.category.lowercase().contains(stem) || e.description.lowercase().contains(stem)
+        val actual = ExpenseCategories.normalize(e.category, e.description).lowercase()
+        return actual.contains(stem) || e.description.lowercase().contains(stem)
     }
 
     /** Текст ответа на русском для голоса и чата. */

@@ -101,8 +101,8 @@ class ReminderReceiver : BroadcastReceiver() {
         private val LATE_NOTE_AFTER = Duration.ofMinutes(2)
         private const val EARLY_TOLERANCE_SECONDS = 5L
         private val ROUTINE_LATE_LIMIT: Duration = Duration.ofHours(1)
-        /** Приёмник живёт около минуты: команды и озвучка должны уложиться. */
-        private const val ROUTINE_TIMEOUT_MS = 25_000L
+        /** Сколько ждём выполнения сценария. Меньше минуты не хватало: новости с контактами не успевали. */
+        private const val ROUTINE_TIMEOUT_MS = 90_000L
         private const val SPEAK_TIMEOUT_MS = 30_000L
         fun notificationId(id: String) = 5000 + (id.hashCode() and 0x0fffffff) % 100000
 
@@ -145,6 +145,13 @@ class ReminderReceiver : BroadcastReceiver() {
                 val late = reminder.lateBy(now)
                 // Сценарий по расписанию: не уведомление, а выполнение команд (вне блокировки — он может идти долго).
                 if (reminder.text.startsWith(Routine.SCHEDULE_PREFIX)) {
+                    // Сценарий удалили, а расписание осталось: снимаем его молча, иначе каждый день
+                    // приходило бы «не удалось выполнить сценарий».
+                    if (!routineExists(c, reminder.text)) {
+                        c.store.reminders.delete(id)
+                        c.reminderScheduler.cancel(id)
+                        return
+                    }
                     c.store.reminders.markFired(id, now)?.let { if (it.active) c.reminderScheduler.schedule(it) }
                     // Телефон был выключен и проснулся через час — утреннее радио в полдень не нужно.
                     if (late > ROUTINE_LATE_LIMIT) return
@@ -180,14 +187,29 @@ class ReminderReceiver : BroadcastReceiver() {
             runRoutine(context, c, id, routine)
         }
 
+        /** Есть ли ещё такой сценарий: расписание без сценария — осиротевшее напоминание. */
+        private suspend fun routineExists(c: AppContainer, text: String): Boolean = runCatching {
+            val key = Routine.normalize(text.removePrefix(Routine.SCHEDULE_PREFIX))
+            c.store.routines.all().any { Routine.normalize(it.trigger) == key }
+        }.getOrDefault(true)
+
         /**
          * Выполняет сценарий: приветствие по имени, полный текст в историю общения, озвучка целиком
          * и уведомление, по нажатию открывающее чат. Раньше результат был только в пуше и обрезался.
          */
         private suspend fun runRoutine(context: Context, c: AppContainer, id: String, text: String) {
             c.awaitReady()
-            val reply = withTimeoutOrNull(ROUTINE_TIMEOUT_MS) { c.engine.runScheduledRoutine(text) } ?: return
             val title = text.removePrefix(Routine.SCHEDULE_PREFIX)
+            val reply = withTimeoutOrNull(ROUTINE_TIMEOUT_MS) { c.engine.runScheduledRoutine(text) }
+            if (reply == null) {
+                // Молчать нельзя: раз напоминание сработало, человек ждёт сценарий, а не тишину.
+                SummaryDelivery.deliver(
+                    context, c, notificationId(id),
+                    title = "Сценарий: $title",
+                    text = "Не удалось выполнить сценарий за отведённое время. Попробуйте сказать «$title» голосом.",
+                )
+                return
+            }
             val body = reply.text.substringAfter('\n', reply.text)
             SummaryDelivery.deliver(context, c, notificationId(id), title = "Сценарий: $title", text = body)
         }

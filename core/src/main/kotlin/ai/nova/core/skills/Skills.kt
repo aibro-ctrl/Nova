@@ -81,6 +81,7 @@ class Skills(
     private var lastMusicAt: java.time.Instant = java.time.Instant.EPOCH
     private var lastNews: List<NewsService.Item> = emptyList()
     private var newsShown = 0
+    private var lastNewsTitle = "Новости"
     private var replyTarget: IncomingMessage? = null
     /** После «где я»: адрес, координаты и когда спросили — чтобы вызвать помощь или передать адрес близкому. */
     private var helpPlace: HelpPlace? = null
@@ -209,21 +210,32 @@ class Skills(
                 val codes = RatesService.codesIn(body).ifEmpty { return null }
                 SkillCommand.Rates(last.query.copy(currencies = codes))
             }
-            is SkillCommand.News -> {
-                val topic = when {
-                    Regex("""спорт|футбол|хоккей""").containsMatchIn(body) -> NewsTopic.SPORT
-                    Regex("""технолог|айти|гаджет""").containsMatchIn(body) -> NewsTopic.TECH
-                    Regex("""наук|космос""").containsMatchIn(body) -> NewsTopic.SCIENCE
-                    Regex("""эконом|финанс|бизнес""").containsMatchIn(body) -> NewsTopic.ECONOMY
-                    Regex("""главн|в мире|в стране""").containsMatchIn(body) -> NewsTopic.MAIN
-                    else -> return null
-                }
-                SkillCommand.News(topic)
+            is SkillCommand.News -> when {
+                // «а вторую?», «про третью новость» — подробности той, что уже прочитана.
+                newsOrdinal(body) != null -> SkillCommand.NewsDetails(newsOrdinal(body))
+                Regex("""спорт|футбол|хоккей""").containsMatchIn(body) -> SkillCommand.News(NewsTopic.SPORT)
+                Regex("""технолог|айти|гаджет""").containsMatchIn(body) -> SkillCommand.News(NewsTopic.TECH)
+                Regex("""наук|космос""").containsMatchIn(body) -> SkillCommand.News(NewsTopic.SCIENCE)
+                Regex("""эконом|финанс|бизнес""").containsMatchIn(body) -> SkillCommand.News(NewsTopic.ECONOMY)
+                Regex("""культур|кино|театр""").containsMatchIn(body) -> SkillCommand.News(NewsTopic.CULTURE)
+                Regex("""здоров|медицин""").containsMatchIn(body) -> SkillCommand.News(NewsTopic.HEALTH)
+                Regex("""главн|в мире|в стране""").containsMatchIn(body) -> SkillCommand.News(NewsTopic.MAIN)
+                // «а про недвижимость?», «а про видеоигры?» — уточнение темы после ленты.
+                else -> SkillPhrases.newsFollowUp(body) ?: return null
             }
             else -> return null
         }
         return handle(text, cfg, ai, parsed = cmd)
     }
+
+    /** «Первая», «о второй», «про третью новость» — номер новости из последней ленты. */
+    private fun newsOrdinal(text: String): Int? {
+        val m = Regex("""^(?:а\s+)?(?:(?:о|об|про)\s+)?(перв|втор|трет|четверт|пят|шест|седьм|восьм|девят|десят)\p{L}*(?:\s+новост\p{L}*)?$""")
+            .find(text.trim()) ?: return null
+        return ORDINAL_STEMS.indexOf(m.groupValues[1]).takeIf { it >= 0 }
+    }
+
+    private val ORDINAL_STEMS = listOf("перв", "втор", "трет", "четверт", "пят", "шест", "седьм", "восьм", "девят", "десят")
 
     /** «Ещё», «давай ещё», «дальше» — продолжение последнего ответа: следующие новости, другая сказка. */
     suspend fun more(text: String, cfg: AssistantSettings, ai: SkillAi?): SkillOutcome? {
@@ -236,7 +248,7 @@ class Skills(
                 val from = newsShown
                 newsShown += next.size
                 lastSkillAt = time.now()
-                SkillOutcome.Say(NewsService.answer(last.topic, next, from = from))
+                SkillOutcome.Say(NewsService.answer(lastNewsTitle, next, from = from))
             }
             is SkillCommand.Tale -> { lastSkillAt = time.now(); tale(Tales.Request(null, false), cfg, ai) }
             else -> null
@@ -358,6 +370,22 @@ class Skills(
         )
     }
 
+    /**
+     * Новость из последней ленты по словам из фразы: «подробнее про сухогруз».
+     * Совпадает, если хотя бы одно слово длиннее трёх букв встречается в заголовке.
+     */
+    private fun findNews(about: String): Int? {
+        fun stems(s: String) = s.lowercase().replace('ё', 'е').split(Regex("""[^\p{L}\p{N}]+"""))
+            .filter { it.length > 3 && !it.startsWith("новост") && !it.startsWith("подробн") }
+            .map { it.take(maxOf(4, it.length - 2)) }
+        val words = stems(about)
+        if (words.isEmpty()) return null
+        val exact = lastNews.indexOfFirst { item -> stems(item.title).any { w -> words.any { it.startsWith(w) || w.startsWith(it) } } }
+        if (exact >= 0) return exact
+        // Порядковый номер словом («второй») уже разобран парсером, здесь только совпадение по смыслу.
+        return null
+    }
+
     // ------------------------------------------------------------------ Выполнение
 
     private fun private(cmd: SkillCommand) = cmd is SkillCommand.ReadMessages || cmd is SkillCommand.ReplyMessage || cmd is SkillCommand.Screen ||
@@ -373,12 +401,12 @@ class Skills(
         is SkillCommand.FindArticle -> if (cmd.save) SkillAccess.CREATE else SkillAccess.PUBLIC
         // Готовит сообщение человеку — как «напиши Маше».
         is SkillCommand.Greet -> SkillAccess.PRIVATE
-        // «Подробнее» открывает браузер — как открытие сайта.
-        is SkillCommand.NewsDetails -> SkillAccess.PRIVATE
+        // Подробности новости — это открытые новости, не личные данные: читаем и на блокировке.
+        is SkillCommand.NewsDetails -> SkillAccess.PUBLIC
         is SkillCommand.SetName, is SkillCommand.SetCity, is SkillCommand.PlaceRemind -> SkillAccess.CREATE
         is SkillCommand.RadioPlay, SkillCommand.RadioStop, SkillCommand.RadioNext, is SkillCommand.MusicPlay,
         is SkillCommand.MusicText, is SkillCommand.MusicLike, SkillCommand.FindPhone,
-        SkillCommand.TimersLeft, is SkillCommand.TimersCancel -> SkillAccess.DEVICE
+        SkillCommand.TimersLeft, is SkillCommand.TimersCancel, is SkillCommand.TimersExtend -> SkillAccess.DEVICE
         SkillCommand.AskName -> SkillAccess.VIEW
         // Адрес — личное: на заблокированном экране не называем.
         SkillCommand.WhereAmI -> SkillAccess.PRIVATE
@@ -407,15 +435,31 @@ class Skills(
         is SkillCommand.MusicLike -> musicLike(cmd)
         is SkillCommand.Rates -> SkillOutcome.Say((ratesService ?: return offline("курс")).answer(cmd.query))
         is SkillCommand.News -> {
-            val feed = (newsService ?: return offline("новости")).feed(cmd.topic)
+            val service = newsService ?: return offline("новости")
+            val query = cfg.newsQuery()
+            // Названная тема («новости про недвижимость») важнее настроек; иначе — рубрика из фразы.
+            val about = cmd.about?.takeIf { it.isNotBlank() }
+            // Названная рубрика важнее региона из настроек: «новости спорта» — про спорт, а не про мой город.
+            val base = if (cmd.topic != null) query.copy(scope = NewsScope.WORLD, city = null) else query
+            val picked = if (about != null) base.effectiveTopics else cmd.topic?.let { listOf(it) } ?: base.effectiveTopics
+            val feed = runCatching { service.feed(base.copy(topics = picked, about = about)) }.getOrNull()
+                ?: return SkillOutcome.Say(
+                    if (about != null) "Свежих новостей про «$about» не нашла. Попробуйте сказать иначе — например, одним словом."
+                    else "Свежих новостей не нашла: источники не отвечают.",
+                )
             lastNews = feed.items
             newsShown = minOf(5, feed.items.size)
-            SkillOutcome.Say(NewsService.answer(feed.topic, feed.items.take(5), asked = cmd.topic))
+            lastNewsTitle = feed.title
+            SkillOutcome.Say(NewsService.answer(feed.title, feed.items.take(5)))
         }
+        // «Расскажи подробнее о второй» — читаем суть, а ссылку оставляем в чате: её можно открыть позже.
         is SkillCommand.NewsDetails -> {
-            val item = lastNews.getOrNull(cmd.index)
-            val link = item?.link
-            if (link == null) null else SkillOutcome.Run(AssistantPlan("", listOf(AssistantAction.Device(DeviceCommand.OpenUrl(link))), preface = "Открываю: ${item.title}"))
+            if (lastNews.isEmpty()) return SkillOutcome.Say("Сначала попросите новости, потом расскажу подробнее.")
+            val index = cmd.index ?: cmd.about?.let { findNews(it) }
+            val item = index?.let { lastNews.getOrNull(it) }
+                ?: return SkillOutcome.Say("Такой новости в последней ленте нет — попросите новости ещё раз.")
+            val summary = (newsService)?.details(item)
+            SkillOutcome.Say(NewsService.detailsText(item, summary), link = item.link)
         }
         is SkillCommand.Fact -> fact(cmd.query, cfg)
         is SkillCommand.FindArticle -> findArticle(cmd, cfg, ai)
@@ -439,7 +483,26 @@ class Skills(
                 val byLength = active.filter { it.seconds == seconds }.ifEmpty { active.takeIf { it.size == 1 && it.single().seconds == 0 }.orEmpty() }
                 byLength.count { host.cancelTimer(it.id) }
             } else host.cancelTimers(cmd.label)
-            SkillOutcome.Say(if (n > 0) "Отменила ${if (n == 1) "таймер" else RuFormat.count(n, "таймер", "таймера", "таймеров")}." else "Активных таймеров нет.")
+            SkillOutcome.Say(
+                when {
+                    n > 0 -> "Отменила ${if (n == 1) "таймер" else RuFormat.count(n, "таймер", "таймера", "таймеров")}."
+                    // Таймер уже прозвенел и убран из списка — глушим его сигнал, если он ещё звенит.
+                    host.stopRing() -> "Выключила сигнал таймера."
+                    else -> "Активных таймеров нет."
+                },
+            )
+        }
+        is SkillCommand.TimersExtend -> {
+            val now = time.now()
+            val active = host.timers().filter { it.endsAt.isAfter(now) }.sortedBy { it.endsAt }
+            if (active.isEmpty()) return SkillOutcome.Say("Активных таймеров нет — продлевать нечего.")
+            // При нескольких таймерах продлеваем ближайший и называем его: так предсказуемее.
+            val target = active.first()
+            val updated = host.extendTimer(target.id, cmd.seconds)
+                ?: return SkillOutcome.Say("Не получилось продлить таймер — попробуйте ещё раз.")
+            val label = target.label.takeIf { it.isNotBlank() }?.let { " «$it»" }.orEmpty()
+            val left = durationText(Duration.between(now, updated.endsAt))
+            SkillOutcome.Say("Продлила таймер$label на ${DevicePhrases.describeDuration(cmd.seconds)} — осталось $left.")
         }
         is SkillCommand.SavePlace -> {
             val p = host.savePlace(cmd.name) ?: return SkillOutcome.Say("Не удалось определить, где вы. Включите геолокацию и повторите.", permission = Permission.LOCATION)

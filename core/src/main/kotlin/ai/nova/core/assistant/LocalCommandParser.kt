@@ -138,6 +138,10 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
                 if (!trigger.isAfter(now)) return AssistantPlan("", emptyList(), slot = slot.copy(question = "Это время уже прошло. Когда напомнить? Например: ${exampleTime(now, zone)}."))
                 plan(AssistantAction.CreateReminder(slot.text, trigger, dates.effectiveRecurrence(parsed.spec)))
             }
+            is SlotRequest.AlarmTime -> {
+                val parsed = DevicePhrases.alarmTime(text) ?: return null
+                plan(AssistantAction.Device(DeviceCommand.Alarm(parsed.first, "", parsed.second.ifEmpty { slot.days })))
+            }
             is SlotRequest.SaveAsNote -> when {
                 isYes(text) -> plan(noteFromText(slot.text))
                 isNo(text) -> AssistantPlan("Хорошо, не сохраняю.", emptyList())
@@ -307,7 +311,9 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         if (Regex("""^(?:спасибо|благодарю|спасиб|пасиб|ты молодец|молодец|умница|ты умница|умничка|ты лучшая|отлично|супер|класс|круто|здорово|отличная работа|ты супер|ты классная)(?:[\s,!]+(?:ты|нова|моя|большое|огромное|тебе|вам|спасибо|молодец|умница|за помощь|родная|дорогая|солнышко))*$""").containsMatchIn(n)) {
             return AssistantPlan(listOf("Всегда пожалуйста!", "Рада помочь!", "Обращайтесь!")[pick(now, 3)], emptyList())
         }
-        if (Regex("""^(хватит|стоп|достаточно|отбой|не надо|ничего)$""").containsMatchIn(n)) {
+        // «Стоп» и «отбой» — не «Хорошо», а команда заглушить сигнал: во время звонка будильника
+        // это первое, что говорят. Если ничего не звенит, Нова так и скажет.
+        if (Regex("""^(хватит|достаточно|не надо|ничего)$""").containsMatchIn(n)) {
             return AssistantPlan("Хорошо.", emptyList())
         }
         if (Regex("""^(пока|до свидания|спокойной ночи|до завтра)$""").containsMatchIn(n)) {
@@ -400,6 +406,13 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
 
         // Команды телефону: таймер, будильник, фонарик, звонок, приложения, музыка, громкость…
         DevicePhrases.parse(n, now, zone)?.let { return plan(AssistantAction.Device(recase(it.command, original))) }
+        // «Будильник на воскресенье» — дня мало, спрашиваем время и помним выбранные дни.
+        DevicePhrases.alarmWithoutTime(n)?.let { days ->
+            return AssistantPlan(
+                "", emptyList(),
+                slot = SlotRequest.AlarmTime(days, "Во сколько поставить будильник ${DevicePhrases.daysText(days)}? Например: «в 7 утра»."),
+            )
+        }
         // Доходы, долги, накопления, дни рождения, списки покупок.
         parseReschedule(original, n, now, zone, today)?.let { return plan(it) }
         parseLife(original, n, now, zone, today)?.let { return it }

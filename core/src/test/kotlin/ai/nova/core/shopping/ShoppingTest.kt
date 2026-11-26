@@ -401,6 +401,30 @@ class ShoppingTest {
     }
 
     @Test
+    fun `в памяти покупок хранится обычный текст, а не код`() = runTest {
+        val memory = FakeMemory()
+        val profile = ShoppingProfile(memory)
+        profile.remember("shoe_size", "46")
+        profile.remember("pet_kind", "кошка")
+        // В разделе «Память» человек видит фразу, а не служебную строку.
+        assertEquals(listOf("Размер обуви: 46", "Питомец: кошка"), memory.items.map { it.content })
+        assertEquals("Размер обуви: 46", ShoppingFact.readable(memory.items.first().content))
+    }
+
+    @Test
+    fun `старая запись с кодом читается и переписывается по-русски`() = runTest {
+        val memory = FakeMemory()
+        val legacy = memory.create("""{"attribute":"clothes_size","value":"44","source":"user_statement","confidence":"1.0"}""", "покупки")
+        val profile = ShoppingProfile(memory)
+        assertEquals("44", profile.facts().clothesSize)
+        // Первое же чтение переписывает запись — в «Памяти» больше не будет кода.
+        assertEquals("Размер одежды: 44", memory.items.single { it.id == legacy.id }.content)
+        assertEquals("Любимый бренд: Puma", ShoppingFact.readable("""{"attribute":"preferred_brand","value":"Puma"}"""))
+        assertEquals("Размер обуви: 46", ShoppingFact.readable("размер обуви: 46"))
+        assertEquals("Не код", ShoppingFact.readable("Не код"))
+    }
+
+    @Test
     fun `факт из реплики`() {
         val profile = ShoppingProfile(FakeMemory())
         assertEquals("shoe_size" to "46", profile.factFrom("у меня 46 размер обуви", ShoppingCategory.SHOES))

@@ -36,9 +36,31 @@ object ExpenseCategories {
 
     val all: List<String> = categories.map { it.first } + OTHER + INCOME
 
+    /**
+     * Строка, которая не может быть категорией: номер карты или служебное имя из пуша банка —
+     * «Sber 8013», «Карта ••1234», «Счёт 4081…». Такие значения приходят от моделей и из уведомлений,
+     * и раньше попадали в статистику отдельной «категорией».
+     */
+    private fun looksLikeCardOrBank(name: String): Boolean {
+        if (name.any { it.isDigit() }) return true
+        if (name.any { it in "·•*…" }) return true
+        val n = RuTokenizer.normalize(name)
+        if (n.split(' ').any { it in CARD_WORDS }) return true
+        // «Сбер», «Тинькофф», «Альфа-Банк» — название банка без магазина тоже не категория.
+        return BANK_WORDS.any { n == it || n.startsWith("$it ") }
+    }
+
+    private val CARD_WORDS = setOf("карта", "картой", "card", "счет", "счёт", "account", "баланс", "balance")
+    private val BANK_WORDS = setOf(
+        "сбер", "сбербанк", "sber", "sberbank", "тинькофф", "tinkoff", "т-банк", "тбанк", "альфа", "альфабанк", "alfa",
+        "втб", "vtb", "райффайзен", "райф", "газпромбанк", "росбанк", "совкомбанк", "открытие", "озон", "яндекс",
+        "псб", "мтс", "почта", "хоум", "уралсиб", "ак барс", "рнкб", "бспб", "банк",
+    )
+
     /** Определяет категорию по свободному тексту описания. */
     fun categorize(text: String): String {
-        val norm = RuTokenizer.normalize(text)
+        // «ООО «Пятёрочка»», «ИП Иванов» — организационная форма к делу не относится.
+        val norm = LEGAL_FORM.replace(RuTokenizer.normalize(text), " ").replace(Regex("""\s{2,}"""), " ").trim()
         val words = TextAnalysis.words(norm)
         var best: String? = null
         var bestScore = 0
@@ -56,13 +78,16 @@ object ExpenseCategories {
         return best ?: OTHER
     }
 
+    private val LEGAL_FORM = Regex("""(?iu)(?:^|\s)(?:ооо|оао|зао|пао|ао|ип|нко|мкк|тд|тсж|нпф|ск)(?=\s|$)""")
+
     /**
      * Приводит категорию от AI к каноничному виду. Если она не похожа ни на одну известную —
-     * сохраняем как есть (с заглавной буквы), чтобы не терять смысл.
+     * сохраняем как есть (с заглавной буквы), чтобы не терять смысл. Номер карты или название банка
+     * категорией не считается: тогда категорию подсказывает описание траты.
      */
     fun normalize(category: String?, description: String = ""): String {
-        val c = category?.trim().orEmpty()
-        if (c.isEmpty()) return categorize(description)
+        val c = category?.trim()?.trim('"', '«', '»', ':', '.', ',')?.trim().orEmpty()
+        if (c.isEmpty() || looksLikeCardOrBank(c)) return categorize(description).takeIf { it != OTHER } ?: OTHER
         all.firstOrNull { it.equals(c, ignoreCase = true) }?.let { return it }
         val guessed = categorize(c)
         if (guessed != OTHER) return guessed

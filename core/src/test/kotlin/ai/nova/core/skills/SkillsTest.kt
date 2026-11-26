@@ -35,7 +35,7 @@ class SkillsTest {
     private val coins = """{"bitcoin":{"rub":7102299,"usd":84163},"ethereum":{"rub":226877,"usd":2688.52}}"""
     private val lenta = """<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Lenta.ru : Новости</title>
         <item><guid>https://lenta.ru/news/1/</guid><title>Турлов избран президентом Международной шахматной федерации</title><link>https://lenta.ru/news/1/</link><description><![CDATA[]]></description></item>
-        <item><title><![CDATA[Портрет таксы выставили на аукцион за &pound;2,5 млн]]></title><link>https://lenta.ru/news/2/</link></item>
+        <item><title><![CDATA[Портрет таксы выставили на аукцион за £2,5 млн]]></title><link>https://lenta.ru/news/2/</link></item>
         <item><title>В Москве открылся фестиваль к 120-летию Шостаковича</title><link><![CDATA[https://tass.ru/kultura/28154497]]></link></item>
         </channel></rss>"""
     private val wikiExtract = """{"batchcomplete":"","query":{"redirects":[{"from":"Гагарин","to":"Гагарин, Юрий Алексеевич"}],"pages":{"1377":{"pageid":1377,"ns":0,"title":"Гагарин, Юрий Алексеевич","extract":"Ю́рий Алексе́евич Гага́рин (9 марта 1934, Клушино, Гжатский (ныне Гагаринский) район, Западная область (ныне — Смоленская область) — 27 марта 1968, возле села Новосёлово) — советский космонавт и военный лётчик, первый человек, совершивший космический полёт. Герой Советского Союза, кавалер высших знаков отличия ряда государств, почётный гражданин многих российских и зарубежных городов.\nПолковник ВВС СССР (1963), лётчик-космонавт СССР."}}}}"""
@@ -102,6 +102,11 @@ class SkillsTest {
         override fun cancelTimers(label: String?) = 1
         val cancelledIds = ArrayList<String>()
         override fun cancelTimer(id: String): Boolean { cancelledIds += id; return true }
+        val extended = ArrayList<Pair<String, Int>>()
+        override fun extendTimer(id: String, seconds: Int): ActiveTimer? {
+            extended += id to seconds
+            return ActiveTimer(id, "паста", Instant.parse("2026-09-25T09:08:30Z").plusSeconds(seconds.toLong()), seconds = 600 + seconds)
+        }
         override suspend fun savePlace(name: String) = SavedPlace(name, 55.7, 37.6).also { savedPlaces += it }
         override fun places() = savedPlaces
         override suspend fun addPlaceReminder(text: String, place: String, onLeave: Boolean) = PlaceReminder("p1", text, place, onLeave).also { placeRems += it }
@@ -136,7 +141,7 @@ class SkillsTest {
             "сколько будет 100 долларов в рублях" to { it is SkillCommand.Rates && it.query.amount == 100.0 && !it.query.fromRub },
             "сколько долларов в 5000 рублях" to { it is SkillCommand.Rates && it.query.amount == 5000.0 && it.query.fromRub },
             "потратила 100 долларов на отель" to { it == null },
-            "новости" to { it is SkillCommand.News && it.topic == NewsTopic.MAIN },
+            "новости" to { it is SkillCommand.News && it.topic == null },
             "расскажи последние новости спорта" to { it is SkillCommand.News && it.topic == NewsTopic.SPORT },
             "что нового в мире" to { it is SkillCommand.News },
             "кто такой Гагарин" to { it is SkillCommand.Fact && it.query == "гагарин" },
@@ -175,6 +180,12 @@ class SkillsTest {
             "назови мой адрес" to { it == SkillCommand.WhereAmI },
             "сколько осталось на таймере" to { it == SkillCommand.TimersLeft },
             "отмени таймер" to { it is SkillCommand.TimersCancel },
+            "продли таймер на 2 минуты" to { it == SkillCommand.TimersExtend(120) },
+            "продли на 2 минуты" to { it == SkillCommand.TimersExtend(120) },
+            "продли ещё на 10 минут" to { it == SkillCommand.TimersExtend(600) },
+            "добавь 3 минуты к таймеру" to { it == SkillCommand.TimersExtend(180) },
+            "продли таймер" to { it == SkillCommand.TimersExtend(300) },
+            "продли таймер на полчаса" to { it == SkillCommand.TimersExtend(1800) },
             "запомни, я дома" to { it is SkillCommand.SavePlace && it.name == "дом" },
             "запомни здесь моя работа" to { it is SkillCommand.SavePlace && it.name == "работа" },
             "напомни, когда буду дома, позвонить маме" to { it is SkillCommand.PlaceRemind && it.place == "дом" && it.text == "Позвонить маме" && !it.onLeave },
@@ -189,6 +200,32 @@ class SkillsTest {
             "давай поиграем" to { it is SkillCommand.StartGame && it.game == null },
             "расскажи сказку" to { it is SkillCommand.Tale && it.request.about == null },
             "расскажи сказку про колобка" to { it is SkillCommand.Tale && it.request.about == "колобка" },
+            "новости спорта" to { it is SkillCommand.News && it.topic == NewsTopic.SPORT },
+            // Конкретика: тема своими словами важнее выбора в настройках.
+            "новости про недвижимость" to { it is SkillCommand.News && it.about == "недвижимость" && it.topic == null },
+            "новости про пк" to { it is SkillCommand.News && it.about == "пк" },
+            "какие новости в мире видеоигр" to { it is SkillCommand.News && it.about == "видеоигр" },
+            "что нового про нейросети" to { it is SkillCommand.News && it.about == "нейросети" },
+            "последние новости о выборах" to { it is SkillCommand.News && it.about == "выборах" },
+            "новости по теме криптовалюта" to { it is SkillCommand.News && it.about == "криптовалюта" },
+            "расскажи новости насчёт ипотеки" to { it is SkillCommand.News && it.about == "ипотеки" },
+            // «айти» — известная рубрика, отдельный поиск ей не нужен.
+            "новости в сфере IT" to { it is SkillCommand.News && it.topic == NewsTopic.TECH && it.about == null },
+            "что слышно про новые автомобили" to { it is SkillCommand.News && it.about == "новые автомобили" },
+            "новости для геймеров" to { it is SkillCommand.News && it.about == "геймеров" },
+            "что слышно нового про машины" to { it is SkillCommand.News && it.about == "машины" },
+            "новости про Казань" to { it is SkillCommand.News && it.about == "казань" },
+            // Названная рубрика и страна остаются рубрикой и регионом.
+            "новости про спорт" to { it is SkillCommand.News && it.topic == NewsTopic.SPORT && it.about == null },
+            "новости про Россию" to { it is SkillCommand.News && it.topic == NewsTopic.COUNTRY && it.about == null },
+            // Регион и рубрики темой не считаются.
+            "новости в мире" to { it is SkillCommand.News && it.topic == NewsTopic.WORLD && it.about == null },
+            "новости страны" to { it is SkillCommand.News && it.topic == NewsTopic.COUNTRY && it.about == null },
+            "новости за неделю" to { it is SkillCommand.News && it.about == null },
+            // «Третья новость» без «подробнее» — тоже подробности.
+            "третья новость" to { it is SkillCommand.NewsDetails && it.index == 2 },
+            "расскажи подробнее о второй" to { it is SkillCommand.NewsDetails && it.index == 1 },
+            "расскажи подробнее о второй новости" to { it is SkillCommand.NewsDetails && it.index == 1 },
             "придумай сказку про кота" to { it is SkillCommand.Tale && it.request.invent },
             "запиши расход 500 рублей" to { it == null },
             "поставь таймер на 5 минут" to { it == null },
@@ -273,6 +310,28 @@ class SkillsTest {
         assertEquals("RU", found.first().country)
     }
 
+    @Test fun extendTimersByVoice() = runTest {
+        val host = FakeHost()
+        val skills = Skills(host, http(), TestEnv().time)
+        val said = (skills.handle("продли таймер на 2 минуты", AssistantSettings(), null) as SkillOutcome.Say).text
+        assertEquals(listOf("t1" to 120), host.extended)
+        assertTrue(said.startsWith("Продлила таймер «паста» на 2 минуты — осталось"), said)
+        // Прозвеневший таймер уже убран из списка — глушим сигнал, а не говорим «нет таймеров».
+        val silent = object : SkillHost by host {
+            override fun timers(): List<ActiveTimer> = emptyList()
+            override fun cancelTimers(label: String?): Int = 0
+            override fun stopRing(): Boolean = true
+        }
+        val stopped = (Skills(silent, http(), TestEnv().time).handle("отмени таймер", AssistantSettings(), null) as SkillOutcome.Say).text
+        assertEquals("Выключила сигнал таймера.", stopped)
+        // Без активных таймеров — честный отказ, а не выдуманное продление.
+        val empty = object : SkillHost by host {
+            override fun timers(): List<ActiveTimer> = emptyList()
+        }
+        val nothing = (Skills(empty, http(), TestEnv().time).handle("продли на 5 минут", AssistantSettings(), null) as SkillOutcome.Say).text
+        assertEquals("Активных таймеров нет — продлевать нечего.", nothing)
+    }
+
     @Test fun findRecipeAndSaveToNotes() = runTest {
         val host = FakeHost()
         val skills = Skills(host, http(), TestEnv().time)
@@ -308,7 +367,7 @@ class SkillsTest {
     @Test fun newsAndWikiParsing() {
         val items = NewsService.parseRss(lenta)
         assertEquals(3, items.size)
-        assertEquals("Портрет таксы выставили на аукцион за £2,5 млн".replace("£", "&pound;"), items[1].title)
+        assertEquals("Портрет таксы выставили на аукцион за £2,5 млн", items[1].title)
         assertEquals("https://tass.ru/kultura/28154497", items[2].link)
         val a = WikiService.parseExtract(wikiExtract)
         assertNotNull(a)
@@ -482,6 +541,8 @@ class SkillsTest {
         // Таймеры, Википедия, сообщения, контакты, имя.
         assertNull(p("сколько осталось дней до нового года"))
         assertEquals(SkillCommand.TimersLeft, p("сколько осталось"))
+        // «Добавь таймер на 5 минут» — новый таймер, а не продление.
+        assertFalse(p("добавь таймер на 5 минут") is SkillCommand.TimersExtend)
         assertNull(p("где находится мой паспорт"))
         assertNull(p("что ты знаешь про мою маму"))
         assertEquals(SkillCommand.Fact("путину"), p("сколько лет путину"))

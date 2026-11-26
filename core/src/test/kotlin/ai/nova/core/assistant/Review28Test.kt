@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import io.ktor.client.engine.mock.respond
 
 /** 2.8: тренировка голосом, итоги недели, лента дня. Сегодня пятница 25.09.2026. */
 class Review28Test {
@@ -101,6 +102,49 @@ class Scheduled28Test {
         assertTrue(out != null && out.text.contains("План на") || out!!.text.contains("ничего не запланировано"), out.text)
         assertNull(e.engine.runScheduledRoutine("Сценарий: нет такого"))
         assertNull(e.engine.runScheduledRoutine("Позвонить маме"))
+    }
+
+    /** Все отмеченные галочки должны попасть в сценарий: раньше новости и дни рождения «терялись». */
+    @Test fun everyCheckedBlockRuns() = runTest {
+        val rss = "<rss><channel><item><title>Новость дня</title><link>https://x/1</link></item></channel></rss>"
+        val http = io.ktor.client.HttpClient(
+            io.ktor.client.engine.mock.MockEngine { req ->
+                val u = req.url.toString()
+                when {
+                    u.contains("geocoding-api") -> respond(
+                        """{"results":[{"id":1,"name":"Москва","latitude":55.75,"longitude":37.61,"country_code":"RU","country":"Россия"}]}""",
+                        io.ktor.http.HttpStatusCode.OK, io.ktor.http.headersOf("Content-Type", "application/json"),
+                    )
+                    u.contains("open-meteo") -> respond(
+                        """{"current":{"time":"2026-09-25T12:00","temperature_2m":15.8,"apparent_temperature":11.3,"weather_code":2,"wind_speed_10m":4.1},"daily":{"time":["2026-09-25"],"weather_code":[3],"temperature_2m_max":[16.0],"temperature_2m_min":[8.5],"precipitation_probability_max":[0],"wind_speed_10m_max":[2.1]}}""",
+                        io.ktor.http.HttpStatusCode.OK, io.ktor.http.headersOf("Content-Type", "application/json"),
+                    )
+                    u.contains("news.google.com") || u.contains("lenta.ru") -> respond(
+                        rss, io.ktor.http.HttpStatusCode.OK, io.ktor.http.headersOf("Content-Type", "text/xml"),
+                    )
+                    else -> respond("", io.ktor.http.HttpStatusCode.NotFound)
+                }
+            },
+        )
+        class Host : ai.nova.core.skills.SkillHost {
+            override suspend fun location() = ai.nova.core.skills.GeoPoint(55.75, 37.62)
+            override suspend fun contactBirthdays() = listOf("Маша Иванова" to java.time.MonthDay.of(9, 28))
+        }
+        val e = TestEnv(skillsFactory = { t -> ai.nova.core.skills.Skills(Host(), http, t) })
+            .apply { settings = AssistantSettings(useAI = false) }
+        e.engine.handle("день рождения мамы 3 октября")
+        // Галочки конструктора: приветствие, погода, новости, дни рождения.
+        val commands = ai.nova.core.assistant.RoutineBlocks.compose(
+            emptyList(),
+            setOf("greeting", "weather", "news", "birthdays"),
+            emptyList(),
+        )
+        e.store.routines.save("Доброе утро", commands)
+        val out = e.engine.runScheduledRoutine("Сценарий: Доброе утро")?.text.orEmpty()
+        assertTrue(out.contains("Чем помочь"), out)
+        assertTrue(out.contains("облачность"), out)
+        assertTrue(out.contains("Новость дня"), out)
+        assertTrue(out.contains("мамы") || out.contains("Мамы") || out.contains("октября"), out)
     }
 
     @Test fun deleteScheduledRemovesReminder() = runTest {

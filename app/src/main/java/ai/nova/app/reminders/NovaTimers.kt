@@ -57,6 +57,16 @@ class NovaTimers(private val context: Context) {
         gone.size
     }
 
+    /** «Продли таймер на 2 минуты»: сдвигаем конец и переставляем сигнал. */
+    fun extend(id: String, seconds: Int): ActiveTimer? = synchronized(LOCK) {
+        val list = stored()
+        val t = list.firstOrNull { it.id == id } ?: return null
+        val updated = t.copy(endsAt = t.endsAt.plusSeconds(seconds.toLong()), seconds = t.seconds + seconds)
+        save(list.map { if (it.id == id) updated else it })
+        schedule(updated)
+        updated
+    }
+
     fun cancelOne(id: String): Boolean = synchronized(LOCK) {
         val t = stored().firstOrNull { it.id == id } ?: return false
         unschedule(t)

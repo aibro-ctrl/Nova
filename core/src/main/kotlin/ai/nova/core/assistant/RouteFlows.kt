@@ -99,7 +99,15 @@ internal class RouteFlows(
         }
         val place = state.rest.firstOrNull()
         // Мест больше нет: предложение остаётся открытым, чтобы «нет» и «хватит» звучали как отказ, а не «не поняла».
-        if (place == null) return ExecutionResult(listOf(Outcome("Больше мест рядом не нашла. Скажите иначе — например, «маршрут до аптеки на Ленина».", Outcome.Kind.QUERY)))
+        if (place == null) {
+            val text = if (state.inApp) {
+                // Здесь мест не перечисляли: ближайшее выбрали карты, а список всех аптек рядом — у них же.
+                "Другие варианты — в приложении карт: там весь список рядом. Или назовите место точнее: «аптека на Ленина»."
+            } else {
+                "Больше мест рядом не нашла. Скажите иначе — например, «маршрут до аптеки на Ленина»."
+            }
+            return ExecutionResult(listOf(Outcome(text, Outcome.Kind.QUERY)))
+        }
         nextPlace = state.copy(rest = state.rest.drop(1))
         return ExecutionResult(listOf(routeOutcome(place, state.kind, state.app, "Следующий вариант")))
     }
@@ -118,13 +126,50 @@ internal class RouteFlows(
         val query = when {
             address -> command.destination.trim()
             Places.vague(command.destination) -> kind?.search ?: command.destination
-            else -> ai.nova.core.nlp.RuQuery.placeForm(command.destination)
+            // Разбор команды уже привёл место к словарной форме: второй раз не трогаем,
+            // иначе «Ауры» → «Аура» → «Аур».
+            else -> command.destination.trim()
         }
         return placesStep(query, kind, command.app, exact = address)
     }
 
-    /** Ищем место рядом и строим маршрут до ближайшего; остальные запоминаем для «ещё». */
+    /**
+     * Маршрут до ближайшего места: сначала Нова смотрит, что есть совсем рядом, а если рядом пусто —
+     * слово ищут сами карты.
+     *
+     * Почему так, а не «всё отдать картам»: у карт полный справочник города (аптека на первом этаже
+     * жилого дома есть только у них), но ближайшее они выбирают по своей логике — по «торговому центру»
+     * вели в самый популярный, за 7 км, хотя в соседнем доме был другой. Наоборот, открытая карта
+     * отвечает точно по расстоянию, но части точек в ней нет.
+     *
+     * Поэтому: нашлась точка ближе [NEAR_WALK_METERS] (или [NEAR_CAR_METERS] для тех мест, куда едут) —
+     * ведём к ней по координатам, это гарантированно рядом. Дальше — отдаём слово картам: значит,
+     * открытая карта чего-то не знает, и полный справочник полезнее.
+     */
     suspend fun placesStep(query: String, kind: PlaceKind?, app: MapsApp?, exact: Boolean = false): Step {
+        if (kind != null) {
+            // Картам — слово, которое они понимают: «торговый центр» вместо «до торгового центра»,
+            // «автобусная остановка» вместо «остановки». Название («ТЦ Галерея») и кухня («суши-бар»)
+            // важнее вида места: их так и отдаём.
+            val word = Places.name(query) ?: when {
+                kind == PlaceKind.FOOD || kind == PlaceKind.COFFEE -> query
+                Places.isKindPhrase(query) -> kind.search
+                else -> query
+            }
+            val near = runCatching { device.findPlaces(query) }.getOrElse {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                emptyList()
+            }.firstOrNull()
+            val limit = kind.nearMeters ?: if (kind.byCar) NEAR_CAR_METERS else NEAR_WALK_METERS
+            if (near?.meters != null && near.meters!! <= limit) {
+                nextPlace = PendingPlace(kind, app, emptyList(), inApp = false)
+                return Step(listOf(routeOutcome(near, kind, app, "Ближайший вариант")))
+            }
+            val r = device.perform(DeviceCommand.Navigate(word, app, walking = !kind.byCar))
+            // «Ещё» рядом не перелистываем: список всех аптек рядом — в самом приложении карт.
+            nextPlace = PendingPlace(kind, app, emptyList(), inApp = true)
+            return Step(listOf(Outcome(r.text, if (r.ok) Outcome.Kind.QUERY else Outcome.Kind.ERROR)))
+        }
         val found = runCatching { device.findPlaces(query) }.getOrElse {
             if (it is kotlinx.coroutines.CancellationException) throw it
             emptyList()
@@ -146,6 +191,14 @@ internal class RouteFlows(
             else -> "Нашла вариант"
         }
         return Step(listOf(routeOutcome(place, kind, app, lead, hint = !exact && rest.isNotEmpty())))
+    }
+
+    private companion object {
+        /** Ближе этого — идём пешком по координатам: точка точно рядом, гадать не о чем. */
+        const val NEAR_WALK_METERS = 200
+
+        /** Для тех мест, куда едут (заправка, парковка, гостиница), «рядом» — это километр. */
+        const val NEAR_CAR_METERS = 1_000
     }
 
     fun routeOutcome(
@@ -190,5 +243,7 @@ internal class RouteFlows(
         val kind: PlaceKind?,
         val app: MapsApp?,
         val rest: List<PlaceCandidate>,
+        /** Место искали карты, а не Нова: перелистывать рядом нечего, список — в приложении карт. */
+        val inApp: Boolean = false,
     )
 }

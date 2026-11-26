@@ -20,11 +20,20 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Ближайшие места по названию — через открытый справочник OpenStreetMap (Nominatim).
+ * Ближайшие места — через открытый справочник OpenStreetMap (Nominatim).
  *
- * Нужен ровно для одного: карты строят маршрут по координатам, а по слову только показывают список
- * («аптека» → результаты поиска). Поэтому место сначала находим сами — с уклоном в сторону того,
- * где человек сейчас, — а картам отдаём точку.
+ * Ищет две вещи: название или адрес («Галерея», «Большевистская, 36») и вид места рядом
+ * («аптека», «кафе», «заправка»). Вид места нужен, чтобы понять, есть ли что-то совсем рядом:
+ * если есть — маршрут строится по координатам этой точки, а не по слову в приложении карт.
+ *
+ * Почему не отдавать всё картам: у них полный справочник, но ближайшее они выбирают по своей
+ * логике. «Построй маршрут до торгового центра» вело в самый популярный — за 7 км, хотя в соседнем
+ * доме был другой, а «кафе» — за 2 км при кафе в 50 метрах. Открытая карта отвечает строго
+ * по расстоянию, поэтому решение принимает Нова, а карты ищут сами только когда рядом ничего нет.
+ *
+ * Свободный поиск сортирует ответы по релевантности, а не по расстоянию. Поэтому запрос идёт
+ * маленькими кольцами вокруг телефона — двор, квартал, район, — и только потом шире, а результаты
+ * Нова сортирует по расстоянию сама.
  *
  * Запрос уходит в интернет, как и любой поиск на карте. Правила справочника: не чаще одного запроса
  * в секунду и с честным именем приложения — поэтому ответы кэшируются на десять минут.
@@ -43,23 +52,53 @@ class StreetPlaces(private val http: HttpClient) {
         val kind = Places.kind(query)
         val at = here?.let { round(it.first) to round(it.second) }
         val key = "$q|${city.orEmpty().lowercase()}|${at?.first ?: ""},${at?.second ?: ""}"
-        // Лимит берём с запасом: тег OSM отсекает лишнее, и чистыми остаются не все 20.
-        val pool = (limit * POOL_MULTIPLE).coerceAtLeast(POOL_MIN)
         cache[key]?.takeIf { System.currentTimeMillis() - it.at < TTL_MS }?.let { return it.list }
-        // Справочник не понимает падежи («до торгового центра Галерея»), поэтому пробуем варианты:
-        // сначала название с городом («Галерея Новосибирск»), потом фразу целиком.
-        var list = emptyList<PlaceCandidate>()
-        for (variant in Places.searchQueries(q, city)) {
-            list = runCatching { request(variant, city, here, pool, kind) }.getOrElse {
+        val list = if (kind != null) byKind(kind, city, at, limit) else byName(q, city, here, limit)
+        if (list.isNotEmpty()) cache[key] = Hit(System.currentTimeMillis(), list)
+        if (cache.size > 40) cache.entries.removeIf { System.currentTimeMillis() - it.value.at > TTL_MS }
+        return list
+    }
+
+    /**
+     * Ближайшее место нужного вида: кольца от двора до района, ответ — по расстоянию.
+     * Справочник не знает слов «торговый центр», «парковка» — у вида места свой запрос ([PlaceKind.osm]).
+     */
+    private suspend fun byKind(
+        kind: PlaceKind,
+        city: String?,
+        here: Pair<Double, Double>?,
+        limit: Int,
+    ): List<PlaceCandidate> {
+        // Без точки телефона колец не построить: спрашиваем по городу целиком.
+        val rings = if (here == null) listOf(null) else if (kind.byCar) RINGS_BY_CAR else RINGS
+        for (meters in rings) {
+            val list = runCatching { request(kind.osm, city, here, limit, kind, meters) }.getOrElse {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                Logger.w(TAG, "Поиск «${kind.osm}» не удался", it)
+                emptyList()
+            }
+            if (list.isNotEmpty()) return list
+        }
+        return emptyList()
+    }
+
+    /** Поиск по названию: справочник не понимает падежи, поэтому пробуем варианты запроса. */
+    private suspend fun byName(
+        query: String,
+        city: String?,
+        here: Pair<Double, Double>?,
+        limit: Int,
+    ): List<PlaceCandidate> {
+        // Сначала название с городом («Галерея Новосибирск»), потом фразу целиком.
+        for (variant in Places.searchQueries(query, city)) {
+            val list = runCatching { request(variant, city, here, limit, null, null) }.getOrElse {
                 if (it is kotlinx.coroutines.CancellationException) throw it
                 Logger.w(TAG, "Поиск места «$variant» не удался", it)
                 emptyList()
             }
-            if (list.isNotEmpty()) break
+            if (list.isNotEmpty()) return list
         }
-        if (list.isNotEmpty()) cache[key] = Hit(System.currentTimeMillis(), list)
-        if (cache.size > 40) cache.entries.removeIf { System.currentTimeMillis() - it.value.at > TTL_MS }
-        return list
+        return emptyList()
     }
 
     private suspend fun request(
@@ -67,9 +106,14 @@ class StreetPlaces(private val http: HttpClient) {
         city: String?,
         here: Pair<Double, Double>?,
         limit: Int,
-        kind: PlaceKind? = null,
+        kind: PlaceKind?,
+        meters: Int?,
     ): List<PlaceCandidate> {
         val text = if (city != null && !query.contains(city, ignoreCase = true)) "$query, $city" else query
+        // Кольцо вокруг телефона: двор, квартал, район. Рамка на полгорода отвечала чем угодно,
+        // кроме ближайшего: свободный поиск сортирует по релевантности, а не по расстоянию.
+        val halfLat = meters?.let { it / METERS_PER_DEGREE } ?: BOX_LAT
+        val halfLon = meters?.let { it / (METERS_PER_DEGREE * Math.cos(Math.toRadians(here?.first ?: 0.0))) } ?: BOX_LON
         val url = buildString {
             append("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&accept-language=ru")
             append("&limit=").append(MAX_RESULTS)
@@ -77,8 +121,8 @@ class StreetPlaces(private val http: HttpClient) {
             if (here != null) {
                 // Рамка вокруг человека: чужие города и одноимённые улицы в другой области не нужны.
                 append("&viewbox=")
-                append(here.second - BOX_LON).append(',').append(here.first + BOX_LAT).append(',')
-                append(here.second + BOX_LON).append(',').append(here.first - BOX_LAT)
+                append(here.second - halfLon).append(',').append(here.first + halfLat).append(',')
+                append(here.second + halfLon).append(',').append(here.first - halfLat)
                 append("&bounded=1")
             }
         }
@@ -91,9 +135,9 @@ class StreetPlaces(private val http: HttpClient) {
             header("User-Agent", AGENT)
             header("Accept", "application/json")
         }.bodyAsText()
-        // Вид места берём из того, как человек назвал его сам: «Галерея» без слова «торговый центр»
-        // вид не подскажет, а поиск уже идёт по торговым центрам.
-        return Nominatim.places(body, kind ?: Places.kind(query), here, limit)
+        // За кольцом не смотрим: «ближайшее» должно быть внутри него.
+        return Nominatim.places(body, kind, here, limit, maxMeters = meters ?: Nominatim.MAX_METERS)
+            .filter { place -> meters == null || (place.meters ?: Int.MAX_VALUE) <= meters }
     }
 
     private fun clean(text: String) = text.lowercase().replace('ё', 'е').replace(Regex("""[^\p{L}\p{N}\s\-.,]"""), " ")
@@ -108,14 +152,20 @@ class StreetPlaces(private val http: HttpClient) {
         const val AGENT = "Nova-Assistant/3.0.0 (Android; +https://github.com/aibro-ctrl/Nova)"
         const val TTL_MS = 10 * 60_000L
         const val MIN_INTERVAL_MS = 1_100L
-        const val MAX_RESULTS = 20
-        /** Пул для «ещё»: теги OSM отсекают лишнее — берём с запасом, чтобы соседние не кончались на первом же запросе. */
-        const val POOL_MULTIPLE = 2
-        const val POOL_MIN = 12
+        /** Справочник отдаёт не больше 40 ответов: для названия или адреса этого хватает с запасом. */
+        const val MAX_RESULTS = 40
         const val DEFAULT_LIMIT = 6
-        /** Половина рамки поиска: примерно 25 км на запад-восток и 33 км на север-юг. */
+        /** Половина рамки поиска названия вокруг телефона: примерно 25 км на запад-восток и 33 км на север-юг. */
         const val BOX_LON = 0.35
         const val BOX_LAT = 0.30
+
+        /** Кольца поиска вида места: двор, квартал, район. Дальше — уже не «рядом». */
+        val RINGS = listOf(600, 2_000, 6_000)
+
+        /** До заправки, парковки и гостиницы едут: в кольце двора их обычно нет. */
+        val RINGS_BY_CAR = listOf(2_000, 6_000)
+
+        const val METERS_PER_DEGREE = 111_320.0
     }
 }
 
@@ -125,7 +175,13 @@ class StreetPlaces(private val http: HttpClient) {
  */
 internal object Nominatim {
 
-    fun places(body: String, kind: PlaceKind?, here: Pair<Double, Double>?, limit: Int = 6): List<PlaceCandidate> {
+    fun places(
+        body: String,
+        kind: PlaceKind?,
+        here: Pair<Double, Double>?,
+        limit: Int = 6,
+        maxMeters: Int = MAX_METERS,
+    ): List<PlaceCandidate> {
         val array = runCatching { Json.parseToJsonElement(body).jsonArray }.getOrNull() ?: return emptyList()
         val parsed = array.mapNotNull { element ->
             val o = runCatching { element.jsonObject }.getOrNull() ?: return@mapNotNull null
@@ -135,7 +191,9 @@ internal object Nominatim {
             val display = o.str("display_name").orEmpty()
             val name = o.str("name").orEmpty()
             PlaceCandidate(
-                name = name.ifBlank { display.substringBefore(',') },
+                // Без имени не подставляем первую часть адреса в название: иначе в ответе
+                // «улица Ленина» звучит и как имя, и как адрес. [PlaceCandidate.title] сам возьмёт адрес.
+                name = name,
                 address = shortAddress(o, name, display),
                 lat = lat,
                 lon = lon,
@@ -144,7 +202,7 @@ internal object Nominatim {
         }
         val sorted = matching(parsed, kind).sortedBy { it.meters ?: Int.MAX_VALUE }
         // Совсем далёкое — уже не «ближайшее»: лучше честно сказать, что рядом не нашла.
-        return sorted.filter { place -> place.meters?.let { it < MAX_METERS } ?: true }.take(limit)
+        return sorted.filter { place -> place.meters?.let { it <= maxMeters } ?: true }.take(limit)
     }
 
     /**
@@ -153,8 +211,9 @@ internal object Nominatim {
      */
     private fun matching(parsed: List<Pair<PlaceCandidate, String>>, kind: PlaceKind?): List<PlaceCandidate> {
         val tags = kind?.let { OSM[it] } ?: return parsed.map { it.first }
-        val only = parsed.filter { (_, tag) -> tags.any { want -> tag == want || tag.startsWith("$want/") } }
-        return (only.ifEmpty { parsed }).map { it.first }
+        // Для вида места строго по тегам: похожее название в двух шагах — это не аптека, а
+        // «Аптекарский огород». Если рядом ничего нет, карты найдут сами.
+        return parsed.filter { (_, tag) -> tags.any { want -> tag == want || tag.startsWith("$want/") } }.map { it.first }
     }
 
     /** Адрес без повторов названия: «улица Ленина, 5, Новосибирск» вместо простыни из справочника. */
@@ -178,14 +237,8 @@ internal object Nominatim {
         runCatching { this[key]?.jsonPrimitive?.doubleOrNull }.getOrNull()
 
     /** Расстояние по прямой: для «ближайшего» достаточно, карты потом считают точный путь. */
-    private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Int {
-        val r = 6_371_000.0
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
-        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
-        return (r * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))).toInt()
-    }
+    private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Int =
+        metersBetween(lat1, lon1, lat2, lon2)
 
     /** Вид места в разметке OpenStreetMap: «категория/тип» из ответа справочника. */
     private val OSM = mapOf(
@@ -203,7 +256,18 @@ internal object Nominatim {
         PlaceKind.PARKING to listOf("amenity/parking"),
         PlaceKind.DENTIST to listOf("amenity/dentist", "amenity/clinic"),
         PlaceKind.MARKET to listOf("amenity/marketplace", "shop/market"),
+        PlaceKind.STOP to listOf("highway/bus_stop", "public_transport/platform", "railway/tram_stop"),
     )
 
-    private const val MAX_METERS = 40_000
+    const val MAX_METERS = 40_000
+}
+
+/** Расстояние по прямой между двумя точками, метры: для «ближайшего» этого достаточно. */
+internal fun metersBetween(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Int {
+    val r = 6_371_000.0
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
+    return (r * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))).toInt()
 }

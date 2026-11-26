@@ -197,6 +197,12 @@ data class AppSettings(
     val musicApp: String = "",
     /** Маркетплейсы для покупок: "wb", "ozon" через запятую; пусто — обе площадки. */
     val shoppingMarketplaces: String = "",
+    /** Новости: регион — world, country или city. */
+    val newsScope: String = "world",
+    /** Город для новостей (если выбран регион «Город»); пусто — город из настроек. */
+    val newsCity: String = "",
+    /** Рубрики новостей через запятую: main, economy, tech, science, sport, culture, health. */
+    val newsTopics: String = "main",
     /** Помнить размеры и любимые бренды для покупок — долгосрочная память Нова, только на телефоне. */
     val shoppingMemory: Boolean = true,
     /** По воскресеньям в 19:00 — итоги недели (по умолчанию выключено). */
@@ -262,6 +268,9 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val searchEngine = stringPreferencesKey("search_engine")
         val musicApp = stringPreferencesKey("music_app")
         val shoppingMarketplaces = stringPreferencesKey("shopping_marketplaces")
+        val newsScope = stringPreferencesKey("news_scope")
+        val newsCity = stringPreferencesKey("news_city")
+        val newsTopics = stringPreferencesKey("news_topics")
         val shoppingMemory = booleanPreferencesKey("shopping_memory")
         val weeklyReview = booleanPreferencesKey("weekly_review")
         val persona = stringPreferencesKey("persona")
@@ -369,6 +378,9 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             searchEngine = p[K.searchEngine].orEmpty(),
             musicApp = p[K.musicApp].orEmpty(),
             shoppingMarketplaces = p[K.shoppingMarketplaces].orEmpty(),
+            newsScope = p[K.newsScope] ?: "world",
+            newsCity = p[K.newsCity].orEmpty(),
+            newsTopics = p[K.newsTopics] ?: "main",
             shoppingMemory = p[K.shoppingMemory] ?: true,
             weeklyReview = p[K.weeklyReview] ?: false,
             persona = p[K.persona] ?: "caring",
@@ -471,12 +483,15 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setMusicApp(id: String) = store.edit { it[K.musicApp] = id }
     suspend fun setShoppingMarketplaces(v: String) = store.edit { it[K.shoppingMarketplaces] = v }
     suspend fun setShoppingMemory(v: Boolean) = store.edit { it[K.shoppingMemory] = v }
+    suspend fun setNewsScope(v: String) = store.edit { it[K.newsScope] = v }
+    suspend fun setNewsCity(v: String) = store.edit { it[K.newsCity] = v }
+    suspend fun setNewsTopics(v: String) = store.edit { it[K.newsTopics] = v }
     suspend fun setWeeklyReview(v: Boolean) = store.edit { it[K.weeklyReview] = v }
     suspend fun setPersona(v: String) = store.edit { it[K.persona] = v }
     suspend fun setQuickInput(v: Boolean) = store.edit { it[K.quickInput] = v }
     suspend fun setBankPushes(v: BankPushMode) = store.edit { it[K.bankPushes] = v.id }
-    suspend fun setScreenAiConsent(v: Boolean) = store.edit { it[K.screenAiConsent] = v }
     suspend fun setSecureScreen(v: Boolean) = store.edit { it[K.secureScreen] = v }
+    suspend fun setScreenAiConsent(v: Boolean) = store.edit { it[K.screenAiConsent] = v }
     suspend fun setSpeechPause(v: SpeechPause) = store.edit { it[K.speechPause] = v.id }
     suspend fun setSpeechPitch(v: Float) = store.edit { it[K.pitch] = v.coerceIn(0.5f, 2f) }
     suspend fun setSpeechVolume(v: Float) = store.edit { it[K.volume] = v.coerceIn(0.1f, 1f) }
