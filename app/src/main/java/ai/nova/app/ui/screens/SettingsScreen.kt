@@ -49,6 +49,7 @@ import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.TableChart
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
@@ -136,6 +137,7 @@ enum class SettingsPage(val route: String, val title: String, val subtitle: Stri
     ACTIONS("settings/actions", "Действия", "Куда открывать ссылки, музыка и видео, траты из уведомлений", Icons.Rounded.OpenInNew),
     ACCESS("settings/access", "Безопасность и разрешения", "Экран блокировки, вход по отпечатку, доступы", Icons.Rounded.Shield),
     ACCOUNT("settings/account", "Аккаунт", "Синхронизация между устройствами", Icons.Rounded.Cloud),
+    SHEETS("settings/sheets", "Google Таблицы", "Напоминания и заметки в вашей таблице", Icons.Rounded.TableChart),
     BACKUP("settings/backup", "Резервная копия", "Сохранить записи в файл и перенести на другой телефон", Icons.Rounded.Backup),
     CAPABILITIES("settings/capabilities", "Что умеет Нова", "Команды и примеры", Icons.Rounded.Lightbulb, main = false),
     CLOCK("settings/clock", "Будильники и таймеры", "Свои или телефона", Icons.Rounded.Alarm, main = false),
@@ -159,6 +161,7 @@ fun SettingsScreen(
         SettingsPage.APPEARANCE -> AppearancePage(c, onBack)
         SettingsPage.ACCESS -> AccessPage(c, onBack)
         SettingsPage.ACCOUNT -> AccountPage(c, onBack, onOpenAuth)
+        SettingsPage.SHEETS -> SheetsPage(c, onBack)
         SettingsPage.BACKUP -> BackupPage(c, onBack)
         SettingsPage.ABOUT -> AboutPage(c, onBack)
         SettingsPage.CAPABILITIES -> CapabilitiesPage(c, onBack, openAi = { open(SettingsPage.AI) })

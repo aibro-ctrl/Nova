@@ -222,6 +222,13 @@ data class AppSettings(
     /** Траты из пушей банков: выключено, спрашивать или записывать сразу. */
     val bankPushes: BankPushMode = BankPushMode.ASK,
     val supabaseUrlOverride: String = "",
+    /** Google Таблица: ID листа и адрес веб-приложения Apps Script. Код доступа хранится в Keystore. */
+    val sheetsId: String = "",
+    val sheetsWebAppUrl: String = "",
+    /** Отправлять изменения в таблицу сама, без нажатия кнопки. */
+    val sheetsAutoSync: Boolean = false,
+    /** Когда последний раз синхронизировались с таблицей (миллисекунды). */
+    val sheetsLastSyncAt: Long = 0,
     val localOnly: Boolean = false,
     val onboardingDone: Boolean = false,
     val profileUpdatedAt: Long = 0,
@@ -309,6 +316,10 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val keyTrigger = stringPreferencesKey("key_trigger")
         val appLock = booleanPreferencesKey("app_lock")
         val supabaseUrl = stringPreferencesKey("supabase_url")
+        val sheetsId = stringPreferencesKey("sheets_id")
+        val sheetsWebAppUrl = stringPreferencesKey("sheets_webapp_url")
+        val sheetsAutoSync = booleanPreferencesKey("sheets_auto_sync")
+        val sheetsLastSyncAt = longPreferencesKey("sheets_last_sync_at")
         val localOnly = booleanPreferencesKey("local_only")
         val onboarding = booleanPreferencesKey("onboarding_done")
         val profileUpdated = longPreferencesKey("profile_updated_at")
@@ -411,6 +422,10 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             keyTrigger = KeyTrigger.fromId(p[K.keyTrigger]),
             appLock = p[K.appLock] ?: false,
             supabaseUrlOverride = p[K.supabaseUrl].orEmpty(),
+            sheetsId = p[K.sheetsId].orEmpty(),
+            sheetsWebAppUrl = p[K.sheetsWebAppUrl].orEmpty(),
+            sheetsAutoSync = p[K.sheetsAutoSync] ?: false,
+            sheetsLastSyncAt = p[K.sheetsLastSyncAt] ?: 0,
             localOnly = p[K.localOnly] ?: false,
             onboardingDone = p[K.onboarding] ?: false,
             profileUpdatedAt = p[K.profileUpdated] ?: 0,
@@ -537,6 +552,10 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setKeyTrigger(v: KeyTrigger) = store.edit { it[K.keyTrigger] = v.id }
     suspend fun setAppLock(v: Boolean) = store.edit { it[K.appLock] = v }
     suspend fun setSupabaseUrl(v: String) = store.edit { it[K.supabaseUrl] = v.trim() }
+    suspend fun setSheetsId(v: String) = store.edit { it[K.sheetsId] = v.trim() }
+    suspend fun setSheetsWebAppUrl(v: String) = store.edit { it[K.sheetsWebAppUrl] = v.trim() }
+    suspend fun setSheetsAutoSync(v: Boolean) = store.edit { it[K.sheetsAutoSync] = v }
+    suspend fun setSheetsLastSyncAt(v: Long) = store.edit { it[K.sheetsLastSyncAt] = v }
     suspend fun setLocalOnly(v: Boolean) = store.edit { it[K.localOnly] = v }
     suspend fun setOnboardingDone(v: Boolean) = store.edit { it[K.onboarding] = v }
 

@@ -112,6 +112,12 @@ class AppContainer(private val context: Context) {
     ) }
     val network = NetworkMonitor(context) { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon(1) }
 
+    /** Google Таблица: записи уезжают в лист через веб-приложение Apps Script (без OAuth). */
+    val sheetsSync: ai.nova.app.sync.SheetsSyncEngine by lazy {
+        ai.nova.app.sync.SheetsSyncEngine(store, settings, secrets, http)
+    }
+    val sheetsScheduler = ai.nova.app.sync.SheetsScheduler(context)
+
     // --- AI ---
     /** Все включённые провайдеры в порядке приоритета (ключи — из Keystore). */
     fun aiConfigs(): List<AIConfig> {
@@ -485,6 +491,8 @@ class AppContainer(private val context: Context) {
                     storeListenersAttached = true
                 }
                 s.changes.addListener { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon() }
+                // Таблица включена — правки уезжают туда сами, не дожидаясь ручной кнопки.
+                s.changes.addListener { if (settings.settings.value.sheetsAutoSync) sheetsScheduler.requestSoon() }
                 // Виджеты «Задачи на сегодня» и «Покупки» обновляются сразу после изменений.
                 s.changes.addListener { table ->
                     if (table == "tasks" || table == "shopping_items") runCatching { ai.nova.app.widget.ListWidget.refreshAll(context) }
@@ -525,6 +533,7 @@ class AppContainer(private val context: Context) {
                 syncScheduler.schedulePeriodic()
                 syncScheduler.requestSoon(1)
             }
+            if (settings.current().sheetsAutoSync) sheetsScheduler.schedulePeriodic()
         }
         appScope.launch(kotlinx.coroutines.Dispatchers.IO) { rescheduleReminders() }
         // Уборка старых задач агента (старше суток) — состояние готовки и найденное не растёт бесконечно.
