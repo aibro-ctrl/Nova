@@ -133,6 +133,12 @@ data class AppSettings(
     /** Синхронизировать историю чата с облаком (при входе в аккаунт). По умолчанию выключено: заметки и задачи синхронизируются, переписка — нет. */
     val syncChat: Boolean = false,
     val ttsEnabled: Boolean = true,
+    /** Зачитывать обычные напоминания вслух при срабатывании. */
+    val speakReminders: Boolean = false,
+    /** Озвучивать напоминания только в наушниках. */
+    val speakRemindersHeadphonesOnly: Boolean = false,
+    /** Озвучивать напоминания только когда экран заблокирован. */
+    val speakRemindersWhenLocked: Boolean = false,
     val speechRate: Float = 1.0f,
     /** Высота голоса (1.0 — как задумал синтезатор). */
     val speechPitch: Float = 1.0f,
@@ -247,6 +253,9 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val embeddings = booleanPreferencesKey("embeddings")
         val syncChat = booleanPreferencesKey("sync_chat")
         val tts = booleanPreferencesKey("tts")
+        val speakReminders = booleanPreferencesKey("speak_reminders")
+        val speakRemindersHeadphones = booleanPreferencesKey("speak_reminders_headphones_only")
+        val speakRemindersLocked = booleanPreferencesKey("speak_reminders_when_locked")
         val rate = floatPreferencesKey("speech_rate")
         val wake = booleanPreferencesKey("wake_word")
         val dialog = booleanPreferencesKey("dialog_mode")
@@ -349,6 +358,9 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             embeddingsEnabled = p[K.embeddings] ?: false,
             syncChat = p[K.syncChat] ?: false,
             ttsEnabled = p[K.tts] ?: true,
+            speakReminders = p[K.speakReminders] ?: false,
+            speakRemindersHeadphonesOnly = p[K.speakRemindersHeadphones] ?: false,
+            speakRemindersWhenLocked = p[K.speakRemindersLocked] ?: false,
             speechRate = p[K.rate] ?: 1.0f,
             speechPitch = p[K.pitch] ?: 1.0f,
             speechVolume = p[K.volume] ?: 1.0f,
@@ -464,6 +476,9 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setEmbeddings(v: Boolean) = store.edit { it[K.embeddings] = v }
     suspend fun setSyncChat(v: Boolean) = store.edit { it[K.syncChat] = v }
     suspend fun setTts(v: Boolean) = store.edit { it[K.tts] = v }
+    suspend fun setSpeakReminders(v: Boolean) = store.edit { it[K.speakReminders] = v }
+    suspend fun setSpeakRemindersHeadphonesOnly(v: Boolean) = store.edit { it[K.speakRemindersHeadphones] = v }
+    suspend fun setSpeakRemindersWhenLocked(v: Boolean) = store.edit { it[K.speakRemindersLocked] = v }
     suspend fun setSpeechRate(v: Float) = store.edit { it[K.rate] = v.coerceIn(0.5f, 2f) }
     suspend fun setWakeWord(v: Boolean) = store.edit { it[K.wake] = v }
     suspend fun setDialogMode(v: Boolean) = store.edit { it[K.dialog] = v }

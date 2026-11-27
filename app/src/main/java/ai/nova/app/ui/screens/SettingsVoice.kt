@@ -11,6 +11,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Headset
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Place
 import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material.icons.rounded.TouchApp
@@ -33,9 +36,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.nova.app.AppContainer
+import ai.nova.app.R
 import ai.nova.app.settings.SttMode
 import ai.nova.app.ui.components.Group
 import ai.nova.app.ui.components.GroupDivider
@@ -97,6 +102,33 @@ internal fun VoiceSpeechPage(c: AppContainer, onBack: () -> Unit) {
                     "Начните говорить — ${s.assistantName} сразу замолчит и станет слушать. Слово «стоп» работает всегда",
                     s.bargeIn,
                 ) { v -> scope.launch { c.settings.setBargeIn(v) } }
+            }
+        }
+        if (s.ttsEnabled) item(key = "reminder-speech") {
+            SectionLabel(stringResource(R.string.speak_reminders_section))
+            Group {
+                SwitchItem(
+                    stringResource(R.string.speak_reminders),
+                    stringResource(R.string.speak_reminders_hint),
+                    s.speakReminders,
+                    icon = Icons.Rounded.NotificationsActive,
+                ) { v -> scope.launch { c.settings.setSpeakReminders(v) } }
+                GroupDivider(inset = 66.dp)
+                SwitchItem(
+                    stringResource(R.string.speak_reminders_headphones_only),
+                    stringResource(R.string.speak_reminders_headphones_only_hint),
+                    s.speakRemindersHeadphonesOnly,
+                    enabled = s.speakReminders,
+                    icon = Icons.Rounded.Headset,
+                ) { v -> scope.launch { c.settings.setSpeakRemindersHeadphonesOnly(v) } }
+                GroupDivider(inset = 66.dp)
+                SwitchItem(
+                    stringResource(R.string.speak_reminders_when_locked),
+                    stringResource(R.string.speak_reminders_when_locked_hint),
+                    s.speakRemindersWhenLocked,
+                    enabled = s.speakReminders,
+                    icon = Icons.Rounded.Lock,
+                ) { v -> scope.launch { c.settings.setSpeakRemindersWhenLocked(v) } }
             }
         }
         if (s.ttsEnabled) item(key = "nova-voice") { NovaVoiceSection(c) }

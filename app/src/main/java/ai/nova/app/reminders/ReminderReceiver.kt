@@ -1,9 +1,12 @@
 package ai.nova.app.reminders
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
@@ -12,6 +15,7 @@ import androidx.core.content.ContextCompat
 import ai.nova.app.AppContainer
 import ai.nova.app.NovaApp
 import ai.nova.app.R
+import ai.nova.app.settings.AppSettings
 import ai.nova.app.ui.MainActivity
 import ai.nova.core.assistant.RuFormat
 import ai.nova.core.model.Routine
@@ -137,7 +141,10 @@ class ReminderReceiver : BroadcastReceiver() {
          * что бы ни сработало первым, второй раз уведомление не покажется (напоминание уже неактивно или перенесено вперёд).
          */
         suspend fun fire(context: Context, c: AppContainer, id: String) {
-            val routine = fireLock.withLock {
+            // Настройки могли ещё не загрузиться: будильник поднимает приложение с нуля.
+            c.awaitReady()
+            val s = c.settings.current()
+            val fired = fireLock.withLock {
                 val reminder = c.store.reminders.get(id) ?: return
                 val now = Instant.now()
                 // Уже сработавшее соседом: разовое неактивно, повторяющееся перенесено на следующий раз (часы и дни вперёд).
@@ -155,7 +162,7 @@ class ReminderReceiver : BroadcastReceiver() {
                     c.store.reminders.markFired(id, now)?.let { if (it.active) c.reminderScheduler.schedule(it) }
                     // Телефон был выключен и проснулся через час — утреннее радио в полдень не нужно.
                     if (late > ROUTINE_LATE_LIMIT) return
-                    return@withLock reminder.text
+                    return@withLock Fired(routine = reminder.text)
                 }
                 // Напоминание к сроку задачи, а задача уже выполнена или удалена — молча снимаем.
                 if (ai.nova.core.assistant.TaskReminders.obsolete(reminder.text, c.store.tasks)) {
@@ -182,9 +189,61 @@ class ReminderReceiver : BroadcastReceiver() {
                         c.reminderScheduler.schedule(again)
                     } else c.nags.clear(id)
                 }
-                null
-            } ?: return
-            runRoutine(context, c, id, routine)
+                // Критичные звонят через RingService по потоку будильника — голосом их не дублируем.
+                Fired(speech = text.takeIf { shouldSpeak(context, c, s, critical) })
+            }
+            // Речь — уже без блокировки: иначе страховка ждала бы до 30 секунд.
+            fired.routine?.let { runRoutine(context, c, id, it) }
+            fired.speech?.let { speakReminder(c, it) }
+        }
+
+        /** Что делать после блокировки: сценарий или озвучка обычного напоминания. */
+        private data class Fired(val routine: String? = null, val speech: String? = null)
+
+        /** Только для instrumented-тестов: перехват речи вместо реального синтезатора. */
+        internal var speakOverride: (suspend (String) -> Unit)? = null
+
+        /** Озвучивает напоминание, не задерживая срабатывание: синтезатор может думать долго. */
+        private suspend fun speakReminder(c: AppContainer, text: String) {
+            c.awaitReady()
+            speakOverride?.let { return it(SpeechText.forSpeech(text)) }
+            withTimeoutOrNull(SPEAK_TIMEOUT_MS) {
+                runCatching { c.speech.speak(SpeechText.forSpeech(text)) }
+                    .onFailure { Logger.w(TAG, "Напоминание не озвучено", it) }
+            }
+        }
+
+        /** Озвучка для напоминаний мимо [fire] (геонапоминания): те же настройки и условия приватности. */
+        internal suspend fun speakIfEnabled(context: Context, c: AppContainer, text: String) {
+            c.awaitReady()
+            if (!shouldSpeak(context, c, c.settings.current(), critical = false)) return
+            speakReminder(c, text)
+        }
+
+        /**
+         * Пора ли говорить: голос включён, напоминания вслух включены и условия приватности соблюдены.
+         * Критичные напоминания звонят через RingService, их голосом не дублируем.
+         */
+        private fun shouldSpeak(context: Context, c: AppContainer, s: AppSettings, critical: Boolean): Boolean {
+            if (critical || !s.ttsEnabled || !s.speakReminders) return false
+            if (s.speakRemindersHeadphonesOnly && !headphonesConnected(context)) return false
+            if (s.speakRemindersWhenLocked && !c.isLocked()) return false
+            return true
+        }
+
+        /** Наушники подключены: проводные, Bluetooth или USB. Динамик телефона не считается. */
+        @SuppressLint("InlinedApi")
+        private fun headphonesConnected(context: Context): Boolean {
+            val am = context.getSystemService(AudioManager::class.java) ?: return false
+            return am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { d ->
+                when (d.type) {
+                    AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                    AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> true
+                    else -> (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && d.type == AudioDeviceInfo.TYPE_USB_HEADSET) ||
+                        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && d.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+                }
+            }
         }
 
         /** Есть ли ещё такой сценарий: расписание без сценария — осиротевшее напоминание. */

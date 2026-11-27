@@ -49,4 +49,11 @@
     <string name="accessibility_description">Позволяет Нова по голосовой команде нажимать системные кнопки: «назад», «домой», «недавние приложения», «открой уведомления», «сделай скриншот», «заблокируй экран». Текст экрана Нова читает только по вашей команде («что на экране», «перескажи экран») и не сохраняет его; пароли и ввод с клавиатуры не видит.</string>
     <string name="result_channel">Результаты команд</string>
     <string name="result_hidden">Нова выполнила команду</string>
+    <string name="speak_reminders_section">Напоминания вслух</string>
+    <string name="speak_reminders">Зачитывать напоминания вслух</string>
+    <string name="speak_reminders_hint">Когда напоминание срабатывает, Нова произносит его голосом. Критичные напоминания звонят как будильник</string>
+    <string name="speak_reminders_headphones_only">Только в наушниках</string>
+    <string name="speak_reminders_headphones_only_hint">Озвучивать, только если подключены проводные или Bluetooth-наушники</string>
+    <string name="speak_reminders_when_locked">Только когда экран заблокирован</string>
+    <string name="speak_reminders_when_locked_hint">Не говорить вслух, пока телефон в руках и экран включён</string>
 </resources>
