@@ -119,5 +119,7 @@ class KeystoreSecretStore(context: Context) {
         fun aiKey(providerId: String) = "ai_key_$providerId"
         const val SESSION = "supabase_session"
         const val SUPABASE_ANON_OVERRIDE = "supabase_anon_key_override"
+        /** Код доступа к веб-приложению Google Таблицы: без него скрипт не примет записи. */
+        const val SHEETS_TOKEN = "sheets_token"
     }
 }

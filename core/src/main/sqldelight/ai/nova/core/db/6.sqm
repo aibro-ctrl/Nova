@@ -1,0 +1,9 @@
+-- 3.5.0: напоминания можно дублировать в календарь телефона (и через него — в Google Календарь).
+-- Связь хранится только локально: ID событий у каждого устройства свои.
+CREATE TABLE calendar_event_link (
+    reminder_id TEXT NOT NULL PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    calendar_id INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,
+    synced_at INTEGER NOT NULL
+);

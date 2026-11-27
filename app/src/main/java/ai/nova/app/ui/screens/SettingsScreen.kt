@@ -49,6 +49,8 @@ import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.Event
+import androidx.compose.material.icons.rounded.TableChart
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
@@ -136,6 +138,8 @@ enum class SettingsPage(val route: String, val title: String, val subtitle: Stri
     ACTIONS("settings/actions", "Действия", "Куда открывать ссылки, музыка и видео, траты из уведомлений", Icons.Rounded.OpenInNew),
     ACCESS("settings/access", "Безопасность и разрешения", "Экран блокировки, вход по отпечатку, доступы", Icons.Rounded.Shield),
     ACCOUNT("settings/account", "Аккаунт", "Синхронизация между устройствами", Icons.Rounded.Cloud),
+    SHEETS("settings/sheets", "Google Таблицы", "Напоминания и заметки в вашей таблице", Icons.Rounded.TableChart),
+    CALENDAR("settings/calendar", "Google Календарь", "Напоминания в календаре телефона", Icons.Rounded.Event),
     BACKUP("settings/backup", "Резервная копия", "Сохранить записи в файл и перенести на другой телефон", Icons.Rounded.Backup),
     CAPABILITIES("settings/capabilities", "Что умеет Нова", "Команды и примеры", Icons.Rounded.Lightbulb, main = false),
     CLOCK("settings/clock", "Будильники и таймеры", "Свои или телефона", Icons.Rounded.Alarm, main = false),
@@ -159,6 +163,8 @@ fun SettingsScreen(
         SettingsPage.APPEARANCE -> AppearancePage(c, onBack)
         SettingsPage.ACCESS -> AccessPage(c, onBack)
         SettingsPage.ACCOUNT -> AccountPage(c, onBack, onOpenAuth)
+        SettingsPage.SHEETS -> SheetsPage(c, onBack)
+        SettingsPage.CALENDAR -> CalendarPage(c, onBack)
         SettingsPage.BACKUP -> BackupPage(c, onBack)
         SettingsPage.ABOUT -> AboutPage(c, onBack)
         SettingsPage.CAPABILITIES -> CapabilitiesPage(c, onBack, openAi = { open(SettingsPage.AI) })
@@ -600,6 +606,10 @@ fun PermissionsGroup(c: AppContainer) {
     val askContacts = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
     val askLocation = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
     val askCalls = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
+    val askCalendar = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refresh++ }
+    val calendar = remember(tick) {
+        has(Manifest.permission.READ_CALENDAR) && has(Manifest.permission.WRITE_CALENDAR)
+    }
 
     data class P(val ok: Boolean, val important: Boolean, val title: String, val why: String, val icon: ImageVector, val fix: () -> Unit)
     val all = listOf(
@@ -616,6 +626,9 @@ fun PermissionsGroup(c: AppContainer) {
             runCatching { context.startActivity(ai.nova.app.notify.NovaNotificationListener.settingsIntent(context)) }
         },
         P(contacts, false, "Контакты", "«Позвони маме», «какой номер у папы»", Icons.Rounded.Contacts) { askContacts.launch(Manifest.permission.READ_CONTACTS) },
+        P(calendar, false, "Календарь", "Дублировать напоминания в Google Календарь", Icons.Rounded.Event) {
+            askCalendar.launch(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR))
+        },
         P(calls, false, "Звонки", "«Позвони маме» — Нова нажимает вызов сама", Icons.Rounded.Call) { askCalls.launch(Manifest.permission.CALL_PHONE) },
         P(location, false, "Геолокация", "Погода «здесь» и напоминания «когда буду дома»", Icons.Rounded.Place) { askLocation.launch(Manifest.permission.ACCESS_COARSE_LOCATION) },
         P(a11y, false, "Спецвозможности", "Кнопки громкости, «назад», «что на экране»", Icons.Rounded.TouchApp) { openAccessibility(context) },

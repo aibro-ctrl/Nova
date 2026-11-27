@@ -133,6 +133,12 @@ data class AppSettings(
     /** Синхронизировать историю чата с облаком (при входе в аккаунт). По умолчанию выключено: заметки и задачи синхронизируются, переписка — нет. */
     val syncChat: Boolean = false,
     val ttsEnabled: Boolean = true,
+    /** Зачитывать обычные напоминания вслух при срабатывании. */
+    val speakReminders: Boolean = false,
+    /** Озвучивать напоминания только в наушниках. */
+    val speakRemindersHeadphonesOnly: Boolean = false,
+    /** Озвучивать напоминания только когда экран заблокирован. */
+    val speakRemindersWhenLocked: Boolean = false,
     val speechRate: Float = 1.0f,
     /** Высота голоса (1.0 — как задумал синтезатор). */
     val speechPitch: Float = 1.0f,
@@ -216,6 +222,17 @@ data class AppSettings(
     /** Траты из пушей банков: выключено, спрашивать или записывать сразу. */
     val bankPushes: BankPushMode = BankPushMode.ASK,
     val supabaseUrlOverride: String = "",
+    /** Google Таблица: ID листа и адрес веб-приложения Apps Script. Код доступа хранится в Keystore. */
+    val sheetsId: String = "",
+    val sheetsWebAppUrl: String = "",
+    /** Отправлять изменения в таблицу сама, без нажатия кнопки. */
+    val sheetsAutoSync: Boolean = false,
+    /** Когда последний раз синхронизировались с таблицей (миллисекунды). */
+    val sheetsLastSyncAt: Long = 0,
+    /** Дублировать напоминания в календарь телефона (и через него — в Google Календарь). */
+    val calendarMirror: Boolean = false,
+    /** Выбранный календарь; пусто — первый календарь Google. */
+    val calendarId: String = "",
     val localOnly: Boolean = false,
     val onboardingDone: Boolean = false,
     val profileUpdatedAt: Long = 0,
@@ -247,6 +264,9 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val embeddings = booleanPreferencesKey("embeddings")
         val syncChat = booleanPreferencesKey("sync_chat")
         val tts = booleanPreferencesKey("tts")
+        val speakReminders = booleanPreferencesKey("speak_reminders")
+        val speakRemindersHeadphones = booleanPreferencesKey("speak_reminders_headphones_only")
+        val speakRemindersLocked = booleanPreferencesKey("speak_reminders_when_locked")
         val rate = floatPreferencesKey("speech_rate")
         val wake = booleanPreferencesKey("wake_word")
         val dialog = booleanPreferencesKey("dialog_mode")
@@ -300,6 +320,12 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val keyTrigger = stringPreferencesKey("key_trigger")
         val appLock = booleanPreferencesKey("app_lock")
         val supabaseUrl = stringPreferencesKey("supabase_url")
+        val sheetsId = stringPreferencesKey("sheets_id")
+        val sheetsWebAppUrl = stringPreferencesKey("sheets_webapp_url")
+        val sheetsAutoSync = booleanPreferencesKey("sheets_auto_sync")
+        val sheetsLastSyncAt = longPreferencesKey("sheets_last_sync_at")
+        val calendarMirror = booleanPreferencesKey("calendar_mirror")
+        val calendarId = stringPreferencesKey("calendar_id")
         val localOnly = booleanPreferencesKey("local_only")
         val onboarding = booleanPreferencesKey("onboarding_done")
         val profileUpdated = longPreferencesKey("profile_updated_at")
@@ -349,6 +375,9 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             embeddingsEnabled = p[K.embeddings] ?: false,
             syncChat = p[K.syncChat] ?: false,
             ttsEnabled = p[K.tts] ?: true,
+            speakReminders = p[K.speakReminders] ?: false,
+            speakRemindersHeadphonesOnly = p[K.speakRemindersHeadphones] ?: false,
+            speakRemindersWhenLocked = p[K.speakRemindersLocked] ?: false,
             speechRate = p[K.rate] ?: 1.0f,
             speechPitch = p[K.pitch] ?: 1.0f,
             speechVolume = p[K.volume] ?: 1.0f,
@@ -399,6 +428,12 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             keyTrigger = KeyTrigger.fromId(p[K.keyTrigger]),
             appLock = p[K.appLock] ?: false,
             supabaseUrlOverride = p[K.supabaseUrl].orEmpty(),
+            sheetsId = p[K.sheetsId].orEmpty(),
+            sheetsWebAppUrl = p[K.sheetsWebAppUrl].orEmpty(),
+            sheetsAutoSync = p[K.sheetsAutoSync] ?: false,
+            sheetsLastSyncAt = p[K.sheetsLastSyncAt] ?: 0,
+            calendarMirror = p[K.calendarMirror] ?: false,
+            calendarId = p[K.calendarId].orEmpty(),
             localOnly = p[K.localOnly] ?: false,
             onboardingDone = p[K.onboarding] ?: false,
             profileUpdatedAt = p[K.profileUpdated] ?: 0,
@@ -464,6 +499,9 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setEmbeddings(v: Boolean) = store.edit { it[K.embeddings] = v }
     suspend fun setSyncChat(v: Boolean) = store.edit { it[K.syncChat] = v }
     suspend fun setTts(v: Boolean) = store.edit { it[K.tts] = v }
+    suspend fun setSpeakReminders(v: Boolean) = store.edit { it[K.speakReminders] = v }
+    suspend fun setSpeakRemindersHeadphonesOnly(v: Boolean) = store.edit { it[K.speakRemindersHeadphones] = v }
+    suspend fun setSpeakRemindersWhenLocked(v: Boolean) = store.edit { it[K.speakRemindersLocked] = v }
     suspend fun setSpeechRate(v: Float) = store.edit { it[K.rate] = v.coerceIn(0.5f, 2f) }
     suspend fun setWakeWord(v: Boolean) = store.edit { it[K.wake] = v }
     suspend fun setDialogMode(v: Boolean) = store.edit { it[K.dialog] = v }
@@ -522,6 +560,12 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setKeyTrigger(v: KeyTrigger) = store.edit { it[K.keyTrigger] = v.id }
     suspend fun setAppLock(v: Boolean) = store.edit { it[K.appLock] = v }
     suspend fun setSupabaseUrl(v: String) = store.edit { it[K.supabaseUrl] = v.trim() }
+    suspend fun setSheetsId(v: String) = store.edit { it[K.sheetsId] = v.trim() }
+    suspend fun setSheetsWebAppUrl(v: String) = store.edit { it[K.sheetsWebAppUrl] = v.trim() }
+    suspend fun setSheetsAutoSync(v: Boolean) = store.edit { it[K.sheetsAutoSync] = v }
+    suspend fun setSheetsLastSyncAt(v: Long) = store.edit { it[K.sheetsLastSyncAt] = v }
+    suspend fun setCalendarMirror(v: Boolean) = store.edit { it[K.calendarMirror] = v }
+    suspend fun setCalendarId(v: String) = store.edit { it[K.calendarId] = v.trim() }
     suspend fun setLocalOnly(v: Boolean) = store.edit { it[K.localOnly] = v }
     suspend fun setOnboardingDone(v: Boolean) = store.edit { it[K.onboarding] = v }
 

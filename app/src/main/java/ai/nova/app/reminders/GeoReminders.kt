@@ -9,12 +9,15 @@ import android.location.Location
 import android.location.LocationManager
 import android.net.Uri
 import androidx.core.app.NotificationCompat
+import ai.nova.app.NovaApp
 import ai.nova.app.R
 import ai.nova.app.ui.MainActivity
 import ai.nova.core.skills.PlaceReminder
 import ai.nova.core.skills.SavedPlace
 import ai.nova.core.util.Ids
 import ai.nova.core.util.Logger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -200,5 +203,15 @@ class GeoReceiver : BroadcastReceiver() {
             .build()
         Notifications.notifySafely(context, Notifications.GEO_BASE_ID + (id.hashCode() and 0x3f), n)
         geo.remove(id)
+        // Геонапоминания показываются мимо ReminderReceiver.fire — озвучиваем по тем же настройкам.
+        val app = context.applicationContext as? NovaApp ?: return
+        val pending = goAsync()
+        app.container.appScope.launch(Dispatchers.IO) {
+            try {
+                ReminderReceiver.speakIfEnabled(context, app.container, r.text)
+            } finally {
+                pending.finish()
+            }
+        }
     }
 }

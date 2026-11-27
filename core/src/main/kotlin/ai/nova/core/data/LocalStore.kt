@@ -26,6 +26,8 @@ class LocalStore(
     val expenses = SqlExpenseRepository(db, stamp, changes, dispatcher)
     val tasks = SqlTaskRepository(db, stamp, changes, dispatcher)
     val reminders = SqlReminderRepository(db, stamp, changes, dispatcher)
+    /** Связь напоминаний с событиями календаря телефона: только на этом устройстве. */
+    val calendarLinks = CalendarLinkStore(db, dispatcher)
     val memories = SqlMemoryRepository(db, stamp, changes, dispatcher)
     val conversations = SqlConversationRepository(db, stamp, changes, dispatcher)
     val embeddings = EmbeddingStore(db, dispatcher)
@@ -49,7 +51,8 @@ class LocalStore(
     suspend fun wipe() = withContext(dispatcher) {
         db.transaction {
             db.noteQueries.deleteAll(); db.expenseQueries.deleteAll(); db.taskQueries.deleteAll()
-            db.reminderQueries.deleteAll(); db.memoryQueries.deleteAll(); db.conversationQueries.deleteAll()
+            db.reminderQueries.deleteAll(); db.calendarEventLinkQueries.deleteAll()
+            db.memoryQueries.deleteAll(); db.conversationQueries.deleteAll()
             db.embeddingQueries.deleteAll(); db.syncStateQueries.deleteAll()
             db.shoppingItemQueries.deleteAll(); db.routineQueries.deleteAll(); db.secretNoteQueries.deleteAll()
             db.habitLogQueries.deleteAll()
