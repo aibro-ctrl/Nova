@@ -229,6 +229,10 @@ data class AppSettings(
     val sheetsAutoSync: Boolean = false,
     /** Когда последний раз синхронизировались с таблицей (миллисекунды). */
     val sheetsLastSyncAt: Long = 0,
+    /** Дублировать напоминания в календарь телефона (и через него — в Google Календарь). */
+    val calendarMirror: Boolean = false,
+    /** Выбранный календарь; пусто — первый календарь Google. */
+    val calendarId: String = "",
     val localOnly: Boolean = false,
     val onboardingDone: Boolean = false,
     val profileUpdatedAt: Long = 0,
@@ -320,6 +324,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val sheetsWebAppUrl = stringPreferencesKey("sheets_webapp_url")
         val sheetsAutoSync = booleanPreferencesKey("sheets_auto_sync")
         val sheetsLastSyncAt = longPreferencesKey("sheets_last_sync_at")
+        val calendarMirror = booleanPreferencesKey("calendar_mirror")
+        val calendarId = stringPreferencesKey("calendar_id")
         val localOnly = booleanPreferencesKey("local_only")
         val onboarding = booleanPreferencesKey("onboarding_done")
         val profileUpdated = longPreferencesKey("profile_updated_at")
@@ -426,6 +432,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             sheetsWebAppUrl = p[K.sheetsWebAppUrl].orEmpty(),
             sheetsAutoSync = p[K.sheetsAutoSync] ?: false,
             sheetsLastSyncAt = p[K.sheetsLastSyncAt] ?: 0,
+            calendarMirror = p[K.calendarMirror] ?: false,
+            calendarId = p[K.calendarId].orEmpty(),
             localOnly = p[K.localOnly] ?: false,
             onboardingDone = p[K.onboarding] ?: false,
             profileUpdatedAt = p[K.profileUpdated] ?: 0,
@@ -556,6 +564,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setSheetsWebAppUrl(v: String) = store.edit { it[K.sheetsWebAppUrl] = v.trim() }
     suspend fun setSheetsAutoSync(v: Boolean) = store.edit { it[K.sheetsAutoSync] = v }
     suspend fun setSheetsLastSyncAt(v: Long) = store.edit { it[K.sheetsLastSyncAt] = v }
+    suspend fun setCalendarMirror(v: Boolean) = store.edit { it[K.calendarMirror] = v }
+    suspend fun setCalendarId(v: String) = store.edit { it[K.calendarId] = v.trim() }
     suspend fun setLocalOnly(v: Boolean) = store.edit { it[K.localOnly] = v }
     suspend fun setOnboardingDone(v: Boolean) = store.edit { it[K.onboarding] = v }
 

@@ -36,7 +36,7 @@ class AgentMigrationTest {
                 driver.execute(null, "INSERT INTO shopping_item(id, list_name, text, done, created_at, updated_at) VALUES ('s1', 'Покупки', 'Молоко', 0, 1, 1)", 0)
                 driver.execute(null, "PRAGMA user_version = 3", 0)
 
-                assertEquals(6, NovaDatabase.Schema.version, "версия схемы выросла на миграциях 3.sqm–5.sqm")
+                assertEquals(7, NovaDatabase.Schema.version, "версия схемы выросла на миграциях 3.sqm–6.sqm")
                 NovaDatabase.Schema.migrate(driver, 3, NovaDatabase.Schema.version)
                 assertTrue(names(driver, "agent%").containsAll(listOf("agent_task", "agent_step", "agent_context")))
                 // 4.sqm: количество и источник у пунктов списка покупок, рецепты и сессии готовки.
@@ -50,6 +50,8 @@ class AgentMigrationTest {
                 assertTrue(columns.containsAll(listOf("quantity", "unit", "source")), columns.toString())
                 // 5.sqm: карточка товара с площадки — магазин, ссылка, фото, цена, рейтинг.
                 assertTrue(columns.containsAll(listOf("marketplace", "url", "image_url", "price", "rating", "reviews")), columns.toString())
+                // 6.sqm: связь напоминания с событием календаря телефона.
+                assertTrue(names(driver, "calendar_event_link").contains("calendar_event_link"))
                 val kept = driver.executeQuery(null, "SELECT text FROM shopping_item WHERE id = 's1'", { cursor ->
                     cursor.next()
                     QueryResult.Value(cursor.getString(0))

@@ -118,6 +118,11 @@ class AppContainer(private val context: Context) {
     }
     val sheetsScheduler = ai.nova.app.sync.SheetsScheduler(context)
 
+    /** Дублирование напоминаний в календарь телефона: без OAuth, через CalendarContract. */
+    val calendarMirror: ai.nova.app.calendar.CalendarMirror by lazy {
+        ai.nova.app.calendar.CalendarMirror(context, store, settings)
+    }
+
     // --- AI ---
     /** Все включённые провайдеры в порядке приоритета (ключи — из Keystore). */
     fun aiConfigs(): List<AIConfig> {
@@ -493,6 +498,14 @@ class AppContainer(private val context: Context) {
                 s.changes.addListener { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon() }
                 // Таблица включена — правки уезжают туда сами, не дожидаясь ручной кнопки.
                 s.changes.addListener { if (settings.settings.value.sheetsAutoSync) sheetsScheduler.requestSoon() }
+                // Напоминание создали, изменили, отменили или оно сработало — приводим календарь в соответствие.
+                s.changes.addListener { table ->
+                    if (table == "reminders" && settings.settings.value.calendarMirror) {
+                        appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            runCatching { calendarMirror.reconcile() }
+                        }
+                    }
+                }
                 // Виджеты «Задачи на сегодня» и «Покупки» обновляются сразу после изменений.
                 s.changes.addListener { table ->
                     if (table == "tasks" || table == "shopping_items") runCatching { ai.nova.app.widget.ListWidget.refreshAll(context) }
@@ -572,6 +585,9 @@ class AppContainer(private val context: Context) {
         runCatching { geo.registerAll(force = afterBoot) }
         runCatching { ai.nova.app.reminders.SleepMode.reschedule(context) }
         reminderScheduler.rescheduleAll(store.reminders.active())
+        // Сюда приходят и после синхронизации с сервером: напоминания могли изменить с другого
+        // устройства. Заодно догоняем календарь после перезагрузки и обновления приложения.
+        if (settings.current().calendarMirror) runCatching { calendarMirror.reconcile() }
     }
 
     /** Выход: отправляем несинхронизированное, затем стираем локальные данные этого аккаунта. */
@@ -582,6 +598,8 @@ class AppContainer(private val context: Context) {
         }
         store.reminders.active().forEach { reminderScheduler.cancel(it.id) }
         syncScheduler.cancelAll()
+        // Свои события в календаре убираем вместе с локальными записями, чтобы не оставлять дубли.
+        runCatching { calendarMirror.removeAll() }
         auth.signOut()
         store.wipe()
         engine.context.reset()
@@ -591,6 +609,7 @@ class AppContainer(private val context: Context) {
     suspend fun forceSignOutDiscardingLocal() {
         store.reminders.active().forEach { reminderScheduler.cancel(it.id) }
         syncScheduler.cancelAll()
+        runCatching { calendarMirror.removeAll() }
         auth.signOut()
         store.wipe()
         engine.context.reset()

@@ -1,0 +1,29 @@
+-- Связь напоминания с событием календаря телефона. Таблица локальная и не синхронизируется:
+-- идентификаторы событий существуют только на этом устройстве.
+CREATE TABLE calendar_event_link (
+    reminder_id TEXT NOT NULL PRIMARY KEY,
+    -- ID события в CalendarContract; пусто — событие удалили снаружи, повторно не создаём.
+    event_id TEXT NOT NULL,
+    calendar_id INTEGER NOT NULL,
+    -- Отпечаток полей события: по нему видно, нужно ли обновлять событие.
+    fingerprint TEXT NOT NULL,
+    synced_at INTEGER NOT NULL
+);
+
+selectAll:
+SELECT * FROM calendar_event_link;
+
+selectByReminder:
+SELECT * FROM calendar_event_link WHERE reminder_id = ?;
+
+upsert:
+INSERT OR REPLACE INTO calendar_event_link VALUES ?;
+
+deleteByReminder:
+DELETE FROM calendar_event_link WHERE reminder_id = ?;
+
+deleteAll:
+DELETE FROM calendar_event_link;
+
+count:
+SELECT count(*) FROM calendar_event_link WHERE event_id != '';

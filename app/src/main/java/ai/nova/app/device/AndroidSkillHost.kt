@@ -175,11 +175,17 @@ class AndroidSkillHost(
             val out = ArrayList<CalendarItem>()
             context.contentResolver.query(
                 uri,
-                arrayOf(CalendarContract.Instances.TITLE, CalendarContract.Instances.BEGIN, CalendarContract.Instances.END, CalendarContract.Instances.ALL_DAY, CalendarContract.Instances.EVENT_LOCATION),
+                arrayOf(
+                    CalendarContract.Instances.TITLE, CalendarContract.Instances.BEGIN, CalendarContract.Instances.END,
+                    CalendarContract.Instances.ALL_DAY, CalendarContract.Instances.EVENT_LOCATION,
+                    CalendarContract.Instances.CUSTOM_APP_URI,
+                ),
                 null, null, "${CalendarContract.Instances.BEGIN} ASC",
             )?.use { c ->
                 while (c.moveToNext() && out.size < 50) {
                     val title = c.getString(0)?.takeIf { it.isNotBlank() } ?: "Без названия"
+                    // Дубликат собственного напоминания: Нова уже показывает его в плане дня.
+                    if (c.getString(5)?.startsWith(ai.nova.app.calendar.CalendarMirror.CUSTOM_URI_PREFIX) == true) continue
                     val allDay = c.getInt(3) == 1
                     // Событие «на весь день» хранится в UTC-полночь — переносим на местную дату.
                     fun localDay(ms: Long) = Instant.ofEpochMilli(ms).atZone(java.time.ZoneOffset.UTC).toLocalDate()
